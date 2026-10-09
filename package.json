@@ -13,6 +13,7 @@
     "dist",
     "cordis.patch.yml",
     "themes",
+    "workflows",
     "examples",
     "!examples/dev.yml"
   ],
