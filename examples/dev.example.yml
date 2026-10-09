@@ -1,0 +1,59 @@
+# 本地调试叠加配置模板。
+# 用法：
+#   1. pnpm build
+#   2. 复制本文件为 examples/dev.yml（已被 .gitignore 忽略），把下面的
+#      /绝对路径/aha-tavern 改成本仓库的绝对路径
+#   3. dsh web --patch /绝对路径/aha-tavern/examples/dev.yml    （--patch 要放在 web 之后）
+#
+# 注意：叠加配置里插件的 name 写 dist/index.js 的绝对路径；
+# 正式安装后 name 是包名 aha-tavern（见 cordis.patch.yml）。
+#
+# 关闭筹备模式自带的联网搜索：在自己 profile 的 cordis.patch.yml 里，
+# 按 id 整行覆盖掉 preset-tavern-setup，plugins 里不写 mcp-websearch 那一条即可。
+# 本插件不提供额外开关。
+- insert:
+    - id: preset-tavern-setup
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-setup
+        name: '酒馆:筹备'
+        description: 开店、建角色卡、写主角档案、写世界观、导入。
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是酒馆的掌柜，负责筹备。
+              includeRuntimeContext: false
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: aha-tavern
+            name: /绝对路径/aha-tavern/dist/index.js
+            config:
+              mode: setup
+          - id: mcp-websearch
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: websearch
+              transport: stdio
+              command: npx
+              args: ['-y', 'open-websearch@2.2.0']
+    - id: preset-tavern-chat
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-chat
+        name: '酒馆:单聊'
+        description: 和一个角色聊天。
+        order: 6
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是酒馆里的角色。
+              includeRuntimeContext: false
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: aha-tavern
+            name: /绝对路径/aha-tavern/dist/index.js
+            config:
+              mode: chat

@@ -1,0 +1,7 @@
+packages:
+  - .
+
+# esbuild 的 postinstall 只做平台二进制校验，平台包走 optionalDependencies 已装好；
+# 显式声明不跑构建脚本，避免每次 install 报 ERR_PNPM_IGNORED_BUILDS。
+allowBuilds:
+  esbuild: false

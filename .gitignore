@@ -37,3 +37,6 @@ docs/_internal/
 .claude/
 CLAUDE.local.md
 AGENTS.md
+
+# --- 本地调试叠加配置（含本机绝对路径）---
+examples/dev.yml

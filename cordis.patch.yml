@@ -1,0 +1,50 @@
+# 阿哈酒馆 bundle 层：向 profile 注册两个酒馆模式。
+# 每个模式是一份独立清单，只挂自己需要的插件；都不挂编码工具。
+# 筹备模式自带联网搜索（MCP: open-websearch）。要关掉它，在自己 profile 的
+# cordis.patch.yml 里按 id 覆盖：见 examples/dev.example.yml 的说明。
+- insert:
+    - id: preset-tavern-setup
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-setup
+        name: '酒馆:筹备'
+        description: 开店、建角色卡、写主角档案、写世界观、导入。
+        order: 5
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是酒馆的掌柜，负责筹备。
+              includeRuntimeContext: false
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: aha-tavern
+            name: aha-tavern
+            config:
+              mode: setup
+          - id: mcp-websearch
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: websearch
+              transport: stdio
+              command: npx
+              args: ['-y', 'open-websearch@2.2.0']
+    - id: preset-tavern-chat
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-chat
+        name: '酒馆:单聊'
+        description: 和一个角色聊天。
+        order: 6
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是酒馆里的角色。
+              includeRuntimeContext: false
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: aha-tavern
+            name: aha-tavern
+            config:
+              mode: chat
