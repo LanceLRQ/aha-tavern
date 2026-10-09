@@ -30,7 +30,7 @@
 
 - [x] 调研与设想稿、宿主能力验证
 - [x] M0 文字版：开店、角色卡、主角档案、世界观、导入、单聊开场、对话落盘、记忆（随手记 / 整理 / 回忆）、两套主题
-- [ ] M1a 生图：基础工作流 + 两段式工具
+- [x] M1a 生图：基础工作流 + 生图工具 aha_draw + 自检
 - [ ] M1b 一致性：身份注入工作流 + 自检
 - [ ] M1.5 一图成卡
 - [ ] M2 语音
@@ -50,10 +50,11 @@ aha-tavern/
 │   ├── core/             # 与 harness 无关的核心逻辑（角色卡、记忆、聊天落盘、登记表、主题……）
 │   ├── shell/            # 接到 DSH 上的外壳：命令、工具、提示词段、事件监听
 │   └── prompts/          # 提示词文本
+├── workflows/            # 内置 ComfyUI 工作流（qwen-image-2.1、qwen-image-2.1-gguf），末尾 _aha 段说明填值位置与模型
 ├── themes/               # 内置称呼主题（fools 愚者、plain 直白），运行时按 dist/../themes 读取
 ├── examples/             # 本机调试用的叠加配置模板
 ├── test/                 # vitest 单元测试
-├── docs/                 # 面向使用者的文档（getting-started.md）
+├── docs/                 # 面向使用者的文档（getting-started.md、image-setup.md）
 │   └── superpowers/specs/  # 定稿后可公开的设计规格
 └── LICENSE               # Apache-2.0
 ```
@@ -79,6 +80,7 @@ pnpm pack        # 打成 aha-tavern-<版本>.tgz，用 dsh plugin --profile <�
 /aha 导入 | import            从另一间酒馆复制（筹备）
 /aha 开场 | start [角色名]    选定角色，开始聊天（单聊）
 /aha 记忆 | remember [内容]   记一句话，或让角色回顾并整理记忆（单聊）
-/aha 自检 | doctor            检查当前状态
-/aha 重新生图 | reroll、/aha 说话 | speak   已占位，生图与语音上线后可用
+/aha 自检 | doctor            检查当前状态；/aha 自检 生图 看生图详情
+/aha 重新生图 | reroll [修改要求]   按原画面重画，或按修改要求改写后重画（单聊）
+/aha 说话 | speak             已占位，语音上线后可用
 ```
