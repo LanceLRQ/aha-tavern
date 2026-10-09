@@ -8,7 +8,7 @@ import hostPickGuide from '../prompts/host-pick.md'
 import {
   listCharacters, matchCharacterName, MEMORY_FILE, readCharacter, type CharacterEntry,
 } from '../core/card'
-import { createChat } from '../core/chat'
+import { createChat, findChatDir } from '../core/chat'
 import { readMe, readWorld } from '../core/docs'
 import { isAhaError } from '../core/errors'
 import { appendIndexLine, memoryChars, readMemory, readMemoryText } from '../core/memory'
@@ -20,7 +20,7 @@ import {
 } from './confirm'
 import { buildContext, sessionsFile, type CommandContext, type CommandHandler, type HostAgent, type HostServices } from './context'
 import { clip, uniqueLabel, type Labeled } from './importing'
-import { buildChatPrompt, buildDegradedPrompt, buildPickPrompt, type PickFacts } from './prompt'
+import { buildChatPrompt, buildDegradedPrompt, buildPickPrompt, type DegradeCause, type PickFacts } from './prompt'
 import {
   cardAmbiguousReceipt, cardBrokenReceipt, dispatchReceipt, failureReceipt, MODE_LABEL, readonlyReceipt, type Reply,
 } from './receipts'
@@ -450,24 +450,30 @@ export function chatPlan(env: ChatEnv, agent: HostAgent, services: HostServices,
     if (cc.mode !== 'chat') return { kind: 'skip', note: `实际模式 ${cc.mode}` }
     if (cc.state === 'chatting' && cc.tavern) {
       const id = cc.record?.characterId
-      const degrade = (reason: string): SectionPlan => {
+      const degrade = (cause: DegradeCause, reason: string): SectionPlan => {
         const warned = (env.warned ??= new Set<string>())
         const key = `${agent.id}\u0000${reason}`
         if (!warned.has(key)) {
           warned.add(key)
-          env.rt.log.warn(`会话 ${agent.id}：绑定的角色卡读不出来（${reason}），暂用降级提示词段，修好后下一步会恢复`)
+          const what = cause === 'card-unreadable' ? '绑定的角色卡读不出来' : '绑定的聊天目录不存在'
+          env.rt.log.warn(`会话 ${agent.id}：${what}（${reason}），暂用降级提示词段，修好后下一步会恢复`)
         }
-        return { kind: 'text', text: buildDegradedPrompt(theme, reason), temporary: true, note: '降级' }
+        return { kind: 'text', text: buildDegradedPrompt(theme, cause, reason), temporary: true, note: '降级' }
       }
-      if (!id) return degrade('会话记录里没有角色编号')
+      if (!id) return degrade('card-unreadable', '会话记录里没有角色编号')
       let entry: CharacterEntry | null
       try {
         entry = await readCharacter(cc.tavern.dir, id)
       } catch (e) {
-        return degrade((e as Error).message)
+        return degrade('card-unreadable', (e as Error).message)
       }
-      if (!entry) return degrade(`找不到角色 ${id}`)
-      if (!entry.ok) return degrade(`${entry.dirName}/ ${entry.problem}`)
+      if (!entry) return degrade('card-unreadable', `找不到角色 ${id}`)
+      if (!entry.ok) return degrade('card-unreadable', `${entry.dirName}/ ${entry.problem}`)
+      // 聊天目录被删：对话记不下来，不装五段（聊天中不可逆，也不退回选角）
+      const chatId = cc.record?.chatId
+      if (!chatId || !(await findChatDir(cc.tavern.dir, chatId))) {
+        return degrade('chat-missing', `chatId=${chatId ?? '（无）'}`)
+      }
       const [world, me, memory] = await Promise.all([
         readWorld(cc.tavern.dir), readMe(cc.tavern.dir), readMemoryText(path.join(entry.dir, MEMORY_FILE)),
       ])
