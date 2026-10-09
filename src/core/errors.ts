@@ -9,6 +9,12 @@ export type AhaErrorCode =
   | 'lock-timeout'
   | 'registry-invalid'
   | 'theme-invalid'
+  | 'character-exists'
+  | 'character-not-found'
+  | 'card-invalid'
+  | 'memory-invalid'
+  | 'chat-not-found'
+  | 'chat-invalid'
 
 export class AhaError extends Error {
   readonly code: AhaErrorCode
