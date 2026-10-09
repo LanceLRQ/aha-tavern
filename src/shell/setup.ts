@@ -231,6 +231,7 @@ export function installSetup(ctx: Context, rt: Runtime): void {
   // 同一会话的确认卡片排队执行（工具保存与导入共用一把）；同一轮内被拒绝的保存不再重复弹卡片
   const gate = new SessionGate()
   const declines = new DeclineTracker()
+  rt.cards = { gate, getAsk: () => ask }
   registerSetupTools(ctx, rt, async (agent) => {
     if (services) await sections.refresh(agent, services, await rt.theme())
   }, () => ask, { gate, declines })

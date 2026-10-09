@@ -732,6 +732,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
   const env: ChatEnv = {
     rt, sections, gate: new SessionGate(), getAsk: () => ask, getServices: () => services, now: () => new Date(),
   }
+  rt.cards = { gate: env.gate, getAsk: () => ask }
   const host = ctx as unknown as ChatHost
   host.inject(['userQuestions'], (c) => {
     const uq = (c as unknown as { userQuestions: { ask: AskFn } }).userQuestions
@@ -750,6 +751,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
     },
     onChange: drawPromptSync(drawSections, (m) => rt.log.warn(m)),
   })
+  rt.drawing = drawing
   const drawTurns = new RememberTurns()
   const drawEcho = new DrawEcho(rt.log)
   const draw = drawTool({ rt, getServices: () => services, drawing, turns: drawTurns, echo: drawEcho })

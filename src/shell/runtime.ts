@@ -7,6 +7,8 @@ import { expandHome } from '../core/fsx'
 import type { CommandId } from '../core/dispatch'
 import { loadTheme, type Theme } from '../core/theme'
 import type { CommandHandler, HostTools } from './context'
+import type { AskFn, SessionGate } from './confirm'
+import type { DrawAvailability } from './draw'
 
 export interface Log {
   debug(msg: string): void
@@ -28,6 +30,10 @@ export interface Runtime {
   theme(): Promise<Theme>
   /** "执行"分支的处理函数表。在 handlers.ts 里往里登记。 */
   readonly handlers: Partial<Record<CommandId, CommandHandler>>
+  /** 单聊模式的画图能力判定；由 installChat 创建后赋值，自检用它刷新当前会话。 */
+  drawing?: DrawAvailability
+  /** 本模式的提问服务与同会话卡片队列；由 installSetup / installChat 赋值，自检的卡片用它。 */
+  cards?: { gate: SessionGate; getAsk(): AskFn | undefined }
 }
 
 /** dist/index.js 的上一级的 themes/；源码态（src/index.ts）下同样成立。 */

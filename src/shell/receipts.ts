@@ -3,6 +3,7 @@ import type { TavernMode } from '../config'
 import type { DispatchReason } from '../core/dispatch'
 import type { OutsideReason } from '../core/state'
 import type { Theme } from '../core/theme'
+import type { DoctorFailKind, DrawDoctorReport } from './draw-doctor'
 
 export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊' }
 
@@ -74,10 +75,16 @@ export function pendingReceipt(label: string): Reply {
 /** 重新生图：这个会话没有画图能力。not-configured 指向安装文档，其余原因指向自检。 */
 export function rerollUnavailableReceipt(reason: string): Reply {
   if (reason === 'not-configured') return guide('还没有配置生图服务。配置方法见 docs/image-setup.md，配好后用 /aha 自检 检查。')
-  const why: Record<string, string> = {
-    unreachable: '连不上服务', error: '读取配置时出错', readonly: '酒馆数据比插件新，只读', 'not-chatting': '还没有开始聊天',
-  }
-  return fail(`生图服务当前不可用（${why[reason] ?? '原因不明'}）。用 /aha 自检 看看哪里出了问题。`)
+  return fail(`生图服务当前不可用（${unavailableWhy(reason)}）。用 /aha 自检 看看哪里出了问题。`)
+}
+
+const UNAVAILABLE_WHY: Record<string, string> = {
+  'not-configured': '还没有配置生图服务', unreachable: '连不上服务', error: '读取配置时出错', readonly: '酒馆数据比插件新，只读', 'not-chatting': '还没有开始聊天',
+}
+
+/** 画图能力不可用原因的中文说法。 */
+export function unavailableWhy(reason: string): string {
+  return UNAVAILABLE_WHY[reason] ?? '原因不明'
 }
 
 export function rerollNothingReceipt(): Reply {
@@ -111,6 +118,10 @@ export interface DoctorInfo {
   webSearch: WebSearchStatus
   /** 酒馆数据版本较新，只能查看。 */
   readonly?: boolean
+  /** 生图一行小结（放在模式之后、酒馆路径之前）。 */
+  drawing?: string
+  /** 行末是否提示"看详情"。 */
+  drawingHint?: boolean
 }
 
 const WEB_LABEL: Record<WebSearchStatus, string> = { available: '可用', unavailable: '不可用', unknown: '未知' }
@@ -121,7 +132,191 @@ export function doctorLine(theme: Theme, info: DoctorInfo): string {
     : info.outsideReason === 'no-workspace'
       ? '门外（会话没有工作区）'
       : `门外（这里不是${theme.concept('tavern')}）`
-  return `当前状态：模式 ${MODE_LABEL[info.mode]}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}${info.readonly ? '；只读（数据版本较新）' : ''}`
+  const draw = info.drawing ? `；${info.drawing}` : ''
+  const hint = info.drawing && info.drawingHint ? DOCTOR_DETAIL_HINT : ''
+  return `当前状态：模式 ${MODE_LABEL[info.mode]}${draw}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}${info.readonly ? '；只读（数据版本较新）' : ''}${hint}`
+}
+
+// ---------- 自检的生图一段 ----------
+
+const DOCTOR_FAIL_TEXT: Record<DoctorFailKind, string> = {
+  unreachable: '连不上', 'missing-node': '缺少节点', 'missing-model': '缺少模型文件', timeout: '超时', cancelled: '已取消',
+  save: '图片保存失败', other: '出错',
+}
+
+const GGUF_NODE = 'UnetLoaderGGUF'
+const ITEM_CHARS = 120
+const LIST_MAX = 10
+export const DOCTOR_DETAIL_HINT = '（/aha 自检 生图 看详情）'
+
+const clip = (s: string, max = ITEM_CHARS): string => {
+  const chars = [...s.replace(/[\r\n]+/g, ' ')]
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : chars.join('')
+}
+
+/** 最多列 LIST_MAX 项，超出的以"等 N 项"收尾（N 为总数）。 */
+function capList<T>(items: T[]): { shown: T[]; more: string } {
+  return items.length > LIST_MAX ? { shown: items.slice(0, LIST_MAX), more: `等 ${items.length} 项` } : { shown: items, more: '' }
+}
+
+interface DoctorItem {
+  mark: string
+  text: string
+  /** 模型下载地址 */
+  url?: string
+}
+
+/** 没通过的项的短说法，一项一条；按检查顺序。服务地址只显示主机与端口。 */
+export function drawDoctorIssues(r: DrawDoctorReport): string[] {
+  if (!r.configured) return ['未配置']
+  const out: string[] = []
+  if (r.service && !r.service.connected) {
+    out.push(r.service.credentials ? '地址里带了用户名和密码' : `连不上 ${r.service.host}`)
+  }
+  if (r.workflow && !r.workflow.ok) out.push('工作流读不了')
+  if (r.nodes?.error) out.push('读不到节点信息')
+  for (const n of r.nodes?.missing ?? []) out.push(`缺少节点 ${clip(n)}`)
+  for (const m of r.models?.missing ?? []) out.push(`缺少模型 ${clip(m.file)}`)
+  return out
+}
+
+function drawDoctorItems(r: DrawDoctorReport): DoctorItem[] {
+  const items: DoctorItem[] = []
+  const problems = (): void => {
+    const { shown, more } = capList(r.problems)
+    for (const p of shown) items.push({ mark: '!', text: clip(p) })
+    if (more) items.push({ mark: '!', text: more })
+  }
+  if (!r.configured) {
+    items.push({ mark: '', text: '生图：未配置。配置方法见 docs/image-setup.md。' })
+    problems()
+    return items
+  }
+  const s = r.service
+  if (s) {
+    if (s.credentials) items.push({ mark: '✗', text: `生图服务 ${s.host} 地址里不要带用户名和密码` })
+    else {
+      items.push(s.connected
+        ? { mark: '✓', text: `生图服务 ${s.host} 已连上（ComfyUI ${s.version || '版本未知'}）` }
+        : { mark: '✗', text: `生图服务 ${s.host} 连不上` })
+    }
+  }
+  if (r.workflow) {
+    items.push(r.workflow.ok
+      ? { mark: '✓', text: `工作流 ${clip(r.workflow.name)}` }
+      : { mark: '✗', text: `工作流 ${clip(r.workflow.name)}：${clip(r.workflow.reason ?? '读不了')}` })
+  }
+  if (r.nodes) {
+    if (r.nodes.error) items.push({ mark: '✗', text: '读不到节点信息' })
+    else if (r.nodes.missing.length === 0) items.push({ mark: '✓', text: `节点齐全（${r.nodes.total} 种）` })
+    else {
+      const { shown, more } = capList(r.nodes.missing)
+      items.push({ mark: '✗', text: `缺少节点：${shown.map((n) => clip(n)).join('、')}${more ? `${more}` : ''}` })
+      if (r.nodes.missing.includes(GGUF_NODE)) {
+        items.push({ mark: '', text: `${GGUF_NODE} 来自自定义节点 ComfyUI-GGUF；装上它，或把 workflow 改成 qwen-image-2.1（只用自带节点）。` })
+      }
+    }
+  }
+  if (r.models) {
+    if (r.models.missing.length === 0 && r.models.unsure.length === 0) items.push({ mark: '✓', text: '模型文件齐全' })
+    const miss = capList(r.models.missing)
+    for (const m of miss.shown) {
+      items.push({
+        mark: '✗', text: `缺少模型 ${clip(m.file)}${m.dir ? `，放到 ComfyUI/models/${clip(m.dir)}/` : ''}`,
+        ...(m.url ? { url: m.url } : {}),
+      })
+    }
+    if (miss.more) items.push({ mark: '✗', text: `缺少模型${miss.more}` })
+    const unsure = capList(r.models.unsure)
+    for (const f of unsure.shown) items.push({ mark: '?', text: `无法确认模型 ${clip(f)}` })
+    if (unsure.more) items.push({ mark: '?', text: `无法确认模型${unsure.more}` })
+  }
+  const t = r.trial
+  if (t?.status === 'ok') items.push({ mark: '✓', text: `试出图成功，用时 ${t.seconds} 秒：${t.path}` })
+  else if (t?.status === 'failed') items.push({ mark: '✗', text: `试出图失败（${DOCTOR_FAIL_TEXT[t.kind]}）` })
+  else if (t?.status === 'skipped') items.push({ mark: '', text: '前面有未通过的项，没有试出图。' })
+  problems()
+  return items
+}
+
+/** 没有提问服务时的降级：全部项压成一行，用"；"连接。 */
+export function drawDoctorOneLine(r: DrawDoctorReport): string {
+  return drawDoctorItems(r)
+    .flatMap((i) => [`${i.mark ? `${i.mark} ` : ''}${i.text}`, ...(i.url ? [`下载地址：${i.url}`] : [])])
+    .join('；')
+}
+
+const SAFE_LINK = /^https?:\/\/[^\s()<>`]+$/
+
+const mdText = (s: string): string => s.replace(/[`*_\[\]<>|\\]/g, (c) => `\\${c}`)
+
+/** 卡片里的完整报告：Markdown 列表，一项一行，下载地址是可点击的链接。 */
+export function drawDoctorMarkdown(r: DrawDoctorReport): string {
+  return drawDoctorItems(r)
+    .map((i) => {
+      let line = `- ${i.mark ? `${i.mark} ` : ''}${mdText(i.text)}`
+      if (i.url) line += SAFE_LINK.test(i.url) ? `\n  - [下载地址](${i.url})` : `\n  - 下载地址：${mdText(i.url)}`
+      return line
+    })
+    .join('\n')
+}
+
+export interface DrawDoctorBrief {
+  /** 如 `可用`、`未配置`、`不可用：连不上 10.0.0.1:8188 等 2 项` */
+  status: string
+  /** 括注里的提示 */
+  notes: string[]
+  /** 是否需要在行末提示"看详情" */
+  flagged: boolean
+}
+
+/** 一行小结（不含"生图 "前缀）。 */
+export function drawDoctorBrief(r: DrawDoctorReport): DrawDoctorBrief {
+  if (!r.configured) return { status: '未配置', notes: [], flagged: true }
+  const issues = drawDoctorIssues(r)
+  if (issues.length > 0) {
+    const more = issues.length > 1 ? ` 等 ${issues.length} 项` : ''
+    return { status: `不可用：${issues[0]}${more}`, notes: [], flagged: true }
+  }
+  const notes: string[] = []
+  if (r.problems.length > 0) notes.push(`配置有 ${r.problems.length} 处写法不对`)
+  if ((r.models?.unsure.length ?? 0) > 0) notes.push(`有 ${r.models!.unsure.length} 个模型无法确认`)
+  return { status: '可用', notes, flagged: notes.length > 0 }
+}
+
+/** 检查后会话画图能力与小结不一致时的括注。 */
+export function drawSessionNote(briefOk: boolean, available: boolean, reason: string): string | null {
+  if (available === briefOk) return null
+  if (available) return '这个会话可以画图'
+  return reason === 'readonly' ? '这个会话只读，不能画图' : `这个会话不能画图：${unavailableWhy(reason)}`
+}
+
+/** 拼成放进状态行的片段：`生图 可用（…）`。 */
+export function drawBriefText(b: DrawDoctorBrief, sessionNote: string | null = null): string {
+  const notes = sessionNote ? [...b.notes, sessionNote] : b.notes
+  return `生图 ${b.status}${notes.length > 0 ? `（${notes.join('；')}）` : ''}`
+}
+
+/** 卡片自检结束的一行回执。 */
+export function drawDoctorCardReceipt(r: DrawDoctorReport): Reply {
+  const t = r.trial
+  if (t?.status === 'ok') return guide(`生图自检：全部通过，试出图成功（${t.seconds} 秒）。`)
+  if (t?.status === 'failed') return guide(`生图自检：全部通过，试出图失败（${DOCTOR_FAIL_TEXT[t.kind]}）。`)
+  const n = drawDoctorIssues(r).length
+  return guide(n === 0 ? '生图自检：全部通过。' : `生图自检：${n} 项未通过。`)
+}
+
+export const DOCTOR_CANCELLED_TEXT = '自检已取消。'
+export const DOCTOR_CARD_BUSY_TEXT = '有一张卡片还没回答，先处理它再自检。'
+
+/** 试出图结果卡片的正文（Markdown）。 */
+export function drawTrialMarkdown(t: NonNullable<DrawDoctorReport['trial']>): string {
+  if (t.status === 'ok') {
+    // 卡片不渲染图片（实测只显示替代文字），所以只给路径
+    return `- ✓ 试出图成功，用时 ${t.seconds} 秒\n- 图片存在：\`${t.path.replace(/`/g, "'")}\`\n- 可以打开这个文件看看效果；它在系统临时目录里，不用管它`
+  }
+  if (t.status === 'failed') return `- ✗ 试出图失败（${DOCTOR_FAIL_TEXT[t.kind]}）`
+  return '- 前面有未通过的项，没有试出图。'
 }
 
 /** 开店时会话没有工作区。 */
