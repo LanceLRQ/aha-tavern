@@ -24,7 +24,7 @@ type Row = Record<CommandId, Cell>
 
 const run: Cell = 'run'
 
-// 重掷与朗读一期尚未提供：表里每一格都是 unavailable
+// 重新生图（reroll）只在单聊·聊天中可用；说话（speak）尚未提供，表里每一格都是 unavailable
 
 const TABLE: Record<TavernMode, Partial<Record<SessionState, Row>>> = {
   setup: {
@@ -49,7 +49,7 @@ const TABLE: Record<TavernMode, Partial<Record<SessionState, Row>>> = {
     },
     chatting: {
       init: 'go-setup', card: 'go-setup', me: 'go-setup', world: 'go-setup', import: 'go-setup',
-      start: 'new-session', remember: run, reroll: 'unavailable', speak: 'unavailable', doctor: run,
+      start: 'new-session', remember: run, reroll: run, speak: 'unavailable', doctor: run,
     },
   },
 }

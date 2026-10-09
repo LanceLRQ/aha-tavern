@@ -30,7 +30,7 @@ import { flatText, makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
 import { createMemoryEnv, onChatStep, RememberTurns, rememberHandler, rememberTool, reviewTool } from './remember'
 import { recallTool } from './recall'
-import { defaultDrawDeps, drawPromptSync, DrawAvailability, DrawEcho, drawTool } from './draw'
+import { defaultDrawDeps, drawPromptSync, DrawAvailability, DrawEcho, drawTool, rerollHandler } from './draw'
 import { resolveChatTarget, TranscriptRecorder, type ChatTarget } from './transcript'
 import { isReadonly } from './writable'
 
@@ -757,6 +757,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
     start: startTool(env), remember: rememberTool(memoryEnv), review: reviewTool(memoryEnv), recall: recallTool(memoryEnv), draw,
   })
   rt.handlers.start = startHandler(env)
+  rt.handlers.reroll = rerollHandler({ drawing })
   rt.handlers.remember = rememberHandler(memoryEnv)
   host.inject(['agentPresets'], (c) => {
     services = c

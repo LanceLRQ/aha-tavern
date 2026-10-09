@@ -9,7 +9,7 @@ const SHEET: Record<string, string> = {
   'setup/preparing':  'A R R R R C M U U R',
   'chat/outside':     'S S S S S S M U U R',
   'chat/picking':     'S S S S S R M U U R',
-  'chat/chatting':    'S S S S S N R U U R',
+  'chat/chatting':    'S S S S S N R R U R',
 }
 const REASON: Record<string, string> = {
   I: 'init-first', S: 'go-setup', C: 'go-chat', N: 'new-session', A: 'already-tavern', M: 'meaningless', U: 'unavailable',
@@ -29,12 +29,13 @@ describe('dispatch 逐格核对', () => {
       })
     })
   }
-  it('reroll / speak 任何组合都 unavailable', () => {
+  it('speak 任何组合都 unavailable；reroll 只有单聊·聊天中可用', () => {
     for (const key of Object.keys(SHEET)) {
       const [mode, state] = key.split('/') as ['setup' | 'chat', 'outside']
-      for (const cmd of ['reroll', 'speak'] as const) {
-        expect(dispatch(mode, state, cmd)).toEqual({ run: false, reason: 'unavailable' })
-      }
+      expect(dispatch(mode, state, 'speak')).toEqual({ run: false, reason: 'unavailable' })
+      expect(dispatch(mode, state, 'reroll')).toEqual(
+        key === 'chat/chatting' ? { run: true } : { run: false, reason: 'unavailable' },
+      )
     }
   })
   it('模式与状态不匹配的组合按无意义处理', () => {

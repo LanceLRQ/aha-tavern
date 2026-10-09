@@ -71,6 +71,23 @@ export function pendingReceipt(label: string): Reply {
   return guide(`${label}：尚未接上。`)
 }
 
+/** 重新生图：这个会话没有画图能力。not-configured 指向安装文档，其余原因指向自检。 */
+export function rerollUnavailableReceipt(reason: string): Reply {
+  if (reason === 'not-configured') return guide('还没有配置生图服务。配置方法见 docs/image-setup.md，配好后用 /aha 自检 检查。')
+  const why: Record<string, string> = {
+    unreachable: '连不上服务', error: '读取配置时出错', readonly: '酒馆数据比插件新，只读', 'not-chatting': '还没有开始聊天',
+  }
+  return fail(`生图服务当前不可用（${why[reason] ?? '原因不明'}）。用 /aha 自检 看看哪里出了问题。`)
+}
+
+export function rerollNothingReceipt(): Reply {
+  return guide('这次聊天里还没有画过图。')
+}
+
+export function rerollStartedReceipt(withChange: boolean): Reply {
+  return guide(withChange ? '已请 TA 按你的修改重新画上一张。' : '已请 TA 重新画上一张。')
+}
+
 export function failureReceipt(message: string): Reply {
   return fail(`没能完成：${message}`)
 }
