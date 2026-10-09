@@ -116,7 +116,7 @@ export interface Invocation {
   steer(text: string, summary: string): void
   /** 子命令后面的参数（已去首尾空白）。 */
   args: string
-  /** 用户敲的写法，如 `/aha 开店` 或 `/aha-init`。 */
+  /** 用户敲的写法，如 `/aha 启动` 或 `/aha-init`。 */
   label: string
   /** 命令调用所属 UI 请求的取消信号（宿主 CommandInvocation.signal）；拿不到为 undefined。 */
   signal?: AbortSignal

@@ -77,7 +77,7 @@ describe('命令入口', () => {
     const h = vi.fn()
     rt.handlers.card = h
     rt.handlers.doctor = () => ({ kind: 'success', text: 'ok' })
-    const r = await handleCommand(rt, services, agentAt(), parseSubcommand('建卡'), '/aha 建卡')
+    const r = await handleCommand(rt, services, agentAt(), parseSubcommand('角色'), '/aha 角色')
     expect(h).not.toHaveBeenCalled()
     expect(r).toEqual(readonlyReceipt(theme))
     expect(r.text).toContain('数据比插件新')
@@ -88,7 +88,7 @@ describe('命令入口', () => {
     const rt = rtOf()
     const h = vi.fn(() => ({ kind: 'success' as const, text: '好' }))
     rt.handlers.card = h
-    await handleCommand(rt, services, agentAt(), parseSubcommand('建卡'), '/aha 建卡')
+    await handleCommand(rt, services, agentAt(), parseSubcommand('角色'), '/aha 角色')
     expect(h).toHaveBeenCalled()
   })
 

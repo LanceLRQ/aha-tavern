@@ -327,7 +327,7 @@ export async function onChatStep(
   return due
 }
 
-// ---------- 记住 命令 ----------
+// ---------- 记忆 命令 ----------
 
 export const REVIEW_REQUEST_TEXT = '（通知）user 想让你现在整理一下记忆。请调用 aha_review 一次：'
   + 'summary（这次聊天到目前为止的梗概）和 title（一句话标题）必须给；'

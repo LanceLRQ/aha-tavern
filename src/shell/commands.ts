@@ -11,7 +11,10 @@ import type { Runtime } from './runtime'
 
 export interface Subcommand {
   id: CommandId
+  /** 中文主名：命令菜单、回执与文档里用它。 */
   zh: string
+  /** 中文同义写法：解析时与主名等价，不出现在菜单里。 */
+  aliases: readonly string[]
   /** 英文名即 id；同时是独立命令 `aha-<en>` 的后缀。 */
   en: CommandId
   /** 命令菜单里的说明：通用用词，不随主题变。 */
@@ -19,21 +22,22 @@ export interface Subcommand {
   hint?: string
 }
 
-const sub = (id: CommandId, zh: string, description: string, hint?: string): Subcommand => ({
-  id, zh, en: id, description, ...(hint ? { hint } : {}),
+/** names 的第一个是中文主名，其余是同义写法。 */
+const sub = (id: CommandId, names: readonly [string, ...string[]], description: string, hint?: string): Subcommand => ({
+  id, zh: names[0], aliases: names.slice(1), en: id, description, ...(hint ? { hint } : {}),
 })
 
 export const SUBCOMMANDS: readonly Subcommand[] = [
-  sub('init', '开店', '把当前工作区变成一间酒馆'),
-  sub('card', '建卡', '新建或修改角色卡', '[角色名]'),
-  sub('me', '我', '写或改主角档案'),
-  sub('world', '世界观', '写或改世界观'),
-  sub('import', '导入', '从另一间酒馆复制角色卡或主角档案'),
-  sub('start', '开场', '选定角色，开始聊天', '[角色名]'),
-  sub('remember', '记住', '记一句话，或让角色回顾并整理记忆', '[内容]'),
-  sub('reroll', '重掷', '上一张图重新生成', '[修改词]'),
-  sub('speak', '朗读', '念出来', '[文本]'),
-  sub('doctor', '自检', '检查当前状态与外部服务'),
+  sub('init', ['启动', '开店', '开张'], '把当前工作区变成一间酒馆'),
+  sub('card', ['角色', '角色卡', '建卡'], '新建或修改角色卡', '[角色名]'),
+  sub('me', ['我'], '写或改主角档案'),
+  sub('world', ['世界观'], '写或改世界观'),
+  sub('import', ['导入'], '从另一间酒馆复制角色卡或主角档案'),
+  sub('start', ['开场'], '选定角色，开始聊天', '[角色名]'),
+  sub('remember', ['记忆', '记住'], '记一句话，或让角色回顾并整理记忆', '[内容]'),
+  sub('reroll', ['重新生图', '重掷'], '上一张图重新生成', '[修改词]'),
+  sub('speak', ['说话', '朗读'], '念出来', '[文本]'),
+  sub('doctor', ['自检'], '检查当前状态与外部服务'),
 ]
 
 export type ParsedSubcommand =
@@ -41,14 +45,14 @@ export type ParsedSubcommand =
   | { kind: 'unknown'; word: string }
   | { kind: 'empty' }
 
-/** 解析 `/aha` 后面的文字：第一个词是子命令（中文精确、英文不分大小写），其余是参数。 */
+/** 解析 `/aha` 后面的文字：第一个词是子命令（中文主名或同义写法须精确，英文不分大小写），其余是参数。 */
 export function parseSubcommand(input: string): ParsedSubcommand {
   const text = input.trim()
   if (text === '') return { kind: 'empty' }
   const m = /^(\S+)\s*([\s\S]*)$/.exec(text)!
   const word = m[1]!
   const lower = word.toLowerCase()
-  const hit = SUBCOMMANDS.find((s) => s.zh === word || s.en === lower)
+  const hit = SUBCOMMANDS.find((s) => s.zh === word || s.aliases.includes(word) || s.en === lower)
   return hit ? { kind: 'command', id: hit.id, args: m[2]!.trim() } : { kind: 'unknown', word }
 }
 

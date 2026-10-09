@@ -311,9 +311,9 @@ describe('审视提醒', () => {
   })
 })
 
-describe('记住 命令', () => {
+describe('记忆 命令', () => {
   const invOf = async (env: MemoryEnv, args: string): Promise<Invocation> => ({
-    agent, services, rt: env.rt as Runtime, theme, context: await buildContext(agent, services), args, label: '/aha 记住',
+    agent, services, rt: env.rt as Runtime, theme, context: await buildContext(agent, services), args, label: '/aha 记忆',
     steer: (text: string) => { steered.push(text) },
   })
 

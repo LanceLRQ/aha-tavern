@@ -12,13 +12,13 @@ const load = async (name: string): Promise<Theme> => (await loadTheme({ name, bu
 const REASONS: DispatchReason[] = [
   'init-first', 'go-setup', 'go-chat', 'new-session', 'already-tavern', 'meaningless', 'unavailable',
 ]
-const subs = [{ zh: '开店', en: 'init' }, { zh: '建卡', en: 'card' }]
+const subs = [{ zh: '启动', en: 'init' }, { zh: '角色', en: 'card' }]
 
 describe('回执文字', () => {
   it('每种原因都有一句非空文字', async () => {
     const t = await load('plain')
     for (const r of REASONS) {
-      expect(dispatchReceipt(t, r, { label: '/aha 开店' }).text.length).toBeGreaterThan(0)
+      expect(dispatchReceipt(t, r, { label: '/aha 启动' }).text.length).toBeGreaterThan(0)
     }
   })
 
@@ -28,7 +28,7 @@ describe('回执文字', () => {
     const not = dispatchReceipt(t, 'init-first', { outsideReason: 'not-tavern' }).text
     expect(none).not.toBe(not)
     expect(none).toContain('工作区')
-    expect(not).toContain('/aha 开店')
+    expect(not).toContain('/aha 启动')
   })
 
   it('单聊在门外：先说明这里还不是酒馆，再请去筹备开店', async () => {
@@ -36,7 +36,7 @@ describe('回执文字', () => {
     const not = dispatchReceipt(t, 'go-setup', { outsideReason: 'not-tavern' }).text
     expect(not).toContain('这里还不是酒馆')
     expect(not).toContain('酒馆:筹备')
-    expect(not).toContain('/aha 开店')
+    expect(not).toContain('/aha 启动')
     const none = dispatchReceipt(t, 'go-setup', { outsideReason: 'no-workspace' }).text
     expect(none).toContain('工作区')
     expect(none).toContain('酒馆:筹备')
@@ -87,16 +87,16 @@ describe('回执文字', () => {
 
   it('措辞带分隔符', async () => {
     const t = await load('plain')
-    expect(dispatchReceipt(t, 'unavailable', { label: '/aha 重掷' }).text).toBe('/aha 重掷：此功能尚未提供。')
-    expect(dispatchReceipt(t, 'meaningless', { label: '/aha 记住' }).text).toContain('/aha 记住：')
+    expect(dispatchReceipt(t, 'unavailable', { label: '/aha 重新生图' }).text).toBe('/aha 重新生图：此功能尚未提供。')
+    expect(dispatchReceipt(t, 'meaningless', { label: '/aha 记忆' }).text).toContain('/aha 记忆：')
     expect(pendingReceipt('/aha 开场').text).toBe('/aha 开场：尚未接上。')
   })
 
   it('未知、空', () => {
     const u = unknownReceipt('跳舞', subs).text
     expect(u).toContain('跳舞')
-    expect(u).toContain('开店')
+    expect(u).toContain('启动')
     expect(u).toContain('card')
-    expect(emptyReceipt(subs).text).toContain('建卡')
+    expect(emptyReceipt(subs).text).toContain('角色')
   })
 })

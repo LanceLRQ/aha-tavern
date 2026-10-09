@@ -18,7 +18,7 @@ export interface SubcommandName {
 }
 
 export interface DispatchReceiptInfo {
-  /** 用户敲的写法，用于"尚未提供"之类的提示，如 `/aha 重掷`。 */
+  /** 用户敲的写法，用于"尚未提供"之类的提示，如 `/aha 重新生图`。 */
   label?: string
   outsideReason?: OutsideReason | null
 }
@@ -34,14 +34,14 @@ function dispatchText(theme: Theme, reason: DispatchReason, info: DispatchReceip
   switch (reason) {
     case 'init-first':
       return info.outsideReason === 'no-workspace'
-        ? `这个会话还没有选工作区。请先选一个工作区，再用 \`/aha 开店\` 把它变成一间${tavern}。`
-        : `这里还不是${tavern}。先用 \`/aha 开店\` 把这里变成一间${tavern}。`
+        ? `这个会话还没有选工作区。请先选一个工作区，再用 \`/aha 启动\` 把它变成一间${tavern}。`
+        : `这里还不是${tavern}。先用 \`/aha 启动\` 把这里变成一间${tavern}。`
     case 'go-setup':
       if (info.outsideReason === 'not-tavern') {
-        return `这里还不是${tavern}。请切换到「${MODE_LABEL.setup}」，用 \`/aha 开店\` 开${tavern}，由${theme.host().name}接待。`
+        return `这里还不是${tavern}。请切换到「${MODE_LABEL.setup}」，用 \`/aha 启动\` 开${tavern}，由${theme.host().name}接待。`
       }
       if (info.outsideReason === 'no-workspace') {
-        return `这个会话还没有选工作区，也就还没有${tavern}。请先选一个工作区，再切换到「${MODE_LABEL.setup}」用 \`/aha 开店\` 开${tavern}，由${theme.host().name}接待。`
+        return `这个会话还没有选工作区，也就还没有${tavern}。请先选一个工作区，再切换到「${MODE_LABEL.setup}」用 \`/aha 启动\` 开${tavern}，由${theme.host().name}接待。`
       }
       return `这件事归${theme.host().name}在「${MODE_LABEL.setup}」里办，请切换到那个模式再试。`
     case 'go-chat':
@@ -124,7 +124,7 @@ export function initDoneReceipt(
   return guide(base + reg + gd)
 }
 
-// ---------- 建卡命令的回执 ----------
+// ---------- 角色命令的回执 ----------
 
 const CARD_PROBLEM: Record<string, string> = {
   'file-missing': '文件不存在',
@@ -134,12 +134,12 @@ const CARD_PROBLEM: Record<string, string> = {
   unreadable: '读不出来',
 }
 
-/** 建卡不带名字：请掌柜听用户描述。 */
+/** 角色命令不带名字：请掌柜听用户描述。 */
 export function cardAskReceipt(theme: Theme): Reply {
   return guide(`${theme.host().name}正在等你描述想要的${theme.concept('character')}。`)
 }
 
-/** 建卡带名字且匹配到好卡：请掌柜进入修改流程。 */
+/** 角色命令带名字且匹配到好卡：请掌柜进入修改流程。 */
 export function cardEditReceipt(theme: Theme, name: string): Reply {
   return guide(`${theme.host().name}正在看「${name}」的${theme.concept('card')}。`)
 }
@@ -148,7 +148,7 @@ export function cardAmbiguousReceipt(theme: Theme, names: readonly string[]): Re
   return guide(`有好几个${theme.concept('character')}都对得上：${names.join('、')}。请把名字写全一些再试。`)
 }
 
-/** 建卡带名字但没有同名角色：按新建处理，名字用它。 */
+/** 角色命令带名字但没有同名角色：按新建处理，名字用它。 */
 export function cardNewNamedReceipt(theme: Theme, input: string): Reply {
   return guide(`还没有叫「${input}」的${theme.concept('character')}，${theme.host().name}会按这个名字新建，等你描述一下 TA。`)
 }

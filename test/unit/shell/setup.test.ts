@@ -262,7 +262,7 @@ describe('SetupSections：登记表同步（规格 11）', () => {
 describe('initHandler', () => {
   const invOf = (cwd: string, sections: SetupSections, steer: Invocation['steer']): Invocation => ({
     agent: { id: 's1', ctx: {}, session: { header: { cwd } } },
-    services: svc, rt: rtOf(), theme, steer, args: '', label: '/aha 开店',
+    services: svc, rt: rtOf(), theme, steer, args: '', label: '/aha 启动',
     context: { mode: 'setup', cwd, sessionId: 's1', tavern: null, state: 'outside', outsideReason: 'not-tavern', record: null },
   } as Invocation)
 

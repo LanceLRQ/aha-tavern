@@ -318,7 +318,7 @@ describe('工具返回值里的外部文字隔离', () => {
 describe('cardHandler', () => {
   const invOf = (args: string, tavern: object | null, steer: Invocation['steer']): Invocation => ({
     agent: { id: 's', ctx: {} }, services: {} as never,
-    rt: { log: { debug: vi.fn() } } as unknown as Runtime, theme, steer, args, label: '/aha 建卡',
+    rt: { log: { debug: vi.fn() } } as unknown as Runtime, theme, steer, args, label: '/aha 角色',
     context: { mode: 'setup', cwd: dir, sessionId: 's', tavern, state: 'preparing', outsideReason: null, record: null },
   } as unknown as Invocation)
 

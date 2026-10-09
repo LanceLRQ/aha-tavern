@@ -203,7 +203,7 @@ export function docHandler(kind: 'profile' | 'world'): CommandHandler {
   }
 }
 
-/** `建卡` 命令：不带名字请掌柜听描述；带名字匹配后进入修改流程，或回执说明。 */
+/** `角色` 命令：不带名字请掌柜听描述；带名字匹配后进入修改流程，或回执说明。 */
 export function cardHandler(): CommandHandler {
   return async ({ rt, theme, context, args, steer }) => {
     const tavern = context.tavern
