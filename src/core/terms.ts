@@ -9,12 +9,3 @@ export const ACTION_IDS = ['init', 'import', 'wrap'] as const
 
 export type ConceptId = (typeof CONCEPT_IDS)[number]
 export type ActionId = (typeof ACTION_IDS)[number]
-
-export const terms = { concepts: CONCEPT_IDS, actions: ACTION_IDS } as const
-
-export function isConceptId(s: string): s is ConceptId {
-  return (CONCEPT_IDS as readonly string[]).includes(s)
-}
-export function isActionId(s: string): s is ActionId {
-  return (ACTION_IDS as readonly string[]).includes(s)
-}

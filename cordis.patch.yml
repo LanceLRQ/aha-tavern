@@ -1,7 +1,8 @@
 # 阿哈酒馆 bundle 层：向 profile 注册两个酒馆模式。
 # 每个模式是一份独立清单，只挂自己需要的插件；都不挂编码工具。
 # 筹备模式自带联网搜索（MCP: open-websearch）。要关掉它，在自己 profile 的
-# cordis.patch.yml 里按 id 覆盖：见 examples/dev.example.yml 的说明。
+# cordis.patch.yml 里整条覆盖 preset-tavern-setup（内嵌条目不能单独覆盖），
+# plugins 里不写 mcp-websearch 那一条：见 examples/dev.example.yml 的说明。
 - insert:
     - id: preset-tavern-setup
       name: '@deepseek-ai/dsh-agent-preset'

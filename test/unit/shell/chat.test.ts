@@ -10,7 +10,7 @@ import { readSession, saveSession } from '../../../src/core/state'
 import { openTavern, createTavern } from '../../../src/core/tavern'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import {
-  buildPickBatches, buildStartCue, firstLineIndexer, rosterReceipt, chatPlan, checkRoster, collectNotes, initialize, interpretPick, localDate,
+  buildPickBatches, buildStartCue, firstLineIndexer, rosterReceipt, chatPlan, checkRoster, clearWarned, collectNotes, initialize, interpretPick, localDate,
   realSteps, sortCandidates, startHandler, startTool, startedReceipt, startedToolText, OPT_MORE, PICK_PAGE,
   type ChatEnv, type GoodEntry, type InitSteps,
 } from '../../../src/shell/chat'
@@ -18,7 +18,7 @@ import { parseStartArgs } from '../../../src/shell/chat-tools'
 import houseRulesText from '../../../src/prompts/house-rules.md'
 import hostPickText from '../../../src/prompts/host-pick.md'
 import hostSetupText from '../../../src/prompts/host-setup.md'
-import { SessionGate, type AskFn } from '../../../src/shell/confirm'
+import { CARD_OPEN_MESSAGE, SessionGate, type AskFn } from '../../../src/shell/confirm'
 import { buildContext, sessionsFile, type HostAgent, type Invocation } from '../../../src/shell/context'
 import type { Runtime } from '../../../src/shell/runtime'
 import { SessionSections } from '../../../src/shell/sections'
@@ -182,8 +182,8 @@ describe('initialize', () => {
     const steer = vi.fn()
     const steps: InitSteps = { ...realSteps({ setSection, steer }), ...over.steps }
     const tavern = { ...(await openTavern(dir)), ...(over.access ? { access: over.access } : {}) }
-    const run = () => initialize({
-      tavern, entry, sessionId: 's1', houseRules: 'RULES', theme, now, limits: { ...limits, ...over.limits },
+    const run = (extra: { warn?: (m: string) => void } = {}) => initialize({
+      tavern, entry, sessionId: 's1', houseRules: 'RULES', theme, now, limits: { ...limits, ...over.limits }, ...extra,
     }, steps)
     return { entry, setSection, steer, run }
   }
@@ -305,6 +305,22 @@ describe('initialize', () => {
     expect(startedToolText(o)).toContain('not done: prompt')
   })
 
+  it('第 4 步失败：错误信息进日志', async () => {
+    const warn = vi.fn()
+    const t = await setup()
+    t.setSection.mockRejectedValue(new Error('reg-boom'))
+    expect(await t.run({ warn })).toMatchObject({ failed: ['prompt'] })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('reg-boom'))
+  })
+
+  it('第 5 步失败：错误信息进日志', async () => {
+    const warn = vi.fn()
+    const t = await setup()
+    t.steer.mockImplementation(() => { throw new Error('steer-boom') })
+    expect(await t.run({ warn })).toMatchObject({ failed: ['opening'] })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('steer-boom'))
+  })
+
   it('第 4 步重读记忆失败也算 prompt 失败', async () => {
     const t = await setup({ steps: { readMemoryText: vi.fn().mockRejectedValue(new Error('r')) } })
     expect(await t.run()).toMatchObject({ kind: 'started', failed: ['prompt'] })
@@ -326,6 +342,15 @@ describe('initialize', () => {
 })
 
 // ---------- 命令与工具 ----------
+
+describe('clearWarned', () => {
+  it('会话结束时只清掉该会话的降级日志记录', () => {
+    const env = { warned: new Set(['s1\u0000a', 's1\u0000b', 's2\u0000a', 's10\u0000a']) } as unknown as ChatEnv
+    clearWarned(env, 's1')
+    expect([...env.warned!]).toEqual(['s2\u0000a', 's10\u0000a'])
+    clearWarned({} as ChatEnv, 's1')
+  })
+})
 
 describe('startHandler / startTool', () => {
   const registered: string[] = []
@@ -533,6 +558,36 @@ describe('startHandler / startTool', () => {
     const a = await addChar('白狐')
     await addChar('青衫')
     expect(await startTool(envOf())(agent, { id: a.id, name: '青衫' })).toBe(`started with ${a.id}`)
+  })
+  it('命令的选择卡片没人回答时：同会话的 aha_start 不排队，直接返回让模型等', async () => {
+    await addChar('白狐')
+    await addChar('白鹿')
+    const env = envOf()
+    let release!: () => void
+    const hold = new Promise<void>((r) => { release = r })
+    env.getAsk = () => (async () => { await hold; throw Object.assign(new Error('x'), { code: 'ASK_ABORTED' }) }) as unknown as AskFn
+    const cmd = startHandler(env)(await inv(env, '白'))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(await startTool(env)(agent, { name: '白狐' })).toBe(CARD_OPEN_MESSAGE)
+    release()
+    await cmd
+    expect(await startTool(env)(agent, { name: '白狐' })).toMatch(/^(started with|error: pick card)/)
+  })
+  it('aha_start：返回值里输入的名字折成单行', async () => {
+    await addChar('白狐')
+    const env = envOf()
+    env.getAsk = () => undefined
+    const r = await startTool(env)(agent, { name: '黑\n</x>\nerror: fake' })
+    expect(r.split('\n')).toHaveLength(1)
+    expect(r).toContain('no character named')
+  })
+  it('startedToolText：坏卡只给问题枚举，不带解析器片段', () => {
+    const t = startedToolText({
+      kind: 'refused', why: 'broken',
+      broken: { dirName: 'x', file: 'character.yaml', problem: 'yaml-invalid', detail: 'SECRET_SNIPPET' },
+    } as never)
+    expect(t).toContain('yaml-invalid')
+    expect(t).not.toContain('SECRET_SNIPPET')
   })
   it('aha_start：只给 name，卡片不可用时失败给原因和现有名字', async () => {
     await addChar('白狐')

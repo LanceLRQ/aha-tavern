@@ -281,7 +281,7 @@ export function importHandler(
   sections: Pick<SetupSections, 'refresh'>, getAsk: () => AskFn | undefined, hooks: ImportHooks = {},
 ): CommandHandler {
   const now = hooks.now ?? (() => new Date().toISOString())
-  return (inv) => (hooks.gate ? hooks.gate.run(inv.agent.id, () => runImport(inv)) : runImport(inv))
+  return (inv) => (hooks.gate ? hooks.gate.run(inv.agent.id, () => runImport(inv), 'command') : runImport(inv))
 
   async function runImport({ agent, services, rt, theme, context, signal }: Parameters<CommandHandler>[0]): Promise<Reply> {
     const tavern = context.tavern

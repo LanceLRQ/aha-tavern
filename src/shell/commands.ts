@@ -132,7 +132,7 @@ async function processCommand(
   }
 }
 
-/** 注册时 inject 的宿主服务。后续任务要用别的服务，在这里加一项。 */
+/** 注册时 inject 的宿主服务。要用别的服务，在这里加一项。 */
 export const HOST_SERVICES = ['commands', 'agentPresets'] as const
 
 interface CommandInvocation {

@@ -22,7 +22,7 @@ export interface Runtime {
   tools(): HostTools | undefined
   /** 命令处理时 await 同一个 Promise；加载失败时拒绝。 */
   theme(): Promise<Theme>
-  /** "执行"分支的处理函数表。后续任务在 handlers.ts 里往里登记。 */
+  /** "执行"分支的处理函数表。在 handlers.ts 里往里登记。 */
   readonly handlers: Partial<Record<CommandId, CommandHandler>>
 }
 

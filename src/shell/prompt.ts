@@ -6,7 +6,7 @@ import type { OutsideReason } from '../core/state'
 import type { Theme } from '../core/theme'
 import { MODE_LABEL } from './receipts'
 import { renderGlossary } from './setup-prompt'
-import { escapeClosingTag } from './steer'
+import { escapeClosingTag, flatText } from './steer'
 
 /** 五段里由外部资料充当内容、需要转义同名闭合标签的标签。 */
 const DATA_TAGS = ['world', 'card', 'profile', 'core_memory'] as const
@@ -58,20 +58,20 @@ export function buildChatPrompt(i: ChatPromptInput): string {
 
 export interface PickFacts {
   place: { kind: 'inside'; name: string } | { kind: 'outside'; reason: OutsideReason }
-  /** 可选的角色（好卡） */
-  characters: Array<{ id: string; name: string; tagline?: string }>
+  /** 可选的角色（好卡）数量 */
+  characterCount: number
   brokenCards: Array<{ dirName: string; problem: string }>
   profile: { empty: boolean; length: number }
   readonly?: boolean
 }
 
 /** 放进状态事实的用户文字：折叠成单行，并转义闭合标签。 */
-const flat = (text: string): string => escapeClosingTag(text.replace(/\s+/g, ' ').trim(), 'pick_state')
+const flat = (text: string): string => flatText(text, 'pick_state')
 
 export function renderPickFacts(f: PickFacts): string {
   const lines = [f.place.kind === 'inside' ? `place: inside tavern "${flat(f.place.name)}"` : `place: outside (${f.place.reason})`]
   // 只给数量：列表由 aha_start 弹出的界面卡片显示，不让模型复述
-  lines.push(f.characters.length === 0 ? 'characters: none' : `characters: ${f.characters.length}`)
+  lines.push(f.characterCount === 0 ? 'characters: none' : `characters: ${f.characterCount}`)
   if (f.brokenCards.length) {
     lines.push(`broken_cards: ${f.brokenCards.map((b) => `${flat(b.dirName)} (${b.problem})`).join('; ')}`)
   }
@@ -90,13 +90,11 @@ export function buildPickPrompt(theme: Theme, guide: string, facts: PickFacts): 
 /** 降级的原因种类：角色卡读不出来 / 聊天的记录目录不见了。 */
 export type DegradeCause = 'card-unreadable' | 'chat-missing'
 
-const flatText = (t: string): string => t.replace(/\s+/g, ' ').trim()
-
 /** 聊天无法正常恢复时的降级段：不扮演角色，照实转告。detail 只用于卡读不出来时说明细节。 */
 export function buildDegradedPrompt(theme: Theme, cause: DegradeCause, detail = ''): string {
   const lines = cause === 'card-unreadable'
     ? [
-      `这场聊天绑定的 card 读不出来${detail ? `（${flatText(detail)}）` : ''}，所以你不要扮演任何 character，也不要假装知道 TA 是谁。`,
+      `这场聊天绑定的 card 读不出来${detail ? `（${flatText(detail, 'house_rules')}）` : ''}，所以你不要扮演任何 character，也不要假装知道 TA 是谁。`,
       `用一两句话如实告诉 user：请去「${MODE_LABEL.setup}」修好这张 card，然后重新打开这个会话。`,
     ]
     : [

@@ -236,7 +236,6 @@ export function reviewTool(env: MemoryEnv): (agent: HostAgent | undefined, args:
     const target = await targetForTool(env, agent)
     if (typeof target === 'string') return target
     const saved: string[] = []
-    const unchanged: string[] = []
     const failed: string[] = []
     let trimmed = 0
     if (Object.keys(parsed.patch).length > 0) {
@@ -248,8 +247,6 @@ export function reviewTool(env: MemoryEnv): (agent: HostAgent | undefined, args:
         if (r.written) {
           saved.push(...keys)
           trimmed = r.trimmed
-        } else {
-          unchanged.push(...keys)
         }
       } catch (e) {
         failed.push(`memory: ${(e as Error).message}`)
@@ -285,7 +282,6 @@ export function reviewTool(env: MemoryEnv): (agent: HostAgent | undefined, args:
     if (saved.length > 0) env.reminder.onWrite(agent!.id)
     if (failed.length > 0) env.rt.log.warn(`整理写盘出错：${failed.join('；')}`)
     const extras: string[] = []
-    if (unchanged.length > 0) extras.push(`unchanged: ${unchanged.join(', ')}`)
     if (trimmed > 0) extras.push(`dropped ${trimmed} oldest facts over the limit`)
     if (failed.length > 0) {
       extras.push(`failed: ${failed.join('; ')}`)

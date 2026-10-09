@@ -4,7 +4,8 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULTS } from '../../../src/config'
 import { loadTheme, type Theme } from '../../../src/core/theme'
-import { isTavern } from '../../../src/core/tavern'
+import { readRegistry, registerTavern } from '../../../src/core/registry'
+import { createTavern, isTavern, openTavern } from '../../../src/core/tavern'
 import type { CommandContext, HostAgent, Invocation } from '../../../src/shell/context'
 import type { Runtime } from '../../../src/shell/runtime'
 import { initHandler, SetupSections } from '../../../src/shell/setup'
@@ -191,6 +192,70 @@ describe('SetupSections', () => {
     await s.refresh(agent(), svc, theme, ctxOf('setup'))
     expect(loadContext).not.toHaveBeenCalled()
     expect(register).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('SetupSections：登记表同步（规格 11）', () => {
+  const setupWith = async (name = 't') => {
+    const dir = path.join(tmp, name)
+    await fs.mkdir(dir)
+    const marker = await createTavern(dir, { name })
+    const tavern = await openTavern(dir)
+    const cc: CommandContext = { ...ctxOf('setup'), cwd: dir, tavern, state: 'preparing', outsideReason: null }
+    return { dir, marker, cc }
+  }
+  const mkSections = (cc: CommandContext, rt = rtOf()) =>
+    ({ rt, s: new SetupSections(rt, 'G', { loadContext: async () => cc, collect: async () => facts, register: () => vi.fn() }) })
+
+  it('未登记：登记一次', async () => {
+    const { dir, marker, cc } = await setupWith()
+    const { rt, s } = mkSections(cc)
+    await s.ensure(agent(), svc, theme)
+    expect(await readRegistry(rt.config.registryPath)).toEqual([{ id: marker.id, name: marker.name, path: dir }])
+  })
+
+  it('已登记且路径相同：不写', async () => {
+    const { dir, marker, cc } = await setupWith()
+    const { rt, s } = mkSections(cc)
+    await registerTavern(rt.config.registryPath, { id: marker.id, name: marker.name, path: dir })
+    const before = await fs.stat(rt.config.registryPath)
+    await new Promise((r) => setTimeout(r, 20))
+    await s.ensure(agent(), svc, theme)
+    expect((await fs.stat(rt.config.registryPath)).mtimeMs).toBe(before.mtimeMs)
+  })
+
+  it('已登记但路径不同（文件夹被移动，旧路径仍在）：更新路径', async () => {
+    const { dir, marker, cc } = await setupWith()
+    const { rt, s } = mkSections(cc)
+    const old = path.join(tmp, 'old')
+    await fs.mkdir(old)
+    await createTavern(old, { name: 'old', id: marker.id })
+    await registerTavern(rt.config.registryPath, { id: marker.id, name: marker.name, path: old })
+    await s.ensure(agent(), svc, theme)
+    const list = await readRegistry(rt.config.registryPath)
+    expect(list).toEqual([{ id: marker.id, name: marker.name, path: dir }])
+  })
+
+  it('每个会话只做一次；失败只记日志，段照常注册', async () => {
+    const { cc } = await setupWith()
+    const rt = rtOf()
+    rt.config.registryPath = path.join(tmp, 'no', 'such', 'dir', '\0bad')
+    const register = vi.fn(() => vi.fn())
+    const s = new SetupSections(rt, 'G', { loadContext: async () => cc, collect: async () => facts, register })
+    await s.ensure(agent(), svc, theme)
+    expect(register).toHaveBeenCalledTimes(1)
+    expect(rt.log.warn).toHaveBeenCalledTimes(1)
+    await s.refresh(agent(), svc, theme)
+    expect(rt.log.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('取不到模式或不在酒馆里：不登记', async () => {
+    const { cc } = await setupWith()
+    const { rt, s } = mkSections({ ...cc, mode: null })
+    await s.ensure(agent(), svc, theme)
+    const out = mkSections({ ...ctxOf('setup'), tavern: null }, rt)
+    await out.s.ensure(agent('s2'), svc, theme)
+    await expect(fs.stat(rt.config.registryPath)).rejects.toThrow()
   })
 })
 

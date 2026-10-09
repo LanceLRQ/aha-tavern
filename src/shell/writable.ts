@@ -24,7 +24,9 @@ export async function openResolved(dir: string, log?: Pick<Log, 'warn'>): Promis
 export async function readonlyToolMessage(dir: string, log?: Pick<Log, 'warn'>): Promise<string | null> {
   try {
     return isReadonly(await openResolved(dir, log)) ? READONLY_TOOL_MESSAGE : null
-  } catch {
-    return null
+  } catch (e) {
+    // 读不出标记文件时无法确认版本，宁可拒绝写盘
+    log?.warn(`酒馆 ${dir} 的标记文件读不出来，拒绝写盘：${(e as Error).message}`)
+    return `not saved: cannot read tavern marker file (${(e as Error).message.replace(/\s+/g, ' ')})`
   }
 }

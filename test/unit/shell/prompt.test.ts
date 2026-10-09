@@ -105,7 +105,7 @@ describe('buildChatPrompt', () => {
 describe('buildPickPrompt', () => {
   const facts: PickFacts = {
     place: { kind: 'inside', name: '甲' },
-    characters: [{ id: 'c_1', name: '白狐', tagline: '酒客' }, { id: 'c_2', name: '青衫' }],
+    characterCount: 2,
     brokenCards: [{ dirName: '坏', problem: 'yaml-invalid' }],
     profile: { empty: true, length: 0 },
   }
@@ -122,7 +122,7 @@ describe('buildPickPrompt', () => {
     expect(t).toContain('profile: empty')
   })
   it('门外与只读', () => {
-    const t = buildPickPrompt(plain, 'G', { ...facts, place: { kind: 'outside', reason: 'not-tavern' }, characters: [], readonly: true })
+    const t = buildPickPrompt(plain, 'G', { ...facts, place: { kind: 'outside', reason: 'not-tavern' }, characterCount: 0, readonly: true })
     expect(t).toContain('place: outside (not-tavern)')
     expect(t).toContain('characters: none')
     expect(t).toContain('read-only')

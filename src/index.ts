@@ -5,7 +5,7 @@ import { installHandlers } from './shell/handlers'
 import { createRuntime } from './shell/runtime'
 
 export const name = 'aha-tavern'
-// tools 供自检探测联网工具，后续任务注册工具也要用
+// tools 供自检探测联网工具，注册工具时也要用
 export const inject = ['tools']
 
 export function apply(ctx: Context, config?: unknown): void {

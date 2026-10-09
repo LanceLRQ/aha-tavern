@@ -28,6 +28,13 @@ describe('配置默认值', () => {
     expect('bogus' in c).toBe(false)
   })
 
+  it('数值配置要求整数：小数回落默认值', () => {
+    const c = resolveConfig({ keyFactsMax: 2.5, worldBudget: 100.5, memoryMaxChars: 5000 })
+    expect(c.keyFactsMax).toBe(100)
+    expect(c.worldBudget).toBe(4000)
+    expect(c.memoryMaxChars).toBe(5000)
+  })
+
   it('非法类型回落默认值', () => {
     const c = resolveConfig({ mode: 'weird', worldBudget: 'a' })
     expect(c.mode).toBe('chat')

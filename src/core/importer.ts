@@ -164,7 +164,7 @@ async function stageAttachments(
   const skipped: SkippedFile[] = []
   for (const e of await fs.readdir(srcDir, { withFileTypes: true })) {
     if (!e.isFile() || e.name.startsWith('.')) continue
-    if (e.name === CARD_FILE || e.name.toLowerCase() === MEMORY_FILE) continue
+    if (e.name.toLowerCase() === CARD_FILE || e.name.toLowerCase() === MEMORY_FILE) continue
     const from = path.join(srcDir, e.name)
     const tmp = path.join(dstDir, `.${e.name}.${randomBytes(4).toString('hex')}.tmp`)
     try {

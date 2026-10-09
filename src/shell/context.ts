@@ -26,7 +26,7 @@ export interface HostAgent {
 /** 本插件用到的宿主服务（命令注册时 inject 进来）。 */
 export interface HostServices {
   agentPresets: { composedPreset(ctx: unknown): string | undefined }
-  /** 其余服务（userQuestions 等）由后续任务按需取用。 */
+  /** 其余服务（userQuestions 等）按需取用。 */
   [service: string]: unknown
 }
 
@@ -102,8 +102,7 @@ export function probeWebSearch(tools: HostTools | undefined, agent: HostAgent): 
   }
 }
 
-/** 命令回执：与宿主命令处理器的返回值同形。 */
-/** text 缺省表示不显示回执（静默）。 */
+/** 命令回执：与宿主命令处理器的返回值同形；text 缺省表示不显示回执（静默）。 */
 export type CommandReply = { kind: 'success' | 'error'; text?: string }
 
 export interface Invocation {

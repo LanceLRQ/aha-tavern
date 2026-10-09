@@ -89,6 +89,16 @@ describe('importCharacter', () => {
     expect(got?.ok && (got.card.origin as { tavern: string }).tavern).toBe('t_src')
   })
 
+  it('大小写不敏感的盘上，名字只差大小写的 character.yaml 不当附件复制', async (ctx) => {
+    const a = await mk('白狐')
+    const upper = path.join(a.dir, 'Character.yaml')
+    await fs.rename(path.join(a.dir, CARD_FILE), upper)
+    if ((await fs.readdir(a.dir)).includes(CARD_FILE)) return ctx.skip()
+    await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    const got = await readCharacter(dst, a.card.id)
+    expect(got?.ok && (got.card.origin as { tavern: string } | undefined)?.tavern).toBe('t_src')
+  })
+
   it('超过大小上限的附带文件跳过并报告', async () => {
     const a = await mk('白狐')
     await fs.writeFile(path.join(a.dir, 'big.wav'), 'x'.repeat(100))

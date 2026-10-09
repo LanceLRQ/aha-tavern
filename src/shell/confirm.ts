@@ -124,10 +124,21 @@ export function outcomeMessage(o: ConfirmOutcome): string | null {
 /** 同一会话的"弹卡片 -> 写盘"整段排队执行；不同会话互不影响。 */
 export class SessionGate {
   private readonly tails = new Map<string, Promise<unknown>>()
+  /** 命令发起、仍在排队或执行的任务数（命令的卡片可能一直没人回答）。 */
+  private readonly commandJobs = new Map<string, number>()
 
-  run<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  /** 命令发起的任务给 holder = 'command'：工具据此不去排在无人应答的命令卡片后面（见 commandHolds）。 */
+  run<T>(key: string, fn: () => Promise<T>, holder?: 'command'): Promise<T> {
+    if (holder === 'command') this.commandJobs.set(key, (this.commandJobs.get(key) ?? 0) + 1)
     const prev = this.tails.get(key) ?? Promise.resolve()
     const p = prev.then(fn)
+    if (holder === 'command') {
+      void p.then(() => undefined, () => undefined).then(() => {
+        const n = (this.commandJobs.get(key) ?? 1) - 1
+        if (n > 0) this.commandJobs.set(key, n)
+        else this.commandJobs.delete(key)
+      })
+    }
     const tail = p.then(() => undefined, () => undefined)
     this.tails.set(key, tail)
     void tail.then(() => {
@@ -135,7 +146,15 @@ export class SessionGate {
     })
     return p
   }
+
+  /** 这个会话里是否有命令发起的任务还没做完。 */
+  commandHolds(key: string): boolean {
+    return (this.commandJobs.get(key) ?? 0) > 0
+  }
 }
+
+/** 工具遇到命令的卡片还开着时的返回：不排队，让模型等用户处理。 */
+export const CARD_OPEN_MESSAGE = 'a selection card is already open; wait for the user'
 
 /** 兜底时间窗：只在从没收到过轮次编号的会话里使用。 */
 export const DECLINE_WINDOW_MS = 60_000

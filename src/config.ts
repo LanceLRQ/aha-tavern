@@ -14,7 +14,7 @@ export interface TavernConfig {
   memoryMaxChars: number
   /** 主线记忆"关键的事"条数上限。 */
   keyFactsMax: number
-  /** 往事梗概"往事索引"行数上限。 */
+  /** 主线记忆"往事索引"行数上限。 */
   pastIndexMaxLines: number
   /** 每隔多少轮审视一次记忆。 */
   reviewIntervalTurns: number
@@ -60,7 +60,7 @@ export function resolveConfig(input: unknown, env: Record<string, string | undef
   ] as const
   for (const key of numericKeys) {
     const v = raw[key]
-    if (typeof v === 'number' && Number.isFinite(v) && v > 0) out[key] = v
+    if (typeof v === 'number' && Number.isInteger(v) && v > 0) out[key] = v
   }
   return out
 }

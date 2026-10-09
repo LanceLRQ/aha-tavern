@@ -148,8 +148,9 @@ export function cardAmbiguousReceipt(theme: Theme, names: readonly string[]): Re
   return guide(`有好几个${theme.concept('character')}都对得上：${names.join('、')}。请把名字写全一些再试。`)
 }
 
-export function cardNoneReceipt(theme: Theme, input: string): Reply {
-  return guide(`没有叫「${input}」的${theme.concept('character')}。不带名字敲 \`/aha 建卡\` 可以新建一个。`)
+/** 建卡带名字但没有同名角色：按新建处理，名字用它。 */
+export function cardNewNamedReceipt(theme: Theme, input: string): Reply {
+  return guide(`还没有叫「${input}」的${theme.concept('character')}，${theme.host().name}会按这个名字新建，等你描述一下 TA。`)
 }
 
 /** 匹配到的是坏卡：说明哪个文件、什么问题。 */

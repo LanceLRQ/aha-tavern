@@ -344,6 +344,25 @@ describe('确认卡片加固', () => {
     expect(order).toEqual(['y', 'x'])
   })
 
+  it('命令发起的任务：排队或执行期间 commandHolds 为真，结束（含抛错）后为假', async () => {
+    const gate = new SessionGate()
+    let release!: () => void
+    const hold = new Promise<void>((r) => { release = r })
+    expect(gate.commandHolds('x')).toBe(false)
+    const a = gate.run('x', async () => { await hold }, 'command')
+    const t = gate.run('x', async () => 1)
+    expect(gate.commandHolds('x')).toBe(true)
+    expect(gate.commandHolds('y')).toBe(false)
+    release()
+    await a
+    await t
+    await new Promise((r) => setTimeout(r, 5))
+    expect(gate.commandHolds('x')).toBe(false)
+    await expect(gate.run('x', async () => { throw new Error('e') }, 'command')).rejects.toThrow('e')
+    await new Promise((r) => setTimeout(r, 5))
+    expect(gate.commandHolds('x')).toBe(false)
+  })
+
   it('串行：前一个任务抛错不阻塞后面的', async () => {
     const gate = new SessionGate()
     await expect(gate.run('x', async () => { throw new Error('e') })).rejects.toThrow('e')

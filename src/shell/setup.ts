@@ -4,8 +4,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import hostSetupGuide from '../prompts/host-setup.md'
 import { listCharacters } from '../core/card'
 import { readMe, readWorld } from '../core/docs'
-import { readRegistry, registerTavern } from '../core/registry'
-import { createTavern, type TavernMarker } from '../core/tavern'
+import { readRegistry, registerTavern, updateTavernPath } from '../core/registry'
+import { createTavern, type TavernInfo, type TavernMarker } from '../core/tavern'
 import {
   buildContext, probeWebSearch, type CommandContext, type CommandHandler, type HostAgent, type HostServices,
 } from './context'
@@ -81,6 +81,8 @@ export interface SectionHooks {
 export class SetupSections {
   private readonly core: SessionSections
   private readonly hooks: SectionHooks
+  /** 已核对过登记表的会话：每个会话只核对一次。 */
+  private readonly synced = new Set<string>()
 
   constructor(private readonly rt: Runtime, private readonly guide: string, hooks: Partial<SectionHooks> = {}) {
     this.hooks = {
@@ -98,8 +100,31 @@ export class SetupSections {
       const cc = known ? { ...known, mode: known.mode ?? ('setup' as const) } : await this.hooks.loadContext(agent, services)
       if (cc.mode === null) return { kind: 'wait' }
       if (cc.mode !== 'setup') return { kind: 'skip', note: `实际模式 ${cc.mode}` }
+      if (cc.tavern) await this.syncRegistry(agent.id, cc.tavern)
       const facts = await this.hooks.collect(agent, cc)
       return { kind: 'text', text: buildSetupPrompt(theme, this.guide, facts), note: `place=${facts.place.kind}` }
+    }
+  }
+
+  /**
+   * 会话第一次确认工作区是酒馆时核对登记表（规格 11）：按酒馆编号，未登记就登记，路径变了就更新。
+   * 酒馆文件夹被移动后靠这一步回到登记表里；失败只记日志。
+   */
+  private async syncRegistry(sessionId: string, tavern: TavernInfo): Promise<void> {
+    if (this.synced.has(sessionId)) return
+    this.synced.add(sessionId)
+    const file = this.rt.config.registryPath
+    try {
+      const hit = (await readRegistry(file)).find((e) => e.id === tavern.marker.id)
+      if (!hit) {
+        await registerTavern(file, { id: tavern.marker.id, name: tavern.marker.name, path: tavern.dir })
+        this.rt.log.info(`登记表补登：${tavern.dir}（${tavern.marker.id}）`)
+      } else if (path.resolve(hit.path) !== path.resolve(tavern.dir)) {
+        await updateTavernPath(file, tavern.marker.id, tavern.dir)
+        this.rt.log.info(`登记表更新路径：${hit.path} -> ${tavern.dir}（${tavern.marker.id}）`)
+      }
+    } catch (e) {
+      this.rt.log.warn(`核对登记表失败：${(e as Error).message}`)
     }
   }
 
@@ -114,6 +139,7 @@ export class SetupSections {
   }
 
   forget(id: string): void {
+    this.synced.delete(id)
     this.core.forget(id)
   }
 

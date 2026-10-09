@@ -31,6 +31,11 @@ export function escapeClosingTag(text: string, tag: string): string {
   return text.replace(new RegExp(`</(\\s*${tag})`, 'gi'), '<\\/$1')
 }
 
+/** 放进单行事实的外部文字：折叠成一行，并转义同名闭合标签。 */
+export function flatText(text: string, tag: string): string {
+  return escapeClosingTag(text.replace(/\s+/g, ' ').trim(), tag)
+}
+
 export function buildRelayNotice(label: string, replyText: string, theme?: Theme): string {
   const who = theme ? `你是这间${theme.concept('tavern')}的${theme.host().name}` : '你是这里的接待者'
   return [

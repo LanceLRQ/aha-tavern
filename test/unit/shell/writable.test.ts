@@ -47,6 +47,13 @@ describe('数据版本检查', () => {
     expect(await readonlyToolMessage(dir)).toBe(READONLY_TOOL_MESSAGE)
   })
 
+  it('标记文件读不出来：写盘工具拒绝而不是放行', async () => {
+    await fs.writeFile(path.join(dir, 'aha-tavern.yaml'), 'version: abc\nid: t_1\nname: t\n')
+    const m = await readonlyToolMessage(dir)
+    expect(m).not.toBeNull()
+    expect(m).toContain('not saved')
+  })
+
   it('版本较旧但迁移失败：按只读处理并记日志', async () => {
     await setVersion(0)
     const log = { warn: vi.fn() }

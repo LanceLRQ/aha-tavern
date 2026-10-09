@@ -16,7 +16,7 @@ import { saveSession } from '../core/state'
 import type { TavernInfo } from '../core/tavern'
 import type { Theme } from '../core/theme'
 import {
-  answerItem, isAbort, SessionGate, shownName, type AskFn, type AskItem,
+  answerItem, CARD_OPEN_MESSAGE, isAbort, SessionGate, shownName, type AskFn, type AskItem,
 } from './confirm'
 import { buildContext, localDate, sessionsFile, type CommandContext, type CommandHandler, type HostAgent, type HostServices } from './context'
 import { clip, uniqueLabel, type Labeled } from './importing'
@@ -26,7 +26,7 @@ import {
 } from './receipts'
 import type { Runtime } from './runtime'
 import { hostSectionRegister, SessionSections, type SectionPlan } from './sections'
-import { makeNotice } from './steer'
+import { flatText, makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
 import { createMemoryEnv, onChatStep, rememberHandler, rememberTool, reviewTool } from './remember'
 import { recallTool } from './recall'
@@ -202,6 +202,8 @@ export interface InitRequest {
   theme: Theme
   limits: { worldBudget: number; memoryMaxChars: number; pastIndexMaxLines: number }
   now: Date
+  /** 记一条警告日志；步骤 4、5 的失败原因只在这里留痕。 */
+  warn?: (message: string) => void
 }
 
 /**
@@ -275,7 +277,8 @@ export async function initialize(req: InitRequest, steps: InitSteps): Promise<In
     await steps.setSection(buildChatPrompt({
       theme, houseRules: req.houseRules, world: world.text, card, profile: me.text, memory: memoryRaw,
     }))
-  } catch {
+  } catch (e) {
+    req.warn?.(`初始化第 4 步（提示词段）失败：${(e as Error).message}`)
     promptOk = false
     failed.push('prompt')
   }
@@ -284,7 +287,8 @@ export async function initialize(req: InitRequest, steps: InitSteps): Promise<In
   if (promptOk) {
     try {
       steps.steer(buildStartCue(firstMeeting), `${MODE_LABEL.chat}：开场`)
-    } catch {
+    } catch (e) {
+      req.warn?.(`初始化第 5 步（开场指令）失败：${(e as Error).message}`)
       failed.push('opening')
     }
   }
@@ -365,7 +369,7 @@ export function startedToolText(o: InitOutcome): string {
     case 'readonly':
       return 'error: tavern data is newer than this plugin (read-only), cannot start'
     case 'broken':
-      return `error: card of "${o.broken!.dirName}" is unreadable (${o.broken!.problem}${o.broken!.detail ? `: ${o.broken!.detail}` : ''})`
+      return `error: card of "${flatText(o.broken!.dirName, 'available')}" is unreadable (${o.broken!.problem})`
     case 'already-chatting':
       return 'already chatting'
     case 'read-failed':
@@ -410,13 +414,13 @@ export async function collectPickFacts(rt: Pick<Runtime, 'log'>, cc: CommandCont
   const tavern = cc.tavern
   const facts: PickFacts = {
     place: tavern ? { kind: 'inside', name: tavern.marker.name } : { kind: 'outside', reason: cc.outsideReason ?? 'not-tavern' },
-    characters: [], brokenCards: [], profile: { empty: true, length: 0 },
+    characterCount: 0, brokenCards: [], profile: { empty: true, length: 0 },
     ...(isReadonly(tavern) ? { readonly: true } : {}),
   }
   if (!tavern) return facts
   try {
     for (const e of await listCharacters(tavern.dir)) {
-      if (e.ok) facts.characters.push({ id: e.card.id, name: e.card.name, ...(e.card.tagline ? { tagline: e.card.tagline } : {}) })
+      if (e.ok) facts.characterCount += 1
       else facts.brokenCards.push({ dirName: e.dirName, problem: e.problem })
     }
   } catch (e) {
@@ -446,6 +450,13 @@ export function firstLineIndexer(env: Pick<ChatEnv, 'rt' | 'now'>): (target: Cha
       { characterName: entry.card.name, maxIndexLines: env.rt.config.pastIndexMaxLines },
     )
   }
+}
+
+/** 会话结束：清掉该会话的降级日志记录（key 以会话编号加 NUL 开头）。 */
+export function clearWarned(env: ChatEnv, sessionId: string): void {
+  if (!env.warned) return
+  const prefix = `${sessionId}\u0000`
+  for (const k of env.warned) if (k.startsWith(prefix)) env.warned.delete(k)
 }
 
 /** 会话提示词段的规划：聊天中按盘上内容装五段（恢复会话也走这里），否则装掌柜（选角）的段。 */
@@ -603,32 +614,33 @@ function resolutionReply(theme: Theme, entries: readonly CharacterEntry[], r: St
 
 /** 工具对选角结果的返回（给模型看，固定标识）；选定条目返回 null。 */
 function resolutionToolText(entries: readonly CharacterEntry[], r: StartResolution): string | null {
-  const names = entries.map(displayOf).join(', ')
+  const one = (t: string): string => flatText(t, 'available')
+  const names = entries.map((e) => one(displayOf(e))).join(', ')
   switch (r.kind) {
     case 'entry':
       return null
     case 'cancelled':
       return 'cancelled by user, still picking'
     case 'bad-id':
-      return `error: no character with id ${r.id}; available: ${names}`
+      return `error: no character with id ${one(r.id)}; available: ${names}`
     case 'no-card':
-      if (r.why === 'ambiguous') return `error: ambiguous name; candidates: ${r.candidates.map(displayOf).join(', ')}`
-      if (r.why === 'none') return `error: no character named ${r.input}; available: ${names}`
+      if (r.why === 'ambiguous') return `error: ambiguous name; candidates: ${r.candidates.map((e) => one(displayOf(e))).join(', ')}`
+      if (r.why === 'none') return `error: no character named ${one(r.input)}; available: ${names}`
       return `error: pick card unavailable; available: ${names}`
     case 'card-failed':
-      return `error: pick card failed (${r.message}), still picking; available: ${names}`
+      return `error: pick card failed (${one(r.message)}), still picking; available: ${names}`
   }
 }
 
 function requestOf(env: ChatEnv, tavern: TavernInfo, entry: CharacterEntry, sessionId: string, theme: Theme): InitRequest {
   const c = env.rt.config
   return {
-    tavern, entry, sessionId, theme, houseRules: houseRulesText, now: env.now(),
+    tavern, entry, sessionId, theme, houseRules: houseRulesText, now: env.now(), warn: (m) => env.rt.log.warn(m),
     limits: { worldBudget: c.worldBudget, memoryMaxChars: c.memoryMaxChars, pastIndexMaxLines: c.pastIndexMaxLines },
   }
 }
 
-/** 把"换段"接到会话的段管理器；失败时让下一次 pre-step 重新规划，并把错误抛给 initialize 记为第 5 步失败。 */
+/** 把"换段"接到会话的段管理器；失败时让下一次 pre-step 重新规划，并把错误抛给 initialize 记为第 4 步失败。 */
 function sectionSetter(env: ChatEnv, agent: HostAgent): InitSteps['setSection'] {
   return async (text) => {
     try {
@@ -663,7 +675,7 @@ export function startHandler(env: ChatEnv): CommandHandler {
       )
       rt.log.info(`开场：${outcome.kind === 'started' ? `${outcome.name}（${outcome.chatId}）未完成=${outcome.failed.join(',') || '无'}` : `拒绝 ${outcome.why}`}`)
       return outcome.kind === 'started' ? startedReceipt(theme, outcome) : refusedReceipt(theme, outcome)
-    })
+    }, 'command')
   }
 }
 
@@ -674,6 +686,8 @@ export function startTool(
   return async (agent, args, signal) => {
     const services = env.getServices()
     if (!agent || !services) return 'error: session not ready'
+    // 命令的选择卡片还开着：用户没回答之前排在后面会一直卡住，直接告诉模型等一等
+    if (env.gate.commandHolds(agent.id)) return CARD_OPEN_MESSAGE
     return env.gate.run(agent.id, async () => {
       const theme = await env.rt.theme()
       const cc = await buildContext(agent, services, env.rt.log)
@@ -752,6 +766,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
     })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
+      clearWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
       memoryEnv.reminder.forget(payload.agent.id)
       memoryEnv.turns.forget(payload.agent.id)
