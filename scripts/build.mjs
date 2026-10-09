@@ -10,6 +10,8 @@ await build({
   format: 'esm',
   target: 'node20',
   external: ['@deepseek-ai/*'],
+  // yaml 等 CJS 依赖打进 ESM 产物后需要 require，补一个
+  banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
   sourcemap: false,
   legalComments: 'none',
   logLevel: 'info',

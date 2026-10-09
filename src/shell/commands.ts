@@ -1,0 +1,145 @@
+// 命令注册与分流：一条 `aha <子命令>` 加每个子命令一条 `aha-<英文名>`，共用一个入口。
+import type { Context } from '@deepseek-ai/cordis'
+import { dispatch, type CommandId } from '../core/dispatch'
+import { buildContext, type CommandReply, type HostAgent, type HostServices } from './context'
+import {
+  dispatchReceipt, emptyReceipt, failureReceipt, notTavernModeReceipt, pendingReceipt, unknownReceipt,
+} from './receipts'
+import type { Runtime } from './runtime'
+
+export interface Subcommand {
+  id: CommandId
+  zh: string
+  /** 英文名即 id；同时是独立命令 `aha-<en>` 的后缀。 */
+  en: CommandId
+  /** 命令菜单里的说明：通用用词，不随主题变。 */
+  description: string
+  hint?: string
+}
+
+const sub = (id: CommandId, zh: string, description: string, hint?: string): Subcommand => ({
+  id, zh, en: id, description, ...(hint ? { hint } : {}),
+})
+
+export const SUBCOMMANDS: readonly Subcommand[] = [
+  sub('init', '开店', '把当前工作区变成一间酒馆'),
+  sub('card', '建卡', '新建或修改角色卡'),
+  sub('me', '我', '写或改主角档案'),
+  sub('world', '世界观', '写或改世界观'),
+  sub('import', '导入', '从另一间酒馆复制角色卡或主角档案'),
+  sub('start', '开场', '选定角色，开始聊天', '[角色名]'),
+  sub('remember', '记住', '记一句话，或让角色回顾并整理记忆', '[内容]'),
+  sub('reroll', '重掷', '上一张图重新生成', '[修改词]'),
+  sub('speak', '朗读', '念出来', '[文本]'),
+  sub('doctor', '自检', '检查当前状态与外部服务'),
+]
+
+export type ParsedSubcommand =
+  | { kind: 'command'; id: CommandId; args: string }
+  | { kind: 'unknown'; word: string }
+  | { kind: 'empty' }
+
+/** 解析 `/aha` 后面的文字：第一个词是子命令（中文精确、英文不分大小写），其余是参数。 */
+export function parseSubcommand(input: string): ParsedSubcommand {
+  const text = input.trim()
+  if (text === '') return { kind: 'empty' }
+  const m = /^(\S+)\s*([\s\S]*)$/.exec(text)!
+  const word = m[1]!
+  const lower = word.toLowerCase()
+  const hit = SUBCOMMANDS.find((s) => s.zh === word || s.en === lower)
+  return hit ? { kind: 'command', id: hit.id, args: m[2]!.trim() } : { kind: 'unknown', word }
+}
+
+/** 统一入口：`parsed` 为已解析的子命令，`label` 为用户敲的写法。 */
+export async function handleCommand(
+  rt: Runtime,
+  services: HostServices,
+  agent: HostAgent,
+  parsed: ParsedSubcommand,
+  label: string,
+): Promise<CommandReply> {
+  let theme
+  try {
+    theme = await rt.theme()
+  } catch (e) {
+    return failureReceipt(`主题加载失败（${(e as Error).message}）`)
+  }
+  if (parsed.kind === 'empty') return emptyReceipt(SUBCOMMANDS)
+  if (parsed.kind === 'unknown') return unknownReceipt(parsed.word, SUBCOMMANDS)
+
+  try {
+    const context = await buildContext(agent, services)
+    rt.log.debug(`命令 ${label}：实例 ${rt.config.mode}，会话模式 ${context.mode}，状态 ${context.state}，工作区 ${context.cwd ?? '（无）'}`)
+    if (context.mode === null || context.state === null) return notTavernModeReceipt()
+    // 命令按作用域登记，会话只会看到自己所在模式那份实例的命令，这里理论上不会发生；
+    // 万一发生，静默不处理（另一份实例会处理），只留一行调试日志
+    if (context.mode !== rt.config.mode) {
+      rt.log.debug(`命令 ${label} 到达了不匹配的实例：实例模式 ${rt.config.mode}，会话模式 ${context.mode}`)
+      return { kind: 'success' }
+    }
+    const d = dispatch(context.mode, context.state, parsed.id)
+    if (!d.run) return dispatchReceipt(theme, d.reason, { label, outsideReason: context.outsideReason })
+    const handler = rt.handlers[parsed.id]
+    if (!handler) return pendingReceipt(label)
+    return await handler({ agent, services, rt, theme, context, args: parsed.args, label })
+  } catch (e) {
+    rt.log.error(`命令 ${label} 失败：${(e as Error).stack ?? e}`)
+    return failureReceipt((e as Error).message)
+  }
+}
+
+/** 注册时 inject 的宿主服务。后续任务要用别的服务，在这里加一项。 */
+export const HOST_SERVICES = ['commands', 'agentPresets'] as const
+
+interface CommandInvocation {
+  agent: HostAgent
+  rawInput?: string
+}
+interface CommandDefinition {
+  name: string
+  description: string
+  input?: { hint: string }
+  handler(inv: CommandInvocation): CommandReply | Promise<CommandReply>
+}
+interface InjectedContext extends HostServices {
+  commands: { register(def: CommandDefinition): () => void }
+}
+
+/** 向当前模式的清单注册全部命令名。同名重复注册只记警告，不抛出。 */
+export function registerCommands(ctx: Context, rt: Runtime): void {
+  const inject = (ctx as unknown as { inject(keys: readonly string[], cb: (c: InjectedContext) => void): void }).inject
+  rt.log.info(`等待宿主服务：${HOST_SERVICES.join('、')}`)
+  inject.call(ctx, HOST_SERVICES, (c) => {
+    let count = 0
+    const reg = (def: CommandDefinition): void => {
+      try {
+        c.commands.register(def)
+        count++
+      } catch (e) {
+        rt.log.warn(`注册命令 ${def.name} 失败：${(e as Error).message}`)
+      }
+    }
+    const usage = SUBCOMMANDS.map((s) => `${s.zh}/${s.en}`).join('、')
+    reg({
+      name: 'aha',
+      description: `阿哈酒馆：${usage}`,
+      input: { hint: '<子命令> [参数]' },
+      handler: ({ agent, rawInput }) => {
+        const input = rawInput ?? ''
+        const parsed = parseSubcommand(input)
+        const word = input.trim().split(/\s+/)[0] ?? ''
+        return handleCommand(rt, c, agent, parsed, word ? `/aha ${word}` : '/aha')
+      },
+    })
+    for (const s of SUBCOMMANDS) {
+      reg({
+        name: `aha-${s.en}`,
+        description: `阿哈酒馆 · ${s.zh}：${s.description}`,
+        ...(s.hint ? { input: { hint: s.hint } } : {}),
+        handler: ({ agent, rawInput }) =>
+          handleCommand(rt, c, agent, { kind: 'command', id: s.id, args: (rawInput ?? '').trim() }, `/aha-${s.en}`),
+      })
+    }
+    rt.log.info(`命令已注册（模式 ${rt.config.mode}，${count} 条）`)
+  })
+}

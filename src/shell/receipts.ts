@@ -1,0 +1,95 @@
+// 回执文字：纯函数，所有称呼与动作经主题取词。固定不随主题变的：模式名、命令的中英文名。
+import type { TavernMode } from '../config'
+import type { DispatchReason } from '../core/dispatch'
+import type { OutsideReason } from '../core/state'
+import type { Theme } from '../core/theme'
+
+export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊' }
+
+/** 回执：宿主只有 success / error 两种，error 在界面上是红色的 Failed，只给真正的错误用。 */
+export type Reply = { kind: 'success' | 'error'; text: string }
+
+const guide = (text: string): Reply => ({ kind: 'success', text })
+const fail = (text: string): Reply => ({ kind: 'error', text })
+
+export interface SubcommandName {
+  zh: string
+  en: string
+}
+
+export interface DispatchReceiptInfo {
+  /** 用户敲的写法，用于"尚未提供"之类的提示，如 `/aha 重掷`。 */
+  label?: string
+  outsideReason?: OutsideReason | null
+}
+
+/** 分流不执行时的指引回执（success）。 */
+export function dispatchReceipt(theme: Theme, reason: DispatchReason, info: DispatchReceiptInfo = {}): Reply {
+  return guide(dispatchText(theme, reason, info))
+}
+
+function dispatchText(theme: Theme, reason: DispatchReason, info: DispatchReceiptInfo): string {
+  const tavern = theme.concept('tavern')
+  const label = info.label ?? '这条命令'
+  switch (reason) {
+    case 'init-first':
+      return info.outsideReason === 'no-workspace'
+        ? `这个会话还没有选工作区。请先选一个工作区，再用 \`/aha 开店\` 把它变成一间${tavern}。`
+        : `这里还不是${tavern}。先用 \`/aha 开店\` 把这里变成一间${tavern}。`
+    case 'go-setup':
+      return `这件事归${theme.host().name}在「${MODE_LABEL.setup}」里办，请切换到那个模式再试。`
+    case 'go-chat':
+      return `开场要在「${MODE_LABEL.chat}」里进行，请切换到那个模式再用 \`/aha 开场\`。`
+    case 'new-session':
+      return `这场聊天正在进行。要和别的${theme.concept('character')}聊，请新开一个会话再用 \`/aha 开场\`。`
+    case 'already-tavern':
+      return `这里已经是一间${tavern}了，不用再${theme.action('init')}。`
+    case 'meaningless':
+      return `${label}：在现在的状态下用不上。`
+    case 'unavailable':
+      return `${label}：此功能尚未提供。`
+  }
+}
+
+const listSubs = (subs: readonly SubcommandName[]): string => subs.map((s) => `${s.zh}/${s.en}`).join('、')
+
+export function unknownReceipt(word: string, subs: readonly SubcommandName[]): Reply {
+  return fail(`没有「${word}」这个子命令。可用的有：${listSubs(subs)}。`)
+}
+
+export function emptyReceipt(subs: readonly SubcommandName[]): Reply {
+  return fail(`\`/aha\` 后面要跟子命令。可用的有：${listSubs(subs)}。`)
+}
+
+export function pendingReceipt(label: string): Reply {
+  return guide(`${label}：尚未接上。`)
+}
+
+export function failureReceipt(message: string): Reply {
+  return fail(`没能完成：${message}`)
+}
+
+/** 实际模式不是酒馆的模式（映射不到）。 */
+export function notTavernModeReceipt(): Reply {
+  return guide('当前不在酒馆的模式里。')
+}
+
+export type WebSearchStatus = 'available' | 'unavailable' | 'unknown'
+
+export interface DoctorInfo {
+  mode: TavernMode
+  tavernDir: string | null
+  outsideReason: OutsideReason | null
+  webSearch: WebSearchStatus
+}
+
+const WEB_LABEL: Record<WebSearchStatus, string> = { available: '可用', unavailable: '不可用', unknown: '未知' }
+
+export function doctorLine(theme: Theme, info: DoctorInfo): string {
+  const place = info.tavernDir
+    ? `${theme.concept('tavern')} ${info.tavernDir}`
+    : info.outsideReason === 'no-workspace'
+      ? '门外（会话没有工作区）'
+      : `门外（这里不是${theme.concept('tavern')}）`
+  return `当前状态：模式 ${MODE_LABEL[info.mode]}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}`
+}

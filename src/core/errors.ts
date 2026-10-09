@@ -15,6 +15,8 @@ export type AhaErrorCode =
   | 'memory-invalid'
   | 'chat-not-found'
   | 'chat-invalid'
+  | 'session-locked'
+  | 'session-invalid'
 
 export class AhaError extends Error {
   readonly code: AhaErrorCode
