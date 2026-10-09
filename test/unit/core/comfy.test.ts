@@ -492,3 +492,72 @@ describe('interrupt 带任务编号', () => {
     expect(calls.map((x) => x.body)).toEqual(['{"prompt_id":"abc"}', undefined])
   })
 })
+
+describe('generate：收尾边界', () => {
+  const stopRoutes = {
+    'POST /queue': () => new Response('{}'),
+    'POST /interrupt': () => new Response(''),
+  }
+
+  it('任务已完成后取图失败（HTTP 500）：不撤队列也不打断，仍归 failed', async () => {
+    const { f, calls } = fakeFetch({
+      'POST /prompt': () => json({ prompt_id: 'p1' }),
+      'GET /history/p1': () => json(doneEntry({ '9': { images: [IMG] } })),
+      'GET /view': () => new Response('boom', { status: 500 }),
+      ...stopRoutes,
+    })
+    const c = createComfyClient({ endpoint: ENDPOINT, fetch: f, ...fakeClock() })
+    const err = await kindOf(c.generate(GRAPH, { outputNode: '9', timeoutMs: 100_000, pollMs: 10 }))
+    expect(err.kind).toBe('failed')
+    expect(stopCalls(calls)).toEqual([])
+  })
+
+  it('任务已完成后取图超时：不撤队列也不打断，仍归 timeout', async () => {
+    const { f, calls } = fakeFetch({
+      'POST /prompt': () => json({ prompt_id: 'p1' }),
+      'GET /history/p1': () => json(doneEntry({ '9': { images: [IMG] } })),
+      'GET /view': hang,
+      ...stopRoutes,
+    })
+    const c = createComfyClient({ endpoint: ENDPOINT, fetch: f })
+    const err = await kindOf(c.generate(GRAPH, { outputNode: '9', timeoutMs: 30, pollMs: 5 }))
+    expect(err.kind).toBe('timeout')
+    expect(stopCalls(calls)).toEqual([])
+  })
+
+  it('轮询连续失败放弃：撤队列并打断，抛原错误', async () => {
+    const { f, calls } = fakeFetch({
+      'POST /prompt': () => json({ prompt_id: 'p1' }),
+      'GET /history/p1': () => { throw new TypeError('reset') },
+      ...stopRoutes,
+    })
+    const c = createComfyClient({ endpoint: ENDPOINT, fetch: f, ...fakeClock() })
+    const err = await kindOf(c.generate(GRAPH, { outputNode: '9', timeoutMs: 100_000, pollMs: 10 }))
+    expect(err.kind).toBe('unreachable')
+    expect(stopCalls(calls)).toEqual(['/queue {"delete":["p1"]}', '/interrupt {"prompt_id":"p1"}'])
+  })
+
+  it('history 返回 4xx 放弃：撤队列并打断', async () => {
+    const { f, calls } = fakeFetch({
+      'POST /prompt': () => json({ prompt_id: 'p1' }),
+      'GET /history/p1': () => new Response('nope', { status: 404 }),
+      ...stopRoutes,
+    })
+    const c = createComfyClient({ endpoint: ENDPOINT, fetch: f, ...fakeClock() })
+    const err = await kindOf(c.generate(GRAPH, { outputNode: '9', timeoutMs: 100_000, pollMs: 10 }))
+    expect(err.kind).toBe('failed')
+    expect(stopCalls(calls)).toEqual(['/queue {"delete":["p1"]}', '/interrupt {"prompt_id":"p1"}'])
+  })
+
+  it('放弃时清理请求本身失败：仍抛原错误', async () => {
+    const { f } = fakeFetch({
+      'POST /prompt': () => json({ prompt_id: 'p1' }),
+      'GET /history/p1': () => new Response('busy', { status: 503 }),
+      'POST /queue': () => { throw new TypeError('down') },
+      'POST /interrupt': () => { throw new TypeError('down') },
+    })
+    const c = createComfyClient({ endpoint: ENDPOINT, fetch: f, ...fakeClock() })
+    const err = await kindOf(c.generate(GRAPH, { outputNode: '9', timeoutMs: 100_000, pollMs: 10 }))
+    expect(err.kind).toBe('failed')
+  })
+})

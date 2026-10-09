@@ -246,13 +246,18 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
     const { signal } = o
     const deadline = now() + o.timeoutMs
     let promptId: string | undefined
+    /** history 里已经有本任务的结果：之后的任何失败都不再撤队列、打断（老版服务会忽略编号而打断别人的任务）。 */
+    let finished = false
 
-    /** 取消或超时：尽力撤掉排队项并打断任务（还没有任务编号就什么都不做），再抛。 */
+    /** 尽力撤掉排队项并打断任务；没有任务编号或任务已完成就什么都不做。 */
+    const cleanup = async (): Promise<void> => {
+      if (!promptId || finished) return
+      await dequeue(promptId)
+      await interrupt(promptId)
+    }
+    /** 取消或超时：先清理，再抛。 */
     const stop = async (kind: 'cancelled' | 'timeout'): Promise<never> => {
-      if (promptId) {
-        await dequeue(promptId)
-        await interrupt(promptId)
-      }
+      await cleanup()
       throw new ComfyError(kind)
     }
     /** 请求受调用方信号与总截止时间约束；超时与取消统一走 stop。 */
@@ -287,15 +292,24 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
       let failure: ComfyError | undefined
       try {
         hist = await step('GET', `/history/${encodeURIComponent(promptId)}`)
-        if (hist.status >= 500) failure = new ComfyError('failed', `history HTTP ${hist.status} ${hist.text}`)
-        else if (!hist.ok) throw new ComfyError('failed', `history HTTP ${hist.status} ${hist.text}`)
       } catch (e) {
-        // 网络层失败可重试；其余（含 stop 抛出的 timeout/cancelled、4xx）直接抛
+        // 网络层失败可重试；其余（含 stop 抛出的 timeout/cancelled）直接抛
         if (e instanceof ComfyError && e.kind === 'unreachable') failure = e
         else throw e
       }
+      if (hist) {
+        if (hist.status >= 500) failure = new ComfyError('failed', `history HTTP ${hist.status} ${hist.text}`)
+        else if (!hist.ok) {
+          // 4xx：放弃轮询，任务还没完成，撤掉它
+          await cleanup().catch(() => undefined)
+          throw new ComfyError('failed', `history HTTP ${hist.status} ${hist.text}`)
+        }
+      }
       if (failure) {
-        if (++failures >= POLL_FAIL_LIMIT) throw failure
+        if (++failures >= POLL_FAIL_LIMIT) {
+          await cleanup().catch(() => undefined)
+          throw failure
+        }
         await sleep(o.pollMs, signal)
         continue
       }
@@ -304,6 +318,7 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
       const parsed = parseJson(hist!.text)
       const entry = isRecord(parsed) ? parsed[promptId] : undefined
       if (isRecord(entry)) {
+        finished = true
         const status = isRecord(entry.status) ? entry.status : {}
         if (status.status_str !== 'success') {
           throw new ComfyError('failed', JSON.stringify(status.messages ?? status))

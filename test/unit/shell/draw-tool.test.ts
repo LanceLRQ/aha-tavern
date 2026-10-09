@@ -267,18 +267,18 @@ describe('复述核对', () => {
     const out = await run({ scene: 'a' })
     const p = /\(<(.+)>\)/.exec(out.split('\n').pop()!)![1]!
     echo.onReply('s1', `好的\n![画面](<${p}>)`)
-    echo.onUser('s1', 1)
+    echo.onStep('s1', undefined, 1)
     expect(log.warn).not.toHaveBeenCalled()
   })
   it('下一轮开始仍未出现：记 warn 并清掉', async () => {
     await run({ scene: 'a' })
     echo.onReply('s1', '没有图')
-    echo.onUser('s1', 0)
+    echo.onStep('s1', undefined, 0)
     expect(log.warn).not.toHaveBeenCalled()
-    echo.onUser('s1', 1)
+    echo.onStep('s1', undefined, 1)
     expect(log.warn).toHaveBeenCalledTimes(1)
     expect(log.warn.mock.calls[0][0]).toContain('回复里没有图片路径')
-    echo.onUser('s1', 1)
+    echo.onStep('s1', undefined, 1)
     expect(log.warn).toHaveBeenCalledTimes(1)
   })
 })
@@ -342,7 +342,7 @@ describe('图片行路径', () => {
     const line = out.split('\n').pop()!
     expect(line).toMatch(/^!\[画面\]\(<.+ .+\(括号\)%3Cx%3E.+001\.png>\)$/)
     echo.onReply('s1', `好\n${line}`)
-    echo.onUser('s1', 1)
+    echo.onStep('s1', undefined, 1)
     expect(log.warn).not.toHaveBeenCalled()
   })
   it('目录路径含换行符：不出图，failed: other 并记日志', async () => {
@@ -374,7 +374,7 @@ describe('会话在出图期间结束', () => {
     drawing.forget('s1')
     finish()
     expect(await p).toMatch(/^drawn/)
-    echo.onUser('s1', 1)
+    echo.onStep('s1', undefined, 1)
     expect(log.warn).not.toHaveBeenCalled()
 
   })

@@ -329,29 +329,42 @@ export function composePrompt(parts: { style?: string; appearance?: string; scen
 
 // ---------- 复述核对 ----------
 
-/** 成功出图后记下待核对的路径；这一轮的回复里含有该路径就清掉，到下一轮开始仍没有就记 warn。 */
+/**
+ * 成功出图后记下待核对的路径，轮次收尾时核对：这一轮的回复里含有该路径就清掉，没有就请角色补一次。
+ *
+ * 核对放在宿主的 agent/turn-stopping（dsh-agent-loop lib/index.js 的轮次循环里，step 结束后先
+ * signal.throwIfAborted()，再派发该事件）：用户中断的轮次抛出后直接进入收尾，不经过它，
+ * 所以停止后绝不会补发；这里 steer 提示会让同一轮再跑一步。
+ */
 export class DrawEcho {
-  private readonly pending = new Map<string, { path: string; n: number; nudged: boolean }>()
+  private readonly pending = new Map<string, { path: string; n: number; turn: number | undefined; nudged: boolean }>()
+  /** 每个会话最近一次 pre-step 看到的轮次号；出图时用它给待核对项盖章 */
+  private readonly turns = new Map<string, number>()
 
-  constructor(private readonly log: Pick<Log, 'warn'>) {}
+  constructor(private readonly log: Pick<Log, 'warn'> & Partial<Pick<Log, 'debug'>>) {}
 
   expect(session: string, imagePath: string, n: number): void {
-    this.pending.set(session, { path: imagePath, n, nudged: false })
+    this.pending.set(session, { path: imagePath, n, turn: this.turns.get(session), nudged: false })
+  }
+
+  /** 角色的回复提交时调用：回复含待核对路径就清除；不含的留到轮次收尾再处理。 */
+  onReply(session: string, text: string): void {
+    const p = this.pending.get(session)
+    if (p && text.includes(p.path)) this.pending.delete(session)
   }
 
   /**
-   * 角色的回复提交时调用。回复里漏了图片路径时，首次通过 nudge 请角色补一次；
-   * 补过仍没有则记 warn 并清除，不补第二次。没有给 nudge 时只等下一条用户消息再报。
+   * 轮次即将正常结束时调用（agent/turn-stopping）。路径仍没出现时首次通过 nudge 请角色补一次；
+   * 补过仍没有则记 warn 并清除，不补第二次。待核对项属于别的轮次（那一轮被停止）时直接清除。
    * nudge 同步抛错或异步拒绝都只记 warn。
    */
-  onReply(session: string, text: string, nudge?: (notice: string) => void | Promise<void>): void {
+  onTurnStopping(session: string, turn: unknown, nudge: (notice: string) => void | Promise<void>): void {
     const p = this.pending.get(session)
     if (!p) return
-    if (text.includes(p.path)) {
-      this.pending.delete(session)
+    if (typeof turn === 'number' && p.turn !== undefined && p.turn !== turn) {
+      this.dropStopped(session, p)
       return
     }
-    if (!nudge) return
     if (p.nudged) {
       this.pending.delete(session)
       this.log.warn(`会话 ${session}：第 ${p.n} 张图出了，补过一次仍未贴出图片路径`)
@@ -367,19 +380,31 @@ export class DrawEcho {
   }
 
   /**
-   * pre-step 里调用：本步带进来多少条新的用户消息。
-   * 用户在回复提交前中途插话时也会算作新一轮，可能误报一条 warn，只影响日志统计。
+   * pre-step 里调用。进入了新的轮次，说明记下的那一轮没有正常收尾（被停止），直接清除不补。
+   * 同一轮里用户插话不影响核对；拿不到轮次号时退回旧判断：有新用户消息就清除并记 warn。
    */
-  onUser(session: string, newUserMessages: number): void {
-    if (newUserMessages <= 0) return
+  onStep(session: string, turn: unknown, newUserMessages: number): void {
     const p = this.pending.get(session)
-    if (!p) return
+    if (typeof turn === 'number') {
+      this.turns.set(session, turn)
+      if (p && p.turn !== undefined && p.turn !== turn) this.dropStopped(session, p)
+      return
+    }
+    if (!p || newUserMessages <= 0) return
     this.pending.delete(session)
     this.log.warn(`会话 ${session}：第 ${p.n} 张图出了，但回复里没有图片路径`)
   }
 
   forget(session: string): void {
     this.pending.delete(session)
+    this.turns.delete(session)
+  }
+
+  private dropStopped(session: string, p: { n: number }): void {
+    this.pending.delete(session)
+    const msg = `会话 ${session}：第 ${p.n} 张图出了，但这一轮被停止，未补图片行`
+    if (this.log.debug) this.log.debug(msg)
+    else this.log.warn(msg)
   }
 }
 

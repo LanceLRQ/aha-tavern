@@ -777,17 +777,21 @@ export function installChat(ctx: Context, rt: Runtime): void {
     })
     const recorder = new TranscriptRecorder({
       resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log, onFirstUser: firstLineIndexer(env),
-      onReply: (agent, text) => drawEcho.onReply(agent.id, text, (notice) => {
-        if (typeof agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
-        agent.steer(makeNotice(notice, '补上图片'))
-      }),
+      onReply: (agent, text) => drawEcho.onReply(agent.id, text),
+    })
+    // 一轮正常结束前核对图片行；用户中断的轮次不经过这里（见 DrawEcho 注释）
+    c.on('agent/turn-stopping', (payload: { agent: HostAgent; turn?: unknown }) => {
+      drawEcho.onTurnStopping(payload.agent.id, payload.turn, (notice) => {
+        if (typeof payload.agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
+        payload.agent.steer(makeNotice(notice, '补上图片'))
+      })
     })
     c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
       await drawing.ensure(payload.agent)
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
       drawTurns.onStep(payload.agent.id, payload.turn, newUsers)
-      drawEcho.onUser(payload.agent.id, newUsers)
+      drawEcho.onStep(payload.agent.id, payload.turn, newUsers)
       await onChatStep(memoryEnv, payload.agent, payload.turn, newUsers)
       return next()
     })
