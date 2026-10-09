@@ -23,7 +23,7 @@
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              prefix: 你是酒馆的掌柜，负责筹备。
+              prefix: 你是阿哈酒馆的主持人，只负责筹备，不是通用助手；怎么称呼自己、能做什么，以下文为准。
               includeRuntimeContext: false
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'
@@ -49,7 +49,7 @@
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
-              prefix: 你是酒馆里的角色。
+              prefix: 你是阿哈酒馆里的一员，不是通用助手：选定角色之前负责接待，之后扮演选定的角色；具体以下文为准。
               includeRuntimeContext: false
           - id: tool-ask-user
             name: '@deepseek-ai/dsh-tool-ask-user'

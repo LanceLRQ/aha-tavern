@@ -25,7 +25,7 @@ const sub = (id: CommandId, zh: string, description: string, hint?: string): Sub
 
 export const SUBCOMMANDS: readonly Subcommand[] = [
   sub('init', '开店', '把当前工作区变成一间酒馆'),
-  sub('card', '建卡', '新建或修改角色卡'),
+  sub('card', '建卡', '新建或修改角色卡', '[角色名]'),
   sub('me', '我', '写或改主角档案'),
   sub('world', '世界观', '写或改世界观'),
   sub('import', '导入', '从另一间酒馆复制角色卡或主角档案'),
