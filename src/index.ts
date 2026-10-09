@@ -11,6 +11,6 @@ export const inject = ['tools']
 export function apply(ctx: Context, config?: unknown): void {
   const rt = createRuntime(ctx, config, import.meta.url)
   rt.log.info(`已加载，模式：${rt.config.mode}`)
-  installHandlers(rt)
+  installHandlers(rt, ctx)
   registerCommands(ctx, rt)
 }

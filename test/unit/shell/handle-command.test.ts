@@ -112,3 +112,59 @@ describe('handleCommand', () => {
     expect(rt.log.debug).toHaveBeenCalled()
   })
 })
+
+describe('全新会话转告回执', () => {
+  const freshAgent = (steer: (m: unknown) => void, msgs: unknown[] = []): HostAgent => ({
+    id: 's1', ctx: {}, session: { header: { cwd: '/w' }, deriveMessages: () => msgs }, steer,
+  })
+
+  it('全新会话 + 回执有文字 + 处理函数没 steer：补一条转告', async () => {
+    const steer = vi.fn()
+    const rt = fakeRuntime('setup', themeOf('plain'))
+    const r = await handleCommand(rt, services('tavern-setup'), freshAgent(steer), cmd('世界观'), '/aha 世界观')
+    expect(r.text).toBeTruthy()
+    expect(steer).toHaveBeenCalledTimes(1)
+  })
+
+  it('处理函数自己 steer 过：不再补', async () => {
+    const steer = vi.fn()
+    const rt = fakeRuntime('setup', themeOf('plain'))
+    rt.handlers.doctor = (inv) => {
+      inv.steer('hi', 's')
+      return { kind: 'success', text: 'ok' }
+    }
+    await handleCommand(rt, services('tavern-setup'), freshAgent(steer), cmd('自检'), '/aha 自检')
+    expect(steer).toHaveBeenCalledTimes(1)
+  })
+
+  it('已落地或取不到消息：不补', async () => {
+    const steer = vi.fn()
+    const rt = fakeRuntime('setup', themeOf('plain'))
+    await handleCommand(rt, services('tavern-setup'), freshAgent(steer, [1, 2, 3]), cmd('世界观'), '/aha 世界观')
+    const broken: HostAgent = { ...freshAgent(steer), session: { deriveMessages: () => { throw new Error('x') } } }
+    await handleCommand(rt, services('tavern-setup'), broken, cmd('世界观'), '/aha 世界观')
+    expect(steer).not.toHaveBeenCalled()
+  })
+})
+
+describe('steer 标志', () => {
+  it('agent.steer 抛错时不置标志，转告仍会尝试', async () => {
+    let calls = 0
+    const steer = vi.fn(() => {
+      calls++
+      if (calls === 1) throw new Error('boom')
+    })
+    const rt = fakeRuntime('setup', themeOf('plain'))
+    rt.handlers.doctor = (inv) => {
+      try {
+        inv.steer('x', 's')
+      } catch {
+        // 处理函数吞掉
+      }
+      return { kind: 'success', text: 'ok' }
+    }
+    const a: HostAgent = { id: 's1', ctx: {}, session: { header: { cwd: '/w' }, deriveMessages: () => [] }, steer }
+    await handleCommand(rt, services('tavern-setup'), a, cmd('自检'), '/aha 自检')
+    expect(steer).toHaveBeenCalledTimes(2)
+  })
+})

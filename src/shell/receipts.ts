@@ -37,6 +37,12 @@ function dispatchText(theme: Theme, reason: DispatchReason, info: DispatchReceip
         ? `这个会话还没有选工作区。请先选一个工作区，再用 \`/aha 开店\` 把它变成一间${tavern}。`
         : `这里还不是${tavern}。先用 \`/aha 开店\` 把这里变成一间${tavern}。`
     case 'go-setup':
+      if (info.outsideReason === 'not-tavern') {
+        return `这里还不是${tavern}。请切换到「${MODE_LABEL.setup}」，用 \`/aha 开店\` 开${tavern}，由${theme.host().name}接待。`
+      }
+      if (info.outsideReason === 'no-workspace') {
+        return `这个会话还没有选工作区，也就还没有${tavern}。请先选一个工作区，再切换到「${MODE_LABEL.setup}」用 \`/aha 开店\` 开${tavern}，由${theme.host().name}接待。`
+      }
       return `这件事归${theme.host().name}在「${MODE_LABEL.setup}」里办，请切换到那个模式再试。`
     case 'go-chat':
       return `开场要在「${MODE_LABEL.chat}」里进行，请切换到那个模式再用 \`/aha 开场\`。`
@@ -92,4 +98,21 @@ export function doctorLine(theme: Theme, info: DoctorInfo): string {
       ? '门外（会话没有工作区）'
       : `门外（这里不是${theme.concept('tavern')}）`
   return `当前状态：模式 ${MODE_LABEL[info.mode]}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}`
+}
+
+/** 开店时会话没有工作区。 */
+export function initNeedsWorkspaceReceipt(theme: Theme): Reply {
+  return dispatchReceipt(theme, 'init-first', { outsideReason: 'no-workspace' })
+}
+
+/** 开店成功：一行，掌柜马上会开口。 */
+export function initDoneReceipt(
+  theme: Theme,
+  name: string,
+  opts: { registryWarning?: string | undefined; guidanceFailed?: boolean } = {},
+): Reply {
+  const base = `${theme.concept('tavern')}「${name}」已${theme.action('init')}。`
+  const reg = opts.registryWarning ? `（登记表没写成：${opts.registryWarning}）` : ''
+  const gd = opts.guidanceFailed ? `不过引导没发出来，直接和${theme.host().name}说话就行。` : ''
+  return guide(base + reg + gd)
 }

@@ -31,6 +31,18 @@ describe('回执文字', () => {
     expect(not).toContain('/aha 开店')
   })
 
+  it('单聊在门外：先说明这里还不是酒馆，再请去筹备开店', async () => {
+    const t = await load('plain')
+    const not = dispatchReceipt(t, 'go-setup', { outsideReason: 'not-tavern' }).text
+    expect(not).toContain('这里还不是酒馆')
+    expect(not).toContain('酒馆:筹备')
+    expect(not).toContain('/aha 开店')
+    const none = dispatchReceipt(t, 'go-setup', { outsideReason: 'no-workspace' }).text
+    expect(none).toContain('工作区')
+    expect(none).toContain('酒馆:筹备')
+    expect(none).not.toBe(not)
+  })
+
   it('换主题后称呼跟着换', async () => {
     const plain = await load('plain')
     const fools = await load('fools')

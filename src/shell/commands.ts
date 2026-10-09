@@ -1,6 +1,7 @@
 // 命令注册与分流：一条 `aha <子命令>` 加每个子命令一条 `aha-<英文名>`，共用一个入口。
 import type { Context } from '@deepseek-ai/cordis'
 import { dispatch, type CommandId } from '../core/dispatch'
+import { buildRelayNotice, makeNotice, shouldRelay } from './steer'
 import { buildContext, type CommandReply, type HostAgent, type HostServices } from './context'
 import {
   dispatchReceipt, emptyReceipt, failureReceipt, notTavernModeReceipt, pendingReceipt, unknownReceipt,
@@ -50,6 +51,16 @@ export function parseSubcommand(input: string): ParsedSubcommand {
   return hit ? { kind: 'command', id: hit.id, args: m[2]!.trim() } : { kind: 'unknown', word }
 }
 
+/** 会话是否全新；取不到或抛错按"已落地"处理。 */
+export function isFreshSession(agent: HostAgent): boolean {
+  try {
+    const msgs = agent.session?.deriveMessages?.()
+    return Array.isArray(msgs) && msgs.length === 0
+  } catch {
+    return false
+  }
+}
+
 /** 统一入口：`parsed` 为已解析的子命令，`label` 为用户敲的写法。 */
 export async function handleCommand(
   rt: Runtime,
@@ -57,6 +68,35 @@ export async function handleCommand(
   agent: HostAgent,
   parsed: ParsedSubcommand,
   label: string,
+): Promise<CommandReply> {
+  const fresh = isFreshSession(agent)
+  let steered = false
+  const steer = (text: string, summary: string): void => {
+    if (typeof agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
+    agent.steer(makeNotice(text, summary))
+    steered = true
+  }
+  const reply = await processCommand(rt, services, agent, parsed, label, steer)
+  // 全新会话里回执不显示：没有别的 steer 时，另请掌柜转告一遍（07 F18）
+  if (shouldRelay({ fresh, steered, replyText: reply.text })) {
+    try {
+      const theme = await rt.theme().catch(() => undefined)
+      steer(buildRelayNotice(label, reply.text!, theme), `回执：${label}`)
+      rt.log.debug(`命令 ${label}：全新会话，已请掌柜转告回执`)
+    } catch (e) {
+      rt.log.warn(`转告回执失败：${(e as Error).message}`)
+    }
+  }
+  return reply
+}
+
+async function processCommand(
+  rt: Runtime,
+  services: HostServices,
+  agent: HostAgent,
+  parsed: ParsedSubcommand,
+  label: string,
+  steer: (text: string, summary: string) => void,
 ): Promise<CommandReply> {
   let theme
   try {
@@ -81,7 +121,7 @@ export async function handleCommand(
     if (!d.run) return dispatchReceipt(theme, d.reason, { label, outsideReason: context.outsideReason })
     const handler = rt.handlers[parsed.id]
     if (!handler) return pendingReceipt(label)
-    return await handler({ agent, services, rt, theme, context, args: parsed.args, label })
+    return await handler({ agent, services, rt, theme, context, args: parsed.args, label, steer })
   } catch (e) {
     rt.log.error(`命令 ${label} 失败：${(e as Error).stack ?? e}`)
     return failureReceipt((e as Error).message)
