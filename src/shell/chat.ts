@@ -28,6 +28,7 @@ import type { Runtime } from './runtime'
 import { hostSectionRegister, SessionSections, type SectionPlan } from './sections'
 import { makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
+import { createMemoryEnv, onChatStep, rememberHandler, rememberTool, reviewTool } from './remember'
 import { resolveChatTarget, TranscriptRecorder } from './transcript'
 import { isReadonly } from './writable'
 
@@ -637,8 +638,10 @@ export function installChat(ctx: Context, rt: Runtime): void {
     const uq = (c as unknown as { userQuestions: { ask: AskFn } }).userQuestions
     ask = (req) => uq.ask(req)
   })
-  registerChatTools(ctx, { start: startTool(env) })
+  const memoryEnv = createMemoryEnv(rt, () => services)
+  registerChatTools(ctx, { start: startTool(env), remember: rememberTool(memoryEnv), review: reviewTool(memoryEnv) })
   rt.handlers.start = startHandler(env)
+  rt.handlers.remember = rememberHandler(memoryEnv)
   host.inject(['agentPresets'], (c) => {
     services = c
     const ensure = async (agent: HostAgent, via: string): Promise<void> => {
@@ -653,9 +656,10 @@ export function installChat(ctx: Context, rt: Runtime): void {
       void ensure(payload.agent, 'created')
     })
     const recorder = new TranscriptRecorder({ resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log })
-    c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[] }, next: () => Promise<unknown>) => {
+    c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
-      recorder.onStep(payload.agent, (payload.messages ?? []) as never)
+      const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
+      await onChatStep(memoryEnv, payload.agent, payload.turn, newUsers)
       return next()
     })
     // 通知类事件，不带 next
@@ -665,6 +669,8 @@ export function installChat(ctx: Context, rt: Runtime): void {
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
       recorder.forget(payload.agent.id)
+      memoryEnv.reminder.forget(payload.agent.id)
+      memoryEnv.turns.forget(payload.agent.id)
     })
     rt.log.info('单聊外壳已装配（created / pre-step / disposed 监听）')
   })

@@ -10,6 +10,8 @@ import {
   readRecords,
   readChatMeta,
   writeSummary,
+  writeSummaryFile,
+  setChatTitle,
   recallChat,
 } from '../../../src/core/chat'
 import { countChars } from '../../../src/core/docs'
@@ -135,6 +137,23 @@ describe('追加与往返回归', () => {
     const c = await mk()
     await fs.writeFile(path.join(c.dir, 'meta.yaml'), 'kind: nope\nparticipants: 1\n')
     await expect(readChatMeta(dir, c.id)).rejects.toSatisfy((e) => isAhaError(e, 'chat-invalid'))
+  })
+})
+
+describe('writeSummaryFile / setChatTitle', () => {
+  it('分步：只写梗概不动标题，只改标题不动梗概', async () => {
+    const c = await mk()
+    await writeSummaryFile(dir, c.id, '梗概')
+    expect((await readChatMeta(dir, c.id)).title).toBe('')
+    await setChatTitle(dir, c.id, '标题')
+    expect((await readChatMeta(dir, c.id)).title).toBe('标题')
+    expect(await fs.readFile(path.join(c.dir, 'summary.md'), 'utf8')).toBe('梗概')
+  })
+  it('找不到聊天抛 chat-not-found；meta 缺失时 setChatTitle 抛 chat-invalid', async () => {
+    await expect(writeSummaryFile(dir, 'zzzz', 'x')).rejects.toSatisfy((e) => isAhaError(e, 'chat-not-found'))
+    const c = await mk()
+    await fs.rm(path.join(c.dir, 'meta.yaml'))
+    await expect(setChatTitle(dir, c.id, 't')).rejects.toSatisfy((e) => isAhaError(e, 'chat-invalid'))
   })
 })
 

@@ -113,14 +113,16 @@ export class TranscriptRecorder {
     return s
   }
 
-  /** pre-step：入步消息里的用户的话。同步入队，不阻塞宿主。 */
-  onStep(agent: HostAgent, messages: readonly UserMessageLike[]): void {
+  /** pre-step：入步消息里的用户的话。同步入队，不阻塞宿主；返回本步新见到的用户消息条数。 */
+  onStep(agent: HostAgent, messages: readonly UserMessageLike[]): number {
     try {
       const s = this.state(agent.id)
       const records = userRecordsOf(messages, s.seen)
       for (const r of records) this.enqueue(agent, s, 'user', 'user', r.text)
+      return records.length
     } catch (e) {
       this.deps.log.warn(`对话落盘（用户消息）出错：${(e as Error).message}`)
+      return 0
     }
   }
 

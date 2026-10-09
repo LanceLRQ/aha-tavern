@@ -194,18 +194,29 @@ export async function readRecords(
   return { records, skipped }
 }
 
-/** 写梗概，并把标题同步进 meta.yaml（带锁读改写）。 */
+/** 只写梗概文件。 */
+export async function writeSummaryFile(tavernDir: string, chatId: string, summary: string): Promise<void> {
+  const dir = await requireChatDir(tavernDir, chatId)
+  await atomicWrite(path.join(dir, CHAT_SUMMARY_FILE), summary)
+}
+
+/** 只改 meta.yaml 里的标题（带锁读改写）。 */
+export async function setChatTitle(tavernDir: string, chatId: string, title: string): Promise<void> {
+  const dir = await requireChatDir(tavernDir, chatId)
+  await modifyFile(path.join(dir, CHAT_META_FILE), (current) => {
+    if (current === null) throw new AhaError('chat-invalid', `聊天元数据缺失：${chatId}`)
+    return YAML.stringify({ ...parseMeta(current, chatId), title })
+  })
+}
+
+/** 写梗概，并把标题同步进 meta.yaml；两步分别由 writeSummaryFile 与 setChatTitle 完成。 */
 export async function writeSummary(
   tavernDir: string,
   chatId: string,
   input: { summary: string; title: string },
 ): Promise<void> {
-  const dir = await requireChatDir(tavernDir, chatId)
-  await atomicWrite(path.join(dir, CHAT_SUMMARY_FILE), input.summary)
-  await modifyFile(path.join(dir, CHAT_META_FILE), (current) => {
-    if (current === null) throw new AhaError('chat-invalid', `聊天元数据缺失：${chatId}`)
-    return YAML.stringify({ ...parseMeta(current, chatId), title: input.title })
-  })
+  await writeSummaryFile(tavernDir, chatId, input.summary)
+  await setChatTitle(tavernDir, chatId, input.title)
 }
 
 export type RecallResult =

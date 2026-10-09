@@ -19,6 +19,8 @@ export interface HostAgent {
     deriveMessages?(): readonly unknown[]
   }
   steer?(message: unknown): unknown
+  /** 不唤醒的上下文补充：随下一步一起送达模型。 */
+  inject?(message: unknown): unknown
 }
 
 /** 本插件用到的宿主服务（命令注册时 inject 进来）。 */
