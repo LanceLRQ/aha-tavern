@@ -75,7 +75,7 @@ export async function findChatDir(tavernDir: string, chatId: string): Promise<st
   return hit ? path.join(chatsRoot(tavernDir), hit.name) : null
 }
 
-async function requireChatDir(tavernDir: string, chatId: string): Promise<string> {
+export async function requireChatDir(tavernDir: string, chatId: string): Promise<string> {
   const dir = await findChatDir(tavernDir, chatId)
   if (!dir) throw new AhaError('chat-not-found', `找不到聊天：${chatId}`)
   return dir
