@@ -777,7 +777,10 @@ export function installChat(ctx: Context, rt: Runtime): void {
     })
     const recorder = new TranscriptRecorder({
       resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log, onFirstUser: firstLineIndexer(env),
-      onReply: (agent, text) => drawEcho.onReply(agent.id, text),
+      onReply: (agent, text) => drawEcho.onReply(agent.id, text, (notice) => {
+        if (typeof agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
+        agent.steer(makeNotice(notice, '补上图片'))
+      }),
     })
     c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')

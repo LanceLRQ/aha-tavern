@@ -331,18 +331,39 @@ export function composePrompt(parts: { style?: string; appearance?: string; scen
 
 /** 成功出图后记下待核对的路径；这一轮的回复里含有该路径就清掉，到下一轮开始仍没有就记 warn。 */
 export class DrawEcho {
-  private readonly pending = new Map<string, { path: string; n: number }>()
+  private readonly pending = new Map<string, { path: string; n: number; nudged: boolean }>()
 
   constructor(private readonly log: Pick<Log, 'warn'>) {}
 
   expect(session: string, imagePath: string, n: number): void {
-    this.pending.set(session, { path: imagePath, n })
+    this.pending.set(session, { path: imagePath, n, nudged: false })
   }
 
-  /** 角色的回复提交时调用。 */
-  onReply(session: string, text: string): void {
+  /**
+   * 角色的回复提交时调用。回复里漏了图片路径时，首次通过 nudge 请角色补一次；
+   * 补过仍没有则记 warn 并清除，不补第二次。没有给 nudge 时只等下一条用户消息再报。
+   * nudge 同步抛错或异步拒绝都只记 warn。
+   */
+  onReply(session: string, text: string, nudge?: (notice: string) => void | Promise<void>): void {
     const p = this.pending.get(session)
-    if (p && text.includes(p.path)) this.pending.delete(session)
+    if (!p) return
+    if (text.includes(p.path)) {
+      this.pending.delete(session)
+      return
+    }
+    if (!nudge) return
+    if (p.nudged) {
+      this.pending.delete(session)
+      this.log.warn(`会话 ${session}：第 ${p.n} 张图出了，补过一次仍未贴出图片路径`)
+      return
+    }
+    p.nudged = true
+    const fail = (e: unknown): void => this.log.warn(`会话 ${session}：补图片行的提示没能送出：${(e as Error)?.message ?? e}`)
+    try {
+      Promise.resolve(nudge(echoNotice(p.path))).catch(fail)
+    } catch (e) {
+      fail(e)
+    }
   }
 
   /**
@@ -360,6 +381,13 @@ export class DrawEcho {
   forget(session: string): void {
     this.pending.delete(session)
   }
+}
+
+/** 回复漏了图片行时请角色补一次的提示（舞台指令，英文固定结构）。 */
+export function echoNotice(imagePath: string): string {
+  return '(notice) The picture you just drew was not shown because your reply left out the image line. '
+    + 'Reply with exactly the line inside <image_line> and nothing else — no narration, no tool call.\n'
+    + `<image_line>\n${imageLine(imagePath)}\n</image_line>`
 }
 
 // ---------- 工具 ----------
