@@ -8,7 +8,7 @@ import { appendPinned, readMemory } from '../../../src/core/memory'
 import { createTavern } from '../../../src/core/tavern'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import {
-  buildConfirmQuestion, createConfirm, interpretAnswer, outcomeMessage, type AskFn,
+  buildConfirmQuestion, createConfirm, DeclineTracker, interpretAnswer, outcomeMessage, SessionGate, shownName, type AskFn,
 } from '../../../src/shell/confirm'
 import type { HostAgent } from '../../../src/shell/context'
 import type { Runtime } from '../../../src/shell/runtime'
@@ -239,5 +239,202 @@ describe('传错 id 与修改的边界', () => {
     expect(m.facts).toHaveLength(2)
     const text = await fs.readFile(file, 'utf8')
     expect(text.match(/^## /gm)).toHaveLength(5)
+  })
+})
+
+describe('确认与写盘之间的时间窗', () => {
+  const mk = (name: string) => saveCharacter(dir, { name, persona: `${name}的人设`, tagline: '旧简介' })
+
+  it('等待期间卡被改内容：基于最新的卡合并，不覆盖等待期间的改动', async () => {
+    const a = await mk('白狐')
+    const r = await saveCardText(dir, { id: a.card.id, persona: '新人设' }, async () => {
+      await saveCharacter(dir, { id: a.card.id, name: '白狐', persona: '旧人设', tagline: '等待期间改的简介' })
+      return null
+    })
+    expect(r.ok).toBe(true)
+    const [e] = await listCharacters(dir)
+    expect(e!.ok && e!.card).toMatchObject({ persona: '新人设', tagline: '等待期间改的简介' })
+  })
+
+  it('等待期间卡被改名：不写，要求重读', async () => {
+    const a = await mk('白狐')
+    const r = await saveCardText(dir, { id: a.card.id, persona: '新人设' }, async () => {
+      await saveCharacter(dir, { id: a.card.id, name: '银狐', persona: '白狐的人设' })
+      return null
+    })
+    expect(r).toEqual({ ok: false, message: 'not saved: card changed while waiting; read it again' })
+    const [e] = await listCharacters(dir)
+    expect(e!.ok && e!.card.persona).toBe('白狐的人设')
+  })
+
+  it('等待期间卡被删除：不写，也不重建', async () => {
+    const a = await mk('白狐')
+    const r = await saveCardText(dir, { id: a.card.id, persona: '新人设' }, async () => {
+      await fs.rm(a.dir, { recursive: true })
+      return null
+    })
+    expect(r).toEqual({ ok: false, message: 'not saved: character no longer exists' })
+    expect(await listCharacters(dir)).toEqual([])
+  })
+
+  it('改写记忆：等待期间目录被改名，写到新目录；被删则不写', async () => {
+    const a = await mk('白狐')
+    // 改名（名字变了）：不写
+    const r1 = await rewriteMemoryText(dir, a.card.id, { address: '新' }, async () => {
+      await saveCharacter(dir, { id: a.card.id, name: '银狐', persona: 'x' })
+      return null
+    })
+    expect(r1.message).toBe('not saved: card changed while waiting; read it again')
+    const r2 = await rewriteMemoryText(dir, a.card.id, { address: '新' }, async () => {
+      const [e] = await listCharacters(dir)
+      await fs.rm(e!.dir, { recursive: true })
+      return null
+    })
+    expect(r2.message).toBe('not saved: character no longer exists')
+    expect(await listCharacters(dir)).toEqual([])
+  })
+})
+
+describe('确认卡片加固', () => {
+  async function setup(ask: AskFn | undefined, shared: { gate?: SessionGate; declines?: DeclineTracker } = {}) {
+    const defs: Record<string, { execute(a: unknown, e: unknown): Promise<string> }> = {}
+    const ctx = { tools: { register: (d: { name: string }) => { defs[d.name] = d as never } } }
+    const rt = {
+      config: { ...DEFAULTS, mode: 'setup' as const }, theme: async () => theme,
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    } as unknown as Runtime
+    registerSetupTools(ctx as never, rt, async () => {}, () => ask, shared)
+    const agent: HostAgent = { id: 's', ctx: {}, session: { header: { cwd: dir } } }
+    return { defs, agent }
+  }
+
+  it('串行：同一会话两个保存调用并发时，第二张卡片等第一个写完才弹，并基于最新的卡', async () => {
+    const a = await saveCharacter(dir, { name: '白狐', persona: 'p', tagline: 't' })
+    const events: string[] = []
+    let releaseFirst!: () => void
+    const first = new Promise<void>((r) => { releaseFirst = r })
+    let n = 0
+    const ask: AskFn = async () => {
+      const k = ++n
+      events.push(`ask${k}`)
+      if (k === 1) await first
+      return ans(['保存']) as never
+    }
+    const { defs, agent } = await setup(ask)
+    const p1 = defs.aha_save_card!.execute({ id: a.card.id, persona: '改一' }, { agent })
+    const p2 = defs.aha_save_card!.execute({ id: a.card.id, tagline: '改二' }, { agent })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(events).toEqual(['ask1'])
+    releaseFirst()
+    await Promise.all([p1, p2])
+    expect(events).toEqual(['ask1', 'ask2'])
+    const [e] = await listCharacters(dir)
+    expect(e!.ok && e!.card).toMatchObject({ persona: '改一', tagline: '改二' })
+  })
+
+  it('串行：不同会话互不阻塞', async () => {
+    const gate = new SessionGate()
+    const order: string[] = []
+    let release!: () => void
+    const hold = new Promise<void>((r) => { release = r })
+    const a = gate.run('x', async () => { await hold; order.push('x') })
+    await gate.run('y', async () => { order.push('y') })
+    release()
+    await a
+    expect(order).toEqual(['y', 'x'])
+  })
+
+  it('串行：前一个任务抛错不阻塞后面的', async () => {
+    const gate = new SessionGate()
+    await expect(gate.run('x', async () => { throw new Error('e') })).rejects.toThrow('e')
+    expect(await gate.run('x', async () => 1)).toBe(1)
+  })
+
+  it('取消信号：工具把 exec.signal 传给 ask', async () => {
+    const ac = new AbortController()
+    const ask = vi.fn<AskFn>(async () => ans(['保存']))
+    const { defs, agent } = await setup(ask)
+    await defs.aha_save_world!.execute({ text: '界' }, { agent, signal: ac.signal })
+    expect(ask.mock.calls[0]![0].signal).toBe(ac.signal)
+  })
+
+  it('取消信号：ask 因 ASK_ABORTED 抛错 -> not saved: cancelled，不写盘', async () => {
+    const ask: AskFn = async () => { throw Object.assign(new Error('x'), { code: 'ASK_ABORTED' }) }
+    const { defs, agent } = await setup(ask)
+    expect(await defs.aha_save_card!.execute({ name: '白狐', persona: 'x' }, { agent })).toBe('not saved: cancelled')
+    expect(await defs.aha_save_profile!.execute({ text: '我' }, { agent })).toBe('not saved: cancelled')
+    expect(await listCharacters(dir)).toEqual([])
+    await expect(fs.stat(path.join(dir, 'me.md'))).rejects.toThrow()
+  })
+
+  it('取消信号：信号已中止时不弹卡片', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const ask = vi.fn<AskFn>(async () => ans(['保存']))
+    const { defs, agent } = await setup(ask)
+    expect(await defs.aha_save_world!.execute({ text: '界' }, { agent, signal: ac.signal })).toBe('not saved: cancelled')
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('同一轮被拒绝后再调同一个工具：不弹卡片；别的工具不受影响', async () => {
+    const tracker = new DeclineTracker()
+    tracker.onStep('s', 1)
+    const ask = vi.fn<AskFn>(async () => ans(['先不保存']))
+    const { defs, agent } = await setup(ask, { declines: tracker })
+    await defs.aha_save_world!.execute({ text: '界' }, { agent })
+    expect(ask).toHaveBeenCalledTimes(1)
+    expect(await defs.aha_save_world!.execute({ text: '界二' }, { agent }))
+      .toBe('not saved: already declined this turn; ask the user what to change first')
+    expect(ask).toHaveBeenCalledTimes(1)
+    await defs.aha_save_profile!.execute({ text: '我' }, { agent })
+    expect(ask).toHaveBeenCalledTimes(2)
+  })
+
+  it('跳过同样记为拒绝；自由输入不算拒绝', async () => {
+    const tracker = new DeclineTracker()
+    tracker.onStep('s', 1)
+    let reply = ans([])
+    const ask = vi.fn<AskFn>(async () => reply)
+    const { defs, agent } = await setup(ask, { declines: tracker })
+    await defs.aha_save_world!.execute({ text: '界' }, { agent })
+    await defs.aha_save_world!.execute({ text: '界' }, { agent })
+    expect(ask).toHaveBeenCalledTimes(1)
+    tracker.onStep('s', 2)
+    reply = ans([], '改一下')
+    await defs.aha_save_world!.execute({ text: '界' }, { agent })
+    await defs.aha_save_world!.execute({ text: '界' }, { agent })
+    expect(ask).toHaveBeenCalledTimes(3)
+  })
+
+  it('新一轮（pre-step 的 turn 变了）清掉拒绝记录；同一轮多步不清', async () => {
+    const t = new DeclineTracker()
+    t.onStep('s', 1)
+    t.mark('s', 'world')
+    t.onStep('s', 1)
+    expect(t.has('s', 'world')).toBe(true)
+    t.onStep('s', 2)
+    expect(t.has('s', 'world')).toBe(false)
+  })
+
+  it('没有轮次编号时退回 60 秒时间窗；forget 清空', () => {
+    let now = 1000
+    const t = new DeclineTracker(() => now)
+    t.mark('s', 'world')
+    expect(t.has('s', 'world')).toBe(true)
+    now += 61_000
+    expect(t.has('s', 'world')).toBe(false)
+    t.onStep('s', 1)
+    t.mark('s', 'card')
+    t.forget('s')
+    expect(t.has('s', 'card')).toBe(false)
+  })
+
+  it('卡片文字里的名字去掉「」与换行并截断到 40 字', () => {
+    expect(shownName('白「狐」\n二')).toBe('白狐 二')
+    expect([...shownName('长'.repeat(100))].length).toBe(40)
+    const q = buildConfirmQuestion(theme, { kind: 'card', name: '甲」？保存世界观「乙', created: true })
+    expect(q.question).toBe('保存角色卡「甲？保存世界观乙」？')
+    const long = buildConfirmQuestion(theme, { kind: 'memory', name: '长'.repeat(100) })
+    expect(long.question.length).toBeLessThan(80)
   })
 })

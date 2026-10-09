@@ -82,11 +82,18 @@ export function notTavernModeReceipt(): Reply {
 
 export type WebSearchStatus = 'available' | 'unavailable' | 'unknown'
 
+/** 酒馆数据比插件新：除自检外的命令都不执行。 */
+export function readonlyReceipt(theme: Theme): Reply {
+  return guide(`这间${theme.concept('tavern')}的数据比插件新，请升级插件后再来；现在只能查看。`)
+}
+
 export interface DoctorInfo {
   mode: TavernMode
   tavernDir: string | null
   outsideReason: OutsideReason | null
   webSearch: WebSearchStatus
+  /** 酒馆数据版本较新，只能查看。 */
+  readonly?: boolean
 }
 
 const WEB_LABEL: Record<WebSearchStatus, string> = { available: '可用', unavailable: '不可用', unknown: '未知' }
@@ -97,7 +104,7 @@ export function doctorLine(theme: Theme, info: DoctorInfo): string {
     : info.outsideReason === 'no-workspace'
       ? '门外（会话没有工作区）'
       : `门外（这里不是${theme.concept('tavern')}）`
-  return `当前状态：模式 ${MODE_LABEL[info.mode]}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}`
+  return `当前状态：模式 ${MODE_LABEL[info.mode]}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}${info.readonly ? '；只读（数据版本较新）' : ''}`
 }
 
 /** 开店时会话没有工作区。 */
@@ -153,4 +160,19 @@ export function cardBrokenReceipt(
   const what = CARD_PROBLEM[b.problem] ?? b.problem
   const detail = b.detail ? `（${b.detail}）` : ''
   return fail(`「${b.dirName}」的${theme.concept('card')}读不出来：${b.file}，${what}${detail}。请先用编辑器修好这个文件。`)
+}
+
+// ---------- 导入命令的回执 ----------
+
+export function importNoSourceReceipt(theme: Theme): Reply {
+  return guide(`登记表里没有别的${theme.concept('tavern')}，没有可以${theme.action('import')}的来源。`)
+}
+
+export function importCancelledReceipt(theme: Theme): Reply {
+  return guide(`已取消${theme.action('import')}，什么都没有改动。`)
+}
+
+export function importNothingReceipt(theme: Theme, sourceName: string, brokenCount: number): Reply {
+  const broken = brokenCount > 0 ? `（另有 ${brokenCount} 张${theme.concept('card')}读不出来）` : ''
+  return guide(`「${sourceName}」里没有可以${theme.action('import')}的${theme.concept('character')}或${theme.concept('profile')}${broken}。`)
 }

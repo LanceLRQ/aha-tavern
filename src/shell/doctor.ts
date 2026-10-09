@@ -1,6 +1,7 @@
 // 自检：回一行当前状态。
 import { probeWebSearch, type CommandHandler } from './context'
 import { doctorLine } from './receipts'
+import { isReadonly } from './writable'
 
 export const doctorHandler: CommandHandler = ({ agent, rt, theme, context }) => {
   return {
@@ -10,6 +11,7 @@ export const doctorHandler: CommandHandler = ({ agent, rt, theme, context }) => 
       tavernDir: context.tavern?.dir ?? null,
       outsideReason: context.outsideReason,
       webSearch: probeWebSearch(rt.tools(), agent),
+      readonly: isReadonly(context.tavern),
     }),
   }
 }

@@ -17,6 +17,9 @@ export type AhaErrorCode =
   | 'chat-invalid'
   | 'session-locked'
   | 'session-invalid'
+  | 'import-same-tavern'
+  | 'import-invalid-decision'
+  | 'import-source-symlink'
 
 export class AhaError extends Error {
   readonly code: AhaErrorCode

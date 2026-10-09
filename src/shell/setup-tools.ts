@@ -11,8 +11,9 @@ import { memoryChars, readMemory, replaceSections, type Memory } from '../core/m
 import { isTavern } from '../core/tavern'
 import type { HostAgent } from './context'
 import type { Runtime } from './runtime'
-import { createConfirm, type AskFn, type Confirm } from './confirm'
+import { createConfirm, DeclineTracker, SessionGate, type AskFn, type Confirm } from './confirm'
 import { renderCard } from './setup-prompt'
+import { readonlyToolMessage } from './writable'
 
 export interface SaveResult {
   ok: boolean
@@ -166,6 +167,7 @@ export async function readCardText(dir: string, id: unknown): Promise<SaveResult
 export const NEW_CARD_NEXT =
   'next: ask the user once how this character should address them and what their relationship is (the user may skip); '
   + 'record the answer with aha_set_relation; then suggest opening a new session in mode 「酒馆:单聊」 to chat.'
+const CHANGED_WHILE_WAITING = 'not saved: card changed while waiting; read it again'
 export const EDIT_CARD_NEXT = 'next: card updated; the id is unchanged. Tell the user the change is saved.'
 
 /** 保存一张卡：无 id 新建，有 id 修改（未给出的栏沿用原值，给空串表示清空）。 */
@@ -173,22 +175,30 @@ export async function saveCardText(dir: string, args: unknown, confirm?: Confirm
   const parsed = parseCardArgs(args)
   if (isFail(parsed)) return parsed
   try {
-    let input: CharacterInput
     let oldName: string | undefined
+    let preview: CharacterInput
     if (parsed.id) {
       const f = await findCard(dir, parsed.id)
       if (isFail(f)) return f
       oldName = f.card.name
-      input = { ...f.card, ...parsed.fields, id: f.card.id }
+      preview = { ...f.card, ...parsed.fields, id: f.card.id }
     } else {
-      input = { name: parsed.fields.name!, persona: parsed.fields.persona!, ...parsed.fields }
+      preview = { name: parsed.fields.name!, persona: parsed.fields.persona!, ...parsed.fields }
     }
     const created = !parsed.id
     // 确认卡片里写盘上那张卡现在的名字，传错 id 时用户一眼能看出来
     const no = await declined(confirm, {
-      kind: 'card', name: input.name, ...(oldName !== undefined ? { oldName } : {}), created,
+      kind: 'card', name: preview.name, ...(oldName !== undefined ? { oldName } : {}), created,
     })
     if (no) return no
+    let input = preview
+    if (parsed.id) {
+      // 等待期间卡可能被改动：用户同意后重新按编号读，基于最新的卡合并
+      const latest = await findCard(dir, parsed.id)
+      if (isFail(latest)) return { ok: false, message: 'not saved: character no longer exists' }
+      if (latest.card.name !== oldName) return { ok: false, message: CHANGED_WHILE_WAITING }
+      input = { ...latest.card, ...parsed.fields, id: latest.card.id }
+    }
     const saved = await saveCharacter(dir, input)
     const head = created
       ? `card created (dir: ${saved.dirName})`
@@ -262,9 +272,13 @@ export async function rewriteMemoryText(
     if (isFail(f)) return f
     const no = await declined(confirm, { kind: 'memory', name: f.card.name })
     if (no) return no
-    const file = path.join(f.dir, MEMORY_FILE)
-    await replaceSections(file, patch, { characterName: f.card.name })
-    return { ok: true, message: `memory rewritten for ${f.card.id}\n${renderMemory(await readMemory(file))}` }
+    // 等待期间目录可能被改名或删除：重新定位
+    const latest = await findCard(dir, id)
+    if (isFail(latest)) return { ok: false, message: 'not saved: character no longer exists' }
+    if (latest.card.name !== f.card.name) return { ok: false, message: CHANGED_WHILE_WAITING }
+    const file = path.join(latest.dir, MEMORY_FILE)
+    await replaceSections(file, patch, { characterName: latest.card.name })
+    return { ok: true, message: `memory rewritten for ${latest.card.id}\n${renderMemory(await readMemory(file))}` }
   } catch (e) {
     return fail(`memory not rewritten (${(e as Error).message})`)
   }
@@ -288,24 +302,42 @@ export function registerSetupTools(
   rt: Runtime,
   onSaved: (agent: HostAgent) => Promise<void>,
   getAsk: () => AskFn | undefined = () => undefined,
+  shared: { gate?: SessionGate; declines?: DeclineTracker } = {},
 ): void {
+  const gate = shared.gate ?? new SessionGate()
+  const declines = shared.declines ?? new DeclineTracker()
   const host = ctx as unknown as ToolHost
   const text = (_a: unknown, v: unknown): Array<{ type: 'text'; text: string }> => [{ type: 'text', text: String(v) }]
 
-  const confirmFor = (agent: HostAgent | undefined): Confirm => createConfirm({ rt, getAsk }, agent)
+  const confirmFor = (agent: HostAgent | undefined, signal?: AbortSignal): Confirm =>
+    createConfirm({ rt, getAsk, declines }, agent, signal)
+  const signalOf = (exec: unknown): AbortSignal | undefined => {
+    const sg = (exec as { signal?: unknown } | null)?.signal
+    return sg instanceof AbortSignal ? sg : undefined
+  }
 
   const run = async (
     name: string,
     agent: HostAgent | undefined,
     save: (dir: string, confirm: Confirm) => Promise<SaveResult>,
     refresh = true,
+    signal?: AbortSignal,
+    writes = false,
   ): Promise<string> => {
     const dir = await tavernDirOf(agent)
     if (!dir) {
       rt.log.debug(`工具 ${name}：工作区不是酒馆`)
       return NOT_TAVERN
     }
-    const r = await save(dir, confirmFor(agent))
+    // 写盘工具动手前先查数据版本：只读的酒馆直接拒绝，不弹确认卡片
+    if (writes) {
+      const ro = await readonlyToolMessage(dir, rt.log)
+      if (ro) {
+        rt.log.debug(`工具 ${name}：${ro}`)
+        return ro
+      }
+    }
+    const r = await save(dir, confirmFor(agent, signal))
     rt.log.debug(`工具 ${name}：${r.message}`)
     if (r.ok && refresh && agent) {
       try {
@@ -317,13 +349,22 @@ export function registerSetupTools(
     return r.message
   }
 
+  /** 带确认卡片的保存：同一会话整段排队，避免两张卡片并发、各拿旧快照互相覆盖。 */
+  const runGated = (
+    name: string, exec: unknown, save: (dir: string, confirm: Confirm) => Promise<SaveResult>, refresh = true,
+  ): Promise<string> => {
+    const agent = agentOf(exec)
+    const go = () => run(name, agent, save, refresh, signalOf(exec), true)
+    return agent ? gate.run(agent.id, go) : go()
+  }
+
   host.tools.register(defineTool({
     name: 'aha_save_profile',
     description: '保存 profile 全文，整体覆盖原有内容。写出全文给用户看之后直接调用；调用后界面会请用户确认，确认前不会写入。',
     parameters: { text: { type: 'string', required: true, description: 'profile 的完整正文' } },
     output: { schema: { type: 'string' }, render: text },
     execute: (args, exec) =>
-      run('aha_save_profile', exec.agent as unknown as HostAgent | undefined, (dir, confirm) =>
+      runGated('aha_save_profile', exec, (dir, confirm) =>
         saveProfileText(dir, (args as { text?: unknown }).text, maxCharsOf(rt.config.worldBudget), confirm)),
   }))
 
@@ -333,7 +374,7 @@ export function registerSetupTools(
     parameters: { text: { type: 'string', required: true, description: 'world 的完整正文' } },
     output: { schema: { type: 'string' }, render: text },
     execute: (args, exec) =>
-      run('aha_save_world', exec.agent as unknown as HostAgent | undefined, (dir, confirm) =>
+      runGated('aha_save_world', exec, (dir, confirm) =>
         saveWorldText(dir, (args as { text?: unknown }).text, rt.config.worldBudget, confirm)),
   }))
 
@@ -374,7 +415,7 @@ export function registerSetupTools(
       voice: field(`voice，不超过 ${CARD_LIMITS.voice} 字`),
     },
     output: { schema: { type: 'string' }, render: text },
-    execute: (args, exec) => run('aha_save_card', agentOf(exec), (dir, confirm) => saveCardText(dir, args, confirm)),
+    execute: (args, exec) => runGated('aha_save_card', exec, (dir, confirm) => saveCardText(dir, args, confirm)),
   }))
 
   host.tools.register(defineTool({
@@ -383,7 +424,7 @@ export function registerSetupTools(
     parameters: { id: idParam, text: { type: 'string', required: true, description: 'address 栏的完整正文' } },
     output: { schema: { type: 'string' }, render: text },
     execute: (args, exec) => run('aha_set_relation', agentOf(exec), (dir) =>
-      setRelationText(dir, (args as { id?: unknown }).id, (args as { text?: unknown }).text)),
+      setRelationText(dir, (args as { id?: unknown }).id, (args as { text?: unknown }).text), true, undefined, true),
   }))
 
   host.tools.register(defineTool({
@@ -406,7 +447,7 @@ export function registerSetupTools(
       facts: { type: 'array', items: { type: 'string' }, description: 'facts 栏的完整新条目列表' },
     },
     output: { schema: { type: 'string' }, render: text },
-    execute: (args, exec) => run('aha_rewrite_memory', agentOf(exec), (dir, confirm) =>
+    execute: (args, exec) => runGated('aha_rewrite_memory', exec, (dir, confirm) =>
       rewriteMemoryText(dir, (args as { id?: unknown }).id, args, confirm), false),
   }))
 }

@@ -5,14 +5,16 @@ import hostSetupGuide from '../prompts/host-setup.md'
 import { listCharacters } from '../core/card'
 import { readMe, readWorld } from '../core/docs'
 import { readRegistry, registerTavern } from '../core/registry'
-import { createTavern, openTavern, type TavernMarker } from '../core/tavern'
+import { createTavern, type TavernMarker } from '../core/tavern'
 import {
   buildContext, probeWebSearch, type CommandContext, type CommandHandler, type HostAgent, type HostServices,
 } from './context'
 import { failureReceipt, initDoneReceipt, initNeedsWorkspaceReceipt } from './receipts'
 import type { Runtime } from './runtime'
 import { buildDocCue, buildOpeningCue, buildSetupPrompt, planCardCommand, type SetupFacts } from './setup-prompt'
-import type { AskFn } from './confirm'
+import { DeclineTracker, SessionGate, type AskFn } from './confirm'
+import { importHandler } from './importing'
+import { isReadonly, openResolved } from './writable'
 import { registerSetupTools } from './setup-tools'
 import type { Theme } from '../core/theme'
 
@@ -54,6 +56,7 @@ export async function collectFacts(rt: Runtime, agent: HostAgent, cc: CommandCon
     profile: { empty: true, length: 0 },
     world: { empty: true, length: 0, budget: rt.config.worldBudget },
     webSearch,
+    ...(isReadonly(tavern) ? { readonly: true } : {}),
   }
   if (!tavern) return facts
   const entries = await safe('角色列表', () => listCharacters(tavern.dir), [])
@@ -91,7 +94,7 @@ export class SetupSections {
 
   constructor(private readonly rt: Runtime, private readonly guide: string, hooks: Partial<SectionHooks> = {}) {
     this.hooks = {
-      loadContext: buildContext,
+      loadContext: (agent, services) => buildContext(agent, services, rt.log),
       collect: (agent, cc) => collectFacts(rt, agent, cc),
       register: (agent, text) => (agent.ctx as SectionHost).systemPrompt.section({
         name: SECTION_NAME, order: SECTION_ORDER, text, interpolate: false,
@@ -219,7 +222,7 @@ export function initHandler(sections: SetupSections): CommandHandler {
     // 盘上已经是酒馆。后半段（刷新段、开场指令）失败不能报成"没能完成"
     try {
       const known: CommandContext = {
-        ...context, tavern: await openTavern(cwd), state: 'preparing', outsideReason: null,
+        ...context, tavern: await openResolved(cwd, rt.log), state: 'preparing', outsideReason: null,
       }
       await sections.refresh(agent, services, theme, known)
       const facts = await collectFacts(rt, agent, known)
@@ -275,9 +278,12 @@ export function installSetup(ctx: Context, rt: Runtime): void {
   const sections = new SetupSections(rt, hostSetupGuide)
   let services: HostServices | undefined
   let ask: AskFn | undefined
+  // 同一会话的确认卡片排队执行（工具保存与导入共用一把）；同一轮内被拒绝的保存不再重复弹卡片
+  const gate = new SessionGate()
+  const declines = new DeclineTracker()
   registerSetupTools(ctx, rt, async (agent) => {
     if (services) await sections.refresh(agent, services, await rt.theme())
-  }, () => ask)
+  }, () => ask, { gate, declines })
   // 写盘前的确认卡片用宿主的 userQuestions；服务没来就保持 undefined，工具会拒绝写盘
   ;(ctx as unknown as SetupHost).inject(['userQuestions'], (c) => {
     const uq = (c as unknown as { userQuestions: { ask: AskFn } }).userQuestions
@@ -287,6 +293,7 @@ export function installSetup(ctx: Context, rt: Runtime): void {
   rt.handlers.me = docHandler('profile')
   rt.handlers.world = docHandler('world')
   rt.handlers.card = cardHandler()
+  rt.handlers.import = importHandler(sections, () => ask, { gate })
   const host = ctx as unknown as SetupHost
   host.inject(['agentPresets'], (c) => {
     services = c
@@ -301,11 +308,15 @@ export function installSetup(ctx: Context, rt: Runtime): void {
     c.on('agent/created', (payload: { agent: SetupAgent }) => {
       void ensure(payload.agent, 'created')
     })
-    c.on('agent/pre-step', async (payload: { agent: SetupAgent }, next: () => Promise<unknown>) => {
+    c.on('agent/pre-step', async (payload: { agent: SetupAgent; turn?: number }, next: () => Promise<unknown>) => {
+      declines.onStep(payload.agent.id, payload.turn)
       await ensure(payload.agent, 'pre-step')
       return next()
     })
-    c.on('agent/disposed', (payload: { agent: { id: string } }) => sections.forget(payload.agent.id))
+    c.on('agent/disposed', (payload: { agent: { id: string } }) => {
+      sections.forget(payload.agent.id)
+      declines.forget(payload.agent.id)
+    })
     rt.log.info('筹备外壳已装配（created / pre-step / disposed 监听）')
   })
 }

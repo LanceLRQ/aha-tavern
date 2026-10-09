@@ -2,10 +2,11 @@
 // 依赖宿主的部分写薄，判定逻辑都是纯函数或 core 调用。
 import path from 'node:path'
 import type { TavernMode } from '../config'
-import { isTavern, openTavern, type TavernInfo } from '../core/tavern'
+import { isTavern, type TavernInfo } from '../core/tavern'
 import { readSession, resolveState, type OutsideReason, type SessionRecord, type SessionState } from '../core/state'
 import type { Theme } from '../core/theme'
-import type { Runtime } from './runtime'
+import type { Log, Runtime } from './runtime'
+import { openResolved } from './writable'
 import type { WebSearchStatus } from './receipts'
 
 /** 宿主 agent 里本插件用到的最小子集。 */
@@ -61,7 +62,9 @@ export interface CommandContext {
   record: SessionRecord | null
 }
 
-export async function buildContext(agent: HostAgent, services: HostServices): Promise<CommandContext> {
+export async function buildContext(
+  agent: HostAgent, services: HostServices, log?: Pick<Log, 'warn'>,
+): Promise<CommandContext> {
   const mode = modeFromPreset(services.agentPresets.composedPreset(agent.ctx))
   const rawCwd = agent.session?.header?.cwd
   const cwd = typeof rawCwd === 'string' && rawCwd !== '' ? rawCwd : undefined
@@ -70,7 +73,7 @@ export async function buildContext(agent: HostAgent, services: HostServices): Pr
     return { ...base, tavern: null, state: null, outsideReason: null, record: null }
   }
   const tavernHere = cwd !== undefined && (await isTavern(cwd))
-  const tavern = tavernHere ? await openTavern(cwd) : null
+  const tavern = tavernHere ? await openResolved(cwd, log) : null
   let record: SessionRecord | null = null
   if (tavern && mode === 'chat') {
     record = (await readSession(sessionsFile(tavern.dir), agent.id)).record
@@ -114,6 +117,8 @@ export interface Invocation {
   args: string
   /** 用户敲的写法，如 `/aha 开店` 或 `/aha-init`。 */
   label: string
+  /** 命令调用所属 UI 请求的取消信号（宿主 CommandInvocation.signal）；拿不到为 undefined。 */
+  signal?: AbortSignal
 }
 
 export type CommandHandler = (inv: Invocation) => CommandReply | Promise<CommandReply>

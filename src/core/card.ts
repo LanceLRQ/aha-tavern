@@ -125,7 +125,7 @@ function validateInput(input: CharacterInput): CharacterCard {
   return card
 }
 
-function serialize(card: CharacterCard): string {
+export function serializeCard(card: CharacterCard): string {
   // 固定栏目顺序，便于人读
   const out: Record<string, unknown> = { id: card.id, name: card.name }
   for (const k of ['tagline', 'appearance', 'greeting', 'persona', 'voice'] as const) {
@@ -167,7 +167,7 @@ export async function saveCharacter(
       created = false
     }
     try {
-      await atomicWrite(path.join(dir, CARD_FILE), serialize(card))
+      await atomicWrite(path.join(dir, CARD_FILE), serializeCard(card))
     } catch (e) {
       if (created) await fs.rm(dir, { recursive: true, force: true })
       throw e
@@ -195,7 +195,7 @@ export async function saveCharacter(
     dir = target
     dirName = targetName
   }
-  await modifyFile(path.join(dir, CARD_FILE), () => serialize(card))
+  await modifyFile(path.join(dir, CARD_FILE), () => serializeCard(card))
   return { card, dir, dirName }
 }
 

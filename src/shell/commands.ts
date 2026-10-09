@@ -4,8 +4,9 @@ import { dispatch, type CommandId } from '../core/dispatch'
 import { buildRelayNotice, makeNotice, shouldRelay } from './steer'
 import { buildContext, type CommandReply, type HostAgent, type HostServices } from './context'
 import {
-  dispatchReceipt, emptyReceipt, failureReceipt, notTavernModeReceipt, pendingReceipt, unknownReceipt,
+  dispatchReceipt, emptyReceipt, failureReceipt, notTavernModeReceipt, pendingReceipt, readonlyReceipt, unknownReceipt,
 } from './receipts'
+import { isReadonly } from './writable'
 import type { Runtime } from './runtime'
 
 export interface Subcommand {
@@ -68,6 +69,7 @@ export async function handleCommand(
   agent: HostAgent,
   parsed: ParsedSubcommand,
   label: string,
+  signal?: AbortSignal,
 ): Promise<CommandReply> {
   const fresh = isFreshSession(agent)
   let steered = false
@@ -76,7 +78,7 @@ export async function handleCommand(
     agent.steer(makeNotice(text, summary))
     steered = true
   }
-  const reply = await processCommand(rt, services, agent, parsed, label, steer)
+  const reply = await processCommand(rt, services, agent, parsed, label, steer, signal)
   // 全新会话里回执不显示：没有别的 steer 时，另请掌柜转告一遍（07 F18）
   if (shouldRelay({ fresh, steered, replyText: reply.text })) {
     try {
@@ -97,6 +99,7 @@ async function processCommand(
   parsed: ParsedSubcommand,
   label: string,
   steer: (text: string, summary: string) => void,
+  signal?: AbortSignal,
 ): Promise<CommandReply> {
   let theme
   try {
@@ -108,7 +111,7 @@ async function processCommand(
   if (parsed.kind === 'unknown') return unknownReceipt(parsed.word, SUBCOMMANDS)
 
   try {
-    const context = await buildContext(agent, services)
+    const context = await buildContext(agent, services, rt.log)
     rt.log.debug(`命令 ${label}：实例 ${rt.config.mode}，会话模式 ${context.mode}，状态 ${context.state}，工作区 ${context.cwd ?? '（无）'}`)
     if (context.mode === null || context.state === null) return notTavernModeReceipt()
     // 命令按作用域登记，会话只会看到自己所在模式那份实例的命令，这里理论上不会发生；
@@ -119,9 +122,10 @@ async function processCommand(
     }
     const d = dispatch(context.mode, context.state, parsed.id)
     if (!d.run) return dispatchReceipt(theme, d.reason, { label, outsideReason: context.outsideReason })
+    if (isReadonly(context.tavern) && parsed.id !== 'doctor') return readonlyReceipt(theme)
     const handler = rt.handlers[parsed.id]
     if (!handler) return pendingReceipt(label)
-    return await handler({ agent, services, rt, theme, context, args: parsed.args, label, steer })
+    return await handler({ agent, services, rt, theme, context, args: parsed.args, label, steer, ...(signal ? { signal } : {}) })
   } catch (e) {
     rt.log.error(`命令 ${label} 失败：${(e as Error).stack ?? e}`)
     return failureReceipt((e as Error).message)
@@ -134,6 +138,7 @@ export const HOST_SERVICES = ['commands', 'agentPresets'] as const
 interface CommandInvocation {
   agent: HostAgent
   rawInput?: string
+  signal?: AbortSignal
 }
 interface CommandDefinition {
   name: string
@@ -164,11 +169,11 @@ export function registerCommands(ctx: Context, rt: Runtime): void {
       name: 'aha',
       description: `阿哈酒馆：${usage}`,
       input: { hint: '<子命令> [参数]' },
-      handler: ({ agent, rawInput }) => {
+      handler: ({ agent, rawInput, signal }) => {
         const input = rawInput ?? ''
         const parsed = parseSubcommand(input)
         const word = input.trim().split(/\s+/)[0] ?? ''
-        return handleCommand(rt, c, agent, parsed, word ? `/aha ${word}` : '/aha')
+        return handleCommand(rt, c, agent, parsed, word ? `/aha ${word}` : '/aha', signal)
       },
     })
     for (const s of SUBCOMMANDS) {
@@ -176,8 +181,8 @@ export function registerCommands(ctx: Context, rt: Runtime): void {
         name: `aha-${s.en}`,
         description: `阿哈酒馆 · ${s.zh}：${s.description}`,
         ...(s.hint ? { input: { hint: s.hint } } : {}),
-        handler: ({ agent, rawInput }) =>
-          handleCommand(rt, c, agent, { kind: 'command', id: s.id, args: (rawInput ?? '').trim() }, `/aha-${s.en}`),
+        handler: ({ agent, rawInput, signal }) =>
+          handleCommand(rt, c, agent, { kind: 'command', id: s.id, args: (rawInput ?? '').trim() }, `/aha-${s.en}`, signal),
       })
     }
     rt.log.info(`命令已注册（模式 ${rt.config.mode}，${count} 条）`)
