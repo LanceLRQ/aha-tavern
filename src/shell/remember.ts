@@ -58,17 +58,20 @@ export interface MemoryEnv {
   getServices(): HostServices | undefined
   reminder: ReviewReminder
   turns: RememberTurns
+  /** 回忆的每轮名额，与随手记各自独立 */
+  recallTurns: RememberTurns
 }
 
 export function createMemoryEnv(
   rt: Pick<Runtime, 'config' | 'log' | 'theme'>, getServices: () => HostServices | undefined,
 ): MemoryEnv {
-  return { rt, getServices, reminder: new ReviewReminder(rt.config.reviewIntervalTurns), turns: new RememberTurns() }
+  return { rt, getServices, reminder: new ReviewReminder(rt.config.reviewIntervalTurns), turns: new RememberTurns(), recallTurns: new RememberTurns() }
 }
 
 export interface MemoryTarget {
   tavernDir: string
   chatId: string
+  characterId: string
   characterName: string
   memoryFile: string
 }
@@ -76,20 +79,22 @@ export interface MemoryTarget {
 export type TargetProblem = 'not-ready' | 'not-chatting' | 'readonly' | 'card-unreadable'
 
 /** 会话在聊天中且角色卡可读才给出目标；否则给出原因。 */
-export async function memoryTargetOf(cc: CommandContext): Promise<MemoryTarget | { problem: TargetProblem }> {
+export async function memoryTargetOf(
+  cc: CommandContext, opts: { allowReadonly?: boolean } = {},
+): Promise<MemoryTarget | { problem: TargetProblem }> {
   if (cc.mode !== 'chat' || cc.state !== 'chatting' || !cc.tavern || !cc.record?.chatId || !cc.record.characterId) {
     return { problem: 'not-chatting' }
   }
-  if (isReadonly(cc.tavern)) return { problem: 'readonly' }
+  if (!opts.allowReadonly && isReadonly(cc.tavern)) return { problem: 'readonly' }
   const entry = await readCharacter(cc.tavern.dir, cc.record.characterId)
   if (!entry || !entry.ok) return { problem: 'card-unreadable' }
   return {
     tavernDir: cc.tavern.dir, chatId: cc.record.chatId,
-    characterName: entry.card.name, memoryFile: path.join(entry.dir, MEMORY_FILE),
+    characterId: cc.record.characterId, characterName: entry.card.name, memoryFile: path.join(entry.dir, MEMORY_FILE),
   }
 }
 
-const isTarget = (t: MemoryTarget | { problem: TargetProblem }): t is MemoryTarget => !('problem' in t)
+export const isTarget = (t: MemoryTarget | { problem: TargetProblem }): t is MemoryTarget => !('problem' in t)
 
 /** 给模型看的原因（英文固定标识）。 */
 const PROBLEM_TOOL_TEXT: Record<TargetProblem, string> = {
@@ -111,15 +116,17 @@ export function problemReceipt(theme: Theme, p: TargetProblem): Reply {
   }
 }
 
-async function targetForTool(env: MemoryEnv, agent: HostAgent | undefined): Promise<MemoryTarget | string> {
+export async function targetForTool(
+  env: MemoryEnv, agent: HostAgent | undefined, opts: { allowReadonly?: boolean } = {},
+): Promise<MemoryTarget | string> {
   const services = env.getServices()
   if (!agent || !services) return PROBLEM_TOOL_TEXT['not-ready']
-  const t = await memoryTargetOf(await buildContext(agent, services, env.rt.log))
+  const t = await memoryTargetOf(await buildContext(agent, services, env.rt.log), opts)
   return isTarget(t) ? t : PROBLEM_TOOL_TEXT[t.problem]
 }
 
 /** 工具的调试日志：只记结果标识与参数里文字的总字数，不记内容。 */
-function traced(
+export function traced(
   env: MemoryEnv, name: string, run: (agent: HostAgent | undefined, args: unknown) => Promise<string>,
 ): (agent: HostAgent | undefined, args: unknown) => Promise<string> {
   return async (agent, args) => {
@@ -296,6 +303,7 @@ export async function onChatStep(
   env: MemoryEnv, agent: HostAgent, turn: unknown, newUserMessages: number,
 ): Promise<boolean> {
   env.turns.onStep(agent.id, turn, newUserMessages)
+  env.recallTurns.onStep(agent.id, turn, newUserMessages)
   if (newUserMessages <= 0) return false
   const services = env.getServices()
   if (!services) return false

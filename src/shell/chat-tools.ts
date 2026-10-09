@@ -1,4 +1,4 @@
-// 单聊模式的工具：aha_start、aha_remember、aha_review。
+// 单聊模式的工具：aha_start、aha_remember、aha_review、aha_recall。
 // 返回值是给模型看的文字，只用固定标识说事实；失败返回原因而不抛异常。
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -32,6 +32,8 @@ export interface ChatToolDeps {
   remember(agent: HostAgent | undefined, args: unknown): Promise<string>
   /** 整理：替换三栏、写本次梗概与标题。 */
   review(agent: HostAgent | undefined, args: unknown): Promise<string>
+  /** 回忆：按往事索引里的聊天编号取梗概或原文节选。 */
+  recall(agent: HostAgent | undefined, args: unknown): Promise<string>
 }
 
 interface ToolHost {
@@ -81,5 +83,15 @@ export function registerChatTools(ctx: Context, deps: ChatToolDeps): void {
     },
     output: { schema: { type: 'string' }, render: text },
     execute: (args, exec) => deps.review(agentOf(exec), args),
+  }))
+
+  host.tools.register(defineTool({
+    name: 'aha_recall',
+    description: '回忆往事索引里的某一次聊天：参数是索引行行尾的聊天编号。返回那次聊天的梗概，没有梗概时返回原文节选。'
+      + '只在 user 提起某次往事、或话题明显与索引里某一行有关时才用，寒暄不用；每一轮最多调用一次。'
+      + '编号不在索引里返回 not remembered；同一轮再次调用返回 already recalled this turn。',
+    parameters: { id: { type: 'string', required: true, description: '往事索引里的聊天编号（4 位）' } },
+    output: { schema: { type: 'string' }, render: text },
+    execute: (args, exec) => deps.recall(agentOf(exec), args),
   }))
 }

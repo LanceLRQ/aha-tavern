@@ -29,6 +29,7 @@ import { hostSectionRegister, SessionSections, type SectionPlan } from './sectio
 import { makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
 import { createMemoryEnv, onChatStep, rememberHandler, rememberTool, reviewTool } from './remember'
+import { recallTool } from './recall'
 import { resolveChatTarget, TranscriptRecorder } from './transcript'
 import { isReadonly } from './writable'
 
@@ -639,7 +640,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
     ask = (req) => uq.ask(req)
   })
   const memoryEnv = createMemoryEnv(rt, () => services)
-  registerChatTools(ctx, { start: startTool(env), remember: rememberTool(memoryEnv), review: reviewTool(memoryEnv) })
+  registerChatTools(ctx, { start: startTool(env), remember: rememberTool(memoryEnv), review: reviewTool(memoryEnv), recall: recallTool(memoryEnv) })
   rt.handlers.start = startHandler(env)
   rt.handlers.remember = rememberHandler(memoryEnv)
   host.inject(['agentPresets'], (c) => {
@@ -671,6 +672,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
       recorder.forget(payload.agent.id)
       memoryEnv.reminder.forget(payload.agent.id)
       memoryEnv.turns.forget(payload.agent.id)
+      memoryEnv.recallTurns.forget(payload.agent.id)
     })
     rt.log.info('单聊外壳已装配（created / pre-step / disposed 监听）')
   })

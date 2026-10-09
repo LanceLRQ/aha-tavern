@@ -243,7 +243,8 @@ interface Line {
 }
 
 function renderRecord(r: ChatRecord, names: Record<string, string>): Line {
-  const body = typeof r.text === 'string' ? r.text : ''
+  // 续行缩进，正文里另起一行的“说话人：”不会与真实发言行混淆
+  const body = (typeof r.text === 'string' ? r.text : '').replace(/\r\n?|\n/g, '\n  ')
   const prefix = typeof r.speaker === 'string' && r.speaker ? `${names[r.speaker] ?? r.speaker}：` : ''
   return { prefix, body, full: prefix + body }
 }

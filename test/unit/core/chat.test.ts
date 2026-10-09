@@ -172,7 +172,9 @@ describe('findChatDir', () => {
   it('不合格的编号一律返回 null', async () => {
     const c = await mk()
     await fs.mkdir(path.join(dir, 'chats', 'x-foo-bar-' + c.id), { recursive: true })
-    for (const bad of [`bar-${c.id}`, `foo-bar-${c.id}`, '', '..', '../' + c.id, `a/${c.id}`, `a\\${c.id}`, 'a'.repeat(40), c.id.toUpperCase(), ' ' + c.id]) {
+    // 编号可能是纯数字，大写后与原编号相同，那种情况不算不合格
+    const upper = c.id.toUpperCase() === c.id ? [] : [c.id.toUpperCase()]
+    for (const bad of [`bar-${c.id}`, `foo-bar-${c.id}`, '', '..', '../' + c.id, `a/${c.id}`, `a\\${c.id}`, 'a'.repeat(40), ...upper, ' ' + c.id]) {
       expect(await findChatDir(dir, bad)).toBeNull()
     }
     expect(await findChatDir(dir, c.id)).toBe(c.dir)
