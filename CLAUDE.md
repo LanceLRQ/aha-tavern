@@ -26,11 +26,10 @@
 
 ## 实现现状
 
-概念阶段：调研与宿主能力验证已完成，尚无正式代码。
+一期（文字版）已完成：四个模式里实现了"酒馆:筹备"与"酒馆:单聊"；群聊、写书在后续阶段。
 
-- [x] 调研与设想稿
-- [x] 宿主能力验证（提示词段、原生工具、命令、酒馆模式、图片显示）
-- [ ] M0 探路：插件空壳 + 开场 / 谢幕
+- [x] 调研与设想稿、宿主能力验证
+- [x] M0 文字版：开店、角色卡、主角档案、世界观、导入、单聊开场、对话落盘、记忆（随手记 / 整理 / 回忆）、两套主题
 - [ ] M1a 生图：基础工作流 + 两段式工具
 - [ ] M1b 一致性：身份注入工作流 + 自检
 - [ ] M1.5 一图成卡
@@ -42,26 +41,44 @@
 
 ```
 aha-tavern/
-├── package.json          # npm 包清单，声明 DSH 插件入口（待建）
-├── cordis.patch.yml      # 向 DSH profile 插入本插件与酒馆模式（待建）
+├── package.json          # npm 包清单；dsh.bundle.patch 指向 cordis.patch.yml
+├── cordis.patch.yml      # 向 DSH profile 插入两个酒馆模式（筹备、单聊）
+├── scripts/build.mjs     # esbuild 打成 dist/index.js 单文件，提示词 .md 内联
 ├── src/
-│   ├── index.ts          # 插件外壳：工具、命令、事件监听、提示词段（待建）
-│   └── core/             # 与 harness 无关的核心逻辑（待建）
-├── workflows/            # 内置 ComfyUI 工作流模板（待建）
-├── docs/                 # 面向使用者的文档
+│   ├── index.ts          # 插件入口
+│   ├── config.ts         # 插件配置项与默认值
+│   ├── core/             # 与 harness 无关的核心逻辑（角色卡、记忆、聊天落盘、登记表、主题……）
+│   ├── shell/            # 接到 DSH 上的外壳：命令、工具、提示词段、事件监听
+│   └── prompts/          # 提示词文本
+├── themes/               # 内置称呼主题（fools 愚者、plain 直白），运行时按 dist/../themes 读取
+├── examples/             # 本机调试用的叠加配置模板
+├── test/                 # vitest 单元测试
+├── docs/                 # 面向使用者的文档（getting-started.md）
 │   └── superpowers/specs/  # 定稿后可公开的设计规格
 └── LICENSE               # Apache-2.0
 ```
 
 ## 常用命令
 
-尚无代码，构建、测试、安装命令待 M0 建立工程骨架后补充。
+```bash
+pnpm build       # 打成 dist/index.js
+pnpm test        # 跑单元测试
+pnpm typecheck   # 类型检查
+pnpm pack        # 打成 aha-tavern-<版本>.tgz，用 dsh plugin --profile <名> add 安装
+```
 
-命令形态（插件内的斜杠命令，两种等价写法）：
+本机调试：`pnpm build` 后，复制 `examples/dev.example.yml` 为 `examples/dev.yml`，改好里面的绝对路径，再用 `dsh web --patch <绝对路径>/examples/dev.yml` 启动。
+
+命令形态（插件内的斜杠命令，中英文子命令等价，也可以写成 `/aha-<英文子命令>`）：
 
 ```
-/aha 开场 <角色名>      /aha start <角色名>      /aha-start <角色名>
-/aha 谢幕               /aha end                 /aha-end
-/aha 换角 <角色名>      /aha swap <角色名>       /aha-swap <角色名>
-/aha 重掷 [修改词]      /aha reroll [修改词]     /aha-reroll [修改词]
+/aha 启动 | init              把当前工作区变成一间酒馆（筹备）
+/aha 角色 | card [角色名]     新建或修改角色卡（筹备）
+/aha 我 | me                  写或改主角档案（筹备）
+/aha 世界观 | world           写或改世界观（筹备）
+/aha 导入 | import            从另一间酒馆复制（筹备）
+/aha 开场 | start [角色名]    选定角色，开始聊天（单聊）
+/aha 记忆 | remember [内容]   记一句话，或让角色回顾并整理记忆（单聊）
+/aha 自检 | doctor            检查当前状态
+/aha 重新生图 | reroll、/aha 说话 | speak   已占位，生图与语音上线后可用
 ```
