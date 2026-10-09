@@ -96,6 +96,82 @@ describe('SetupSections', () => {
     expect(register).toHaveBeenCalledTimes(1)
   })
 
+  it('入队后销毁：排队中的 ensure / refresh 不注册不记账；同编号恢复后可注册', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const register = vi.fn(() => vi.fn())
+    let first = true
+    const s = new SetupSections(rtOf(), 'G', {
+      loadContext: async () => ctxOf('setup'),
+      collect: async () => { if (first) { first = false; await gate } return facts },
+      register,
+    })
+    const p1 = s.ensure(agent(), svc, theme)
+    await new Promise((r) => setTimeout(r, 5))
+    const p2 = s.refresh(agent(), svc, theme)
+    const p3 = s.ensure(agent(), svc, theme)
+    s.forget('s1')
+    release()
+    await Promise.all([p1, p2, p3])
+    expect(register).not.toHaveBeenCalled()
+    expect(s.has('s1')).toBe(false)
+    await s.ensure(agent(), svc, theme)
+    expect(register).toHaveBeenCalledTimes(1)
+    expect(s.has('s1')).toBe(true)
+  })
+
+  it('refresh 注册新段失败：旧段放回，保持已注册', async () => {
+    const disposeOld = vi.fn()
+    const registered: string[] = []
+    let fail = false
+    const register = vi.fn((_a: HostAgent, text: string) => {
+      if (fail && !registered.includes(text + '#restore') && register.mock.calls.length === 2) throw new Error('dup')
+      registered.push(text)
+      return disposeOld
+    })
+    const s = new SetupSections(rtOf(), 'G', { loadContext: async () => ctxOf('setup'), collect: async () => facts, register })
+    await s.ensure(agent(), svc, theme)
+    fail = true
+    await expect(s.refresh(agent(), svc, theme)).rejects.toThrow('dup')
+    expect(register).toHaveBeenCalledTimes(3) // 初次、失败的新段、放回旧段
+    expect(s.has('s1')).toBe(true)
+    await s.ensure(agent(), svc, theme)
+    expect(register).toHaveBeenCalledTimes(3)
+  })
+
+  it('refresh 新段与旧段都注册不上：清掉记账，下一次 ensure 恢复', async () => {
+    let n = 0
+    const register = vi.fn(() => {
+      n++
+      if (n === 2 || n === 3) throw new Error('boom')
+      return vi.fn()
+    })
+    const s = new SetupSections(rtOf(), 'G', { loadContext: async () => ctxOf('setup'), collect: async () => facts, register })
+    await s.ensure(agent(), svc, theme)
+    await expect(s.refresh(agent(), svc, theme)).rejects.toThrow('boom')
+    expect(s.has('s1')).toBe(false)
+    await s.ensure(agent(), svc, theme)
+    expect(s.has('s1')).toBe(true)
+    expect(register).toHaveBeenCalledTimes(4)
+  })
+
+  it('refresh 收集失败：旧段原样保留', async () => {
+    const dispose = vi.fn()
+    const collect = vi.fn().mockResolvedValueOnce(facts).mockRejectedValueOnce(new Error('x'))
+    const s = new SetupSections(rtOf(), 'G', { loadContext: async () => ctxOf('setup'), collect, register: () => dispose })
+    await s.ensure(agent(), svc, theme)
+    await expect(s.refresh(agent(), svc, theme)).rejects.toThrow('x')
+    expect(dispose).not.toHaveBeenCalled()
+    expect(s.has('s1')).toBe(true)
+  })
+
+  it('已知上下文模式为空：按筹备处理', async () => {
+    const register = vi.fn(() => vi.fn())
+    const s = new SetupSections(rtOf(), 'G', { loadContext: async () => ctxOf(null), collect: async () => facts, register })
+    await s.refresh(agent(), svc, theme, ctxOf(null))
+    expect(register).toHaveBeenCalledTimes(1)
+  })
+
   it('refresh 撤销旧段并注册新段；forget 撤销', async () => {
     const dispose = vi.fn()
     const register = vi.fn(() => dispose)

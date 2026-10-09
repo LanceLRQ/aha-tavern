@@ -116,3 +116,41 @@ export function initDoneReceipt(
   const gd = opts.guidanceFailed ? `不过引导没发出来，直接和${theme.host().name}说话就行。` : ''
   return guide(base + reg + gd)
 }
+
+// ---------- 建卡命令的回执 ----------
+
+const CARD_PROBLEM: Record<string, string> = {
+  'file-missing': '文件不存在',
+  'yaml-invalid': '格式解析失败',
+  'missing-required': '缺少必填栏',
+  'missing-id': '缺少编号',
+  unreadable: '读不出来',
+}
+
+/** 建卡不带名字：请掌柜听用户描述。 */
+export function cardAskReceipt(theme: Theme): Reply {
+  return guide(`${theme.host().name}正在等你描述想要的${theme.concept('character')}。`)
+}
+
+/** 建卡带名字且匹配到好卡：请掌柜进入修改流程。 */
+export function cardEditReceipt(theme: Theme, name: string): Reply {
+  return guide(`${theme.host().name}正在看「${name}」的${theme.concept('card')}。`)
+}
+
+export function cardAmbiguousReceipt(theme: Theme, names: readonly string[]): Reply {
+  return guide(`有好几个${theme.concept('character')}都对得上：${names.join('、')}。请把名字写全一些再试。`)
+}
+
+export function cardNoneReceipt(theme: Theme, input: string): Reply {
+  return guide(`没有叫「${input}」的${theme.concept('character')}。不带名字敲 \`/aha 建卡\` 可以新建一个。`)
+}
+
+/** 匹配到的是坏卡：说明哪个文件、什么问题。 */
+export function cardBrokenReceipt(
+  theme: Theme,
+  b: { dirName: string; file: string; problem: string; detail: string },
+): Reply {
+  const what = CARD_PROBLEM[b.problem] ?? b.problem
+  const detail = b.detail ? `（${b.detail}）` : ''
+  return fail(`「${b.dirName}」的${theme.concept('card')}读不出来：${b.file}，${what}${detail}。请先用编辑器修好这个文件。`)
+}

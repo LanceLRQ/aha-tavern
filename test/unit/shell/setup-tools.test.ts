@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { loadTheme, type Theme } from '../../../src/core/theme'
 import { createTavern } from '../../../src/core/tavern'
 import { DEFAULTS } from '../../../src/config'
 import type { HostAgent } from '../../../src/shell/context'
@@ -9,7 +10,9 @@ import type { Runtime } from '../../../src/shell/runtime'
 import { NOT_TAVERN, registerSetupTools, saveProfileText, saveWorldText } from '../../../src/shell/setup-tools'
 
 let dir: string
+let theme: Theme
 beforeEach(async () => {
+  theme = (await loadTheme({ name: 'plain', builtinDir: path.resolve(__dirname, '../../../themes') })).theme
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aha-setup-tools-'))
 })
 afterEach(async () => {
@@ -82,9 +85,10 @@ describe('工具注册与执行', () => {
     const rt = {
       config: { ...DEFAULTS, mode: 'setup' as const },
       log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      theme: async () => theme,
     } as unknown as Runtime
     const onSaved = vi.fn(async () => {})
-    registerSetupTools(ctx as never, rt, onSaved)
+    registerSetupTools(ctx as never, rt, onSaved, () => async () => ({ answers: [{ id: 'confirm', selected: ['保存'] }] }))
     return { defs, onSaved }
   }
   const agentAt = (cwd: string): HostAgent => ({ id: 's', ctx: {}, session: { header: { cwd } } })

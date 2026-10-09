@@ -11,7 +11,8 @@ import {
 } from './context'
 import { failureReceipt, initDoneReceipt, initNeedsWorkspaceReceipt } from './receipts'
 import type { Runtime } from './runtime'
-import { buildDocCue, buildOpeningCue, buildSetupPrompt, type SetupFacts } from './setup-prompt'
+import { buildDocCue, buildOpeningCue, buildSetupPrompt, planCardCommand, type SetupFacts } from './setup-prompt'
+import type { AskFn } from './confirm'
 import { registerSetupTools } from './setup-tools'
 import type { Theme } from '../core/theme'
 
@@ -83,6 +84,7 @@ export interface SectionHooks {
 export class SetupSections {
   private readonly disposers = new Map<string, () => void>()
   private readonly done = new Set<string>()
+  private readonly texts = new Map<string, string>()
   private readonly chains = new Map<string, Promise<unknown>>()
   private readonly gen = new Map<string, number>()
   private readonly hooks: SectionHooks
@@ -98,30 +100,41 @@ export class SetupSections {
     }
   }
 
-  private serial<T>(id: string, task: () => Promise<T>): Promise<T> {
+  /** 入队时捕获会话代数；执行时发现代数变了（会话已销毁）就什么都不做。 */
+  private serial(id: string, task: (g: number) => Promise<void>): Promise<void> {
+    const g = this.gen.get(id) ?? 0
+    const run = async (): Promise<void> => {
+      if ((this.gen.get(id) ?? 0) !== g) {
+        this.rt.log.debug(`会话 ${id}：排队期间会话已结束，放弃`)
+        return
+      }
+      await task(g)
+    }
     const prev = this.chains.get(id) ?? Promise.resolve()
-    const next = prev.then(task, task)
+    const next = prev.then(run, run)
     this.chains.set(id, next.catch(() => undefined))
     return next
   }
 
   /** 每会话只做一次；已成功处理过的会话直接返回。 */
   ensure(agent: HostAgent, services: HostServices, theme: Theme): Promise<void> {
-    return this.serial(agent.id, async () => {
+    return this.serial(agent.id, async (g) => {
       if (this.done.has(agent.id)) return
-      await this.apply(agent, services, theme)
+      await this.apply(agent, services, theme, g)
     })
   }
 
-  /** 状态变了：撤销旧段，按最新状态重新注册。known 为调用方已知的上下文，给了就不再取。 */
+  /** 状态变了：换成按最新状态生成的段。known 为调用方已知的上下文，给了就不再取。 */
   refresh(agent: HostAgent, services: HostServices, theme: Theme, known?: CommandContext): Promise<void> {
-    return this.serial(agent.id, () => this.apply(agent, services, theme, known))
+    return this.serial(agent.id, (g) => this.apply(agent, services, theme, g, known))
   }
 
-  private async apply(agent: HostAgent, services: HostServices, theme: Theme, known?: CommandContext): Promise<void> {
+  private async apply(
+    agent: HostAgent, services: HostServices, theme: Theme, g: number, known?: CommandContext,
+  ): Promise<void> {
     const id = agent.id
-    const g = this.gen.get(id) ?? 0
-    const cc = known ?? (await this.hooks.loadContext(agent, services))
+    // 已知上下文来自开店等只在筹备模式才会执行的路径：模式为空按筹备处理
+    const cc = known ? { ...known, mode: known.mode ?? ('setup' as const) } : await this.hooks.loadContext(agent, services)
     // 取不到实际模式：留给之后的 pre-step 再试
     if (cc.mode === null) {
       this.rt.log.debug(`会话 ${id}：还取不到实际模式，稍后再试`)
@@ -132,15 +145,36 @@ export class SetupSections {
       if ((this.gen.get(id) ?? 0) === g) this.done.add(id)
       return
     }
+    // 先把新段的文字准备好，再做替换
     const facts = await this.hooks.collect(agent, cc)
     const text = buildSetupPrompt(theme, this.guide, facts)
     if ((this.gen.get(id) ?? 0) !== g) {
       this.rt.log.debug(`会话 ${id}：注册途中会话已结束，放弃`)
       return
     }
-    this.disposers.get(id)?.()
+    const oldDispose = this.disposers.get(id)
+    const oldText = this.texts.get(id)
+    oldDispose?.()
     this.disposers.delete(id)
-    this.disposers.set(id, this.hooks.register(agent, text))
+    this.texts.delete(id)
+    try {
+      this.disposers.set(id, this.hooks.register(agent, text))
+      this.texts.set(id, text)
+    } catch (e) {
+      // 新段注册失败：把旧段原样放回；放不回就清掉记账，让下一次 ensure 重试
+      let restored = false
+      if (oldDispose && oldText !== undefined) {
+        try {
+          this.disposers.set(id, this.hooks.register(agent, oldText))
+          this.texts.set(id, oldText)
+          restored = true
+        } catch (e2) {
+          this.rt.log.warn(`会话 ${id}：旧段也没能放回：${(e2 as Error).message}`)
+        }
+      }
+      if (!restored) this.done.delete(id)
+      throw e
+    }
     this.done.add(id)
     this.rt.log.debug(`会话 ${id}：掌柜提示词段已注册（${text.length} 字，place=${facts.place.kind}）`)
   }
@@ -150,6 +184,7 @@ export class SetupSections {
     this.gen.set(id, (this.gen.get(id) ?? 0) + 1)
     this.disposers.get(id)?.()
     this.disposers.delete(id)
+    this.texts.delete(id)
     this.done.delete(id)
     this.chains.delete(id)
     this.rt.log.debug(`会话 ${id}：已结束，清掉提示词段记账`)
@@ -215,6 +250,20 @@ export function docHandler(kind: 'profile' | 'world'): CommandHandler {
   }
 }
 
+/** `建卡` 命令：不带名字请掌柜听描述；带名字匹配后进入修改流程，或回执说明。 */
+export function cardHandler(): CommandHandler {
+  return async ({ rt, theme, context, args, steer }) => {
+    const tavern = context.tavern
+    if (!tavern) return failureReceipt(`这里还不是${theme.concept('tavern')}`)
+    const plan = planCardCommand(theme, await listCharacters(tavern.dir), args)
+    if (plan.kind !== 'reply') {
+      steer(plan.cue, plan.summary)
+      rt.log.debug(`命令 card：${plan.kind}`)
+    }
+    return plan.reply
+  }
+}
+
 interface SetupHost {
   inject(keys: readonly string[], cb: (c: SetupInjected) => void): void
   on(event: string, listener: (...args: any[]) => unknown): unknown
@@ -225,12 +274,19 @@ interface SetupInjected extends HostServices, SetupHost {}
 export function installSetup(ctx: Context, rt: Runtime): void {
   const sections = new SetupSections(rt, hostSetupGuide)
   let services: HostServices | undefined
+  let ask: AskFn | undefined
   registerSetupTools(ctx, rt, async (agent) => {
     if (services) await sections.refresh(agent, services, await rt.theme())
+  }, () => ask)
+  // 写盘前的确认卡片用宿主的 userQuestions；服务没来就保持 undefined，工具会拒绝写盘
+  ;(ctx as unknown as SetupHost).inject(['userQuestions'], (c) => {
+    const uq = (c as unknown as { userQuestions: { ask: AskFn } }).userQuestions
+    ask = (req) => uq.ask(req)
   })
   rt.handlers.init = initHandler(sections)
   rt.handlers.me = docHandler('profile')
   rt.handlers.world = docHandler('world')
+  rt.handlers.card = cardHandler()
   const host = ctx as unknown as SetupHost
   host.inject(['agentPresets'], (c) => {
     services = c
