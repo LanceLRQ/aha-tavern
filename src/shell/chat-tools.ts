@@ -11,7 +11,7 @@ export interface StartArgs {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 
-/** 校验 aha_start 的参数：id 与 name 至少给一个；两者都给时以 id 为准（调用方处理）。 */
+/** 校验 aha_start 的参数：id 与 name 都可选；两者都给时以 id 为准，都不给由界面弹出选角卡片（调用方处理）。 */
 export function parseStartArgs(args: unknown): StartArgs | string {
   if (!isRecord(args)) return 'error: arguments must be an object'
   const out: StartArgs = {}
@@ -21,13 +21,12 @@ export function parseStartArgs(args: unknown): StartArgs | string {
     if (typeof v !== 'string') return `error: ${k} must be a string`
     if (v.trim() !== '') out[k] = v.trim()
   }
-  if (out.id === undefined && out.name === undefined) return 'error: give id or name'
   return out
 }
 
 export interface ChatToolDeps {
   /** 开始聊天：返回给模型的文字。 */
-  start(agent: HostAgent | undefined, args: StartArgs): Promise<string>
+  start(agent: HostAgent | undefined, args: StartArgs, signal?: AbortSignal): Promise<string>
   /** 随手记：一句话追加到关键的事。 */
   remember(agent: HostAgent | undefined, args: unknown): Promise<string>
   /** 整理：替换三栏、写本次梗概与标题。 */
@@ -45,19 +44,23 @@ export function registerChatTools(ctx: Context, deps: ChatToolDeps): void {
   const text = (_a: unknown, v: unknown): Array<{ type: 'text'; text: string }> => [{ type: 'text', text: String(v) }]
   const agentOf = (exec: unknown): HostAgent | undefined => (exec as { agent?: unknown } | null)?.agent as HostAgent | undefined
 
+  const signalOf = (exec: unknown): AbortSignal | undefined => (exec as { signal?: AbortSignal } | null)?.signal
+
   host.tools.register(defineTool({
     name: 'aha_start',
-    description: '选定 user 要聊的 character 并开始聊天，每个会话只能开始一次。优先传 id（来自 <pick_state>）；只知道名字时传 name。'
-      + '成功返回 started with <id>，之后这个会话就由该 character 接管；失败返回原因。',
+    description: '开始聊天，每个会话只能开始一次。user 说了名字就传 name（可以是名字的一部分，由界面匹配）；'
+      + 'user 没说清要聊谁、问有谁、只是打招呼时，不带参数调用，界面会弹出 character 列表让 user 自己点。'
+      + '成功返回 started with <id>，之后这个会话就由该 character 接管；cancelled by user, still picking 表示 user 没选，'
+      + '简短回应即可，不要再次调用；其他失败返回原因。',
     parameters: {
-      id: { type: 'string', description: 'character 的编号 id' },
-      name: { type: 'string', description: 'character 的名字；与 id 同时给出时以 id 为准' },
+      id: { type: 'string', description: 'character 的编号 id，已知时才传' },
+      name: { type: 'string', description: 'user 说的名字或其一部分；与 id 同时给出时以 id 为准' },
     },
     output: { schema: { type: 'string' }, render: text },
     execute: async (args, exec) => {
       const parsed = parseStartArgs(args)
       if (typeof parsed === 'string') return parsed
-      return deps.start(agentOf(exec), parsed)
+      return deps.start(agentOf(exec), parsed, signalOf(exec))
     },
   }))
 
@@ -73,7 +76,7 @@ export function registerChatTools(ctx: Context, deps: ChatToolDeps): void {
   host.tools.register(defineTool({
     name: 'aha_review',
     description: '整理记忆：整体替换 core_memory 的 address、impression、facts 三栏（给了哪栏改哪栏，facts 是字符串数组，只写结论），'
-      + '并提交这次聊天到目前为止的 summary 和一句话 title（两者要一起给）。pinned 栏改不了。无需改动时不要调用。',
+      + '并提交这次聊天到目前为止的 summary 和一句话 title（两者要一起给）。pinned 栏改不了。summary 和 title 每次都要给，没有要改的栏就只给这两项。',
     parameters: {
       address: { type: 'string', description: 'address 栏的完整新正文' },
       impression: { type: 'string', description: 'impression 栏的完整新正文' },

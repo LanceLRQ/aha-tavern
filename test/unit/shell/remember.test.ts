@@ -5,14 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULTS } from '../../../src/config'
 import { MEMORY_FILE, listCharacters, saveCharacter } from '../../../src/core/card'
 import { CHAT_SUMMARY_FILE, findChatDir, readChatMeta } from '../../../src/core/chat'
-import { appendPinned, readMemory, readMemoryText } from '../../../src/core/memory'
+import { appendIndexLine, appendPinned, readMemory, readMemoryText } from '../../../src/core/memory'
 import { createTavern } from '../../../src/core/tavern'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import { startTool, type ChatEnv } from '../../../src/shell/chat'
 import { SessionGate } from '../../../src/shell/confirm'
-import { buildContext, type HostAgent, type Invocation } from '../../../src/shell/context'
+import { readSession } from '../../../src/core/state'
+import { buildContext, sessionsFile, type HostAgent, type Invocation } from '../../../src/shell/context'
 import {
-  createMemoryEnv, onChatStep, RememberTurns, parseReviewArgs, rememberHandler, rememberTool, reviewTool, REVIEW_REMINDER_TEXT,
+  createMemoryEnv, onChatStep, RememberTurns, parseReviewArgs, rememberHandler, rememberTool, reviewTool, REVIEW_REMINDER_TEXT, REVIEW_REQUEST_TEXT,
   type MemoryEnv,
 } from '../../../src/shell/remember'
 import type { Runtime } from '../../../src/shell/runtime'
@@ -62,8 +63,11 @@ async function startChat(rt = rtOf()): Promise<{ memFile: string; chatId: string
   }
   expect(await startTool(env)(agent, { id: card.id })).toBe(`started with ${card.id}`)
   const entry = (await listCharacters(dir)).find((e) => e.ok)!
-  const mem = await readMemory(path.join((entry as { dir: string }).dir, MEMORY_FILE))
-  return { memFile: path.join((entry as { dir: string }).dir, MEMORY_FILE), chatId: mem.index.at(-1)!.id }
+  const memFile = path.join((entry as { dir: string }).dir, MEMORY_FILE)
+  // 初始化不再写索引行；这里补上用户说过话之后才有的那一行
+  const chatId = (await readSession(sessionsFile(dir), 's1')).record!.chatId!
+  await appendIndexLine(memFile, { date: '2026-10-09', kind: 'chat', id: chatId }, { characterName: '白狐' })
+  return { memFile, chatId }
 }
 
 const memEnv = (rt = rtOf()): MemoryEnv => createMemoryEnv(rt, () => services)
@@ -208,14 +212,26 @@ describe('aha_review', () => {
     expect(r2).toMatch(/failed: chat_title/)
     expect(await fs.readFile(path.join(chatDir, 'summary.md'), 'utf8')).toBe('s')
   })
-  it('往事索引里没有这一行：标题没写上，如实记进 failed', async () => {
+  it('往事索引里没有这一行（用户一句话都没说）：补写一行并带上标题，不报失败', async () => {
     const { memFile, chatId } = await startChat()
     const text = await readMemoryText(memFile)
     await fs.writeFile(memFile, text.split('\n').filter((l) => !l.includes(chatId)).join('\n'))
+    expect((await readMemory(memFile)).index).toEqual([])
     const r = await reviewTool(memEnv())(agent, { summary: '梗概', title: '标题' })
-    expect(r).toMatch(/^partly saved: summary, chat_title/)
-    expect(r).toMatch(/failed: index_title/)
-    expect(r).not.toMatch(/saved:[^;]*index_title/)
+    expect(r).toBe('saved: summary, chat_title, index_title')
+    expect((await readMemory(memFile)).index).toEqual([
+      expect.objectContaining({ kind: 'chat', title: '标题', id: chatId }),
+    ])
+  })
+  it('从没说过话的聊天直接整理：索引行从无到有，再整理一次只改标题不重复', async () => {
+    const { memFile, chatId } = await startChat()
+    const text = await readMemoryText(memFile)
+    await fs.writeFile(memFile, text.split('\n').filter((l) => !l.includes(chatId)).join('\n'))
+    await reviewTool(memEnv())(agent, { summary: '梗概', title: '甲' })
+    await reviewTool(memEnv())(agent, { summary: '梗概二', title: '乙' })
+    const idx = (await readMemory(memFile)).index
+    expect(idx).toHaveLength(1)
+    expect(idx[0]).toMatchObject({ title: '乙', id: chatId })
   })
   it('记忆文件是目录写不进：整理里的标题步骤同样如实失败', async () => {
     const { memFile } = await startChat()
@@ -238,6 +254,11 @@ describe('aha_review', () => {
 })
 
 describe('审视提醒', () => {
+  it('提醒文字：summary 和 title 每次都给，不再有"无需改动就不调用"', () => {
+    expect(REVIEW_REMINDER_TEXT).toContain('每次都要给')
+    expect(REVIEW_REMINDER_TEXT).toContain('只给 summary 和 title')
+    expect(REVIEW_REMINDER_TEXT).not.toContain('就不调用')
+  })
   it('到阈值 inject 一次，来源不是 user；之后重新计数', async () => {
     await startChat()
     const env = memEnv(rtOf({ reviewIntervalTurns: 3 }))
@@ -335,6 +356,12 @@ describe('记住 命令', () => {
     expect(r).toEqual({ kind: 'success' })
     expect(steered).toHaveLength(1)
     expect(steered[0]).toContain('aha_review')
+    // summary 与 title 每次都要给；facts 让角色根据上下文自己判断
+    expect(REVIEW_REQUEST_TEXT).toContain('summary')
+    expect(REVIEW_REQUEST_TEXT).toContain('title')
+    expect(REVIEW_REQUEST_TEXT).toContain('必须给')
+    expect(REVIEW_REQUEST_TEXT).toContain('根据这次聊天的上下文自己判断')
+    expect(REVIEW_REQUEST_TEXT).toContain('只给 summary 和 title')
     expect(injected).toHaveLength(0)
     expect((await readMemory(memFile)).pinned).toEqual([])
   })

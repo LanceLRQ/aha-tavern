@@ -23,7 +23,7 @@ describe('称呼对照表', () => {
     const plain = renderGlossary(await load('plain'))
     const fools = renderGlossary(await load('fools'))
     expect(plain).toContain('card = 角色卡')
-    expect(fools).toContain('card = 面具')
+    expect(fools).toContain('card = 面具档案')
     expect(fools).toContain('host = 剧团长')
     expect(fools).toContain('init = 开张')
   })

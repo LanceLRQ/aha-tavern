@@ -36,7 +36,7 @@ describe('构造问题', () => {
   it('各种动作的文字经主题取词', () => {
     const q = (spec: Parameters<typeof buildConfirmQuestion>[1], t = theme) => buildConfirmQuestion(t, spec)
     expect(q({ kind: 'card', name: '白狐', created: true }).question).toBe('保存角色卡「白狐」？')
-    expect(q({ kind: 'card', name: '白狐', created: true }, fools).header).toBe('面具')
+    expect(q({ kind: 'card', name: '白狐', created: true }, fools).header).toBe('面具档案')
     expect(q({ kind: 'card', name: '白狐', oldName: '白狐', created: false }).question).toBe('把改动保存到角色卡「白狐」？')
     expect(q({ kind: 'card', name: '新', oldName: '旧', created: false }).question).toBe('把角色卡「旧」改为「新」并保存？')
     expect(q({ kind: 'profile' }).question).toContain('主角档案')

@@ -163,7 +163,8 @@ export function planCardCommand(theme: Theme, entries: CharacterEntry[], args: s
     case 'ambiguous':
       return { kind: 'reply', reply: cardAmbiguousReceipt(theme, m.candidates.map(nameOf)) }
     case 'exact':
-    case 'prefix': {
+    case 'prefix':
+    case 'contains': {
       const e = m.entry
       if (!e.ok) return { kind: 'reply', reply: cardBrokenReceipt(theme, e) }
       return {

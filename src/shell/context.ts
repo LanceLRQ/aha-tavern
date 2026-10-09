@@ -124,3 +124,7 @@ export interface Invocation {
 }
 
 export type CommandHandler = (inv: Invocation) => CommandReply | Promise<CommandReply>
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+/** 本地日期 YYYY-MM-DD，往事索引用。 */
+export const localDate = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`

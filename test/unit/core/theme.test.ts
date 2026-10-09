@@ -35,7 +35,7 @@ describe('theme', () => {
     const { theme, warnings } = await loadTheme({ name: 'fools', builtinDir })
     expect(warnings).toEqual([])
     const concepts: Record<string, string> = {
-      tavern: '酒馆', host: '剧团长', character: '愚者', card: '面具', user: '无名客',
+      tavern: '酒馆', host: '剧团长', character: '面具', card: '面具档案', user: '无名客',
       profile: '无名客档案', world: '剧本', house_rules: '酒馆宣言', core_memory: '光锥',
       recap: '忆泡', transcript: '忆质', narrator: '旁白', extra: 'NPC', scenario: '戏码',
       show: '即兴巡演', scene: '一幕',

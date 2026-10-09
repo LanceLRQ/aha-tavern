@@ -39,12 +39,15 @@ export const DEFAULTS: TavernConfig = {
 const MODES: readonly TavernMode[] = ['setup', 'chat']
 
 /** 把用户配置与默认值合并：未知字段丢弃，类型不对的字段回落默认值。 */
-export function resolveConfig(input: unknown): TavernConfig {
+export function resolveConfig(input: unknown, env: Record<string, string | undefined> = process.env): TavernConfig {
   const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   const out: TavernConfig = { ...DEFAULTS }
 
   if (MODES.includes(raw.mode as TavernMode)) out.mode = raw.mode as TavernMode
   if (typeof raw.theme === 'string' && raw.theme) out.theme = raw.theme
+  // 默认的登记表跟随宿主的数据目录（DSH_HOME，未设时是 ~/.dsh）；用户显式配置的路径优先
+  const home = env.DSH_HOME?.trim()
+  if (home) out.registryPath = `${home.replace(/\/+$/, '')}/aha-tavern/taverns.yaml`
   if (typeof raw.registryPath === 'string' && raw.registryPath) out.registryPath = raw.registryPath
 
   const numericKeys = [

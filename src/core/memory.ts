@@ -418,13 +418,28 @@ export interface IndexLineInput {
   date: string
   kind: ChatKind
   id: string
+  /** 临时标题；缺省或清理后为空则标为未整理 */
+  title?: string | null
+}
+
+export const PROVISIONAL_TITLE_MAX = 16
+
+/**
+ * 由用户的第一句话取往事索引的临时标题：折成单行、去 Markdown 标题符号与〔〕，
+ * 按字符（含 emoji）截到 PROVISIONAL_TITLE_MAX，超出加"…"。清理后没有任何文字或数字（空白、纯符号）返回 null。
+ */
+export function provisionalTitle(text: string): string | null {
+  const clean = cleanItem(text).replace(/[〔〕]/g, '').replace(/^[>\s]+/, '').replace(/\s+/g, ' ').trim()
+  if (!/[\p{L}\p{N}]/u.test(clean)) return null
+  const chars = Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(clean), (x) => x.segment)
+  return chars.length > PROVISIONAL_TITLE_MAX ? `${chars.slice(0, PROVISIONAL_TITLE_MAX).join('').trimEnd()}…` : clean
 }
 
 export interface IndexOptions extends WriteOptions {
   maxIndexLines?: number
 }
 
-/** 追加一行往事索引（标为未整理）。同一编号已在索引里则不写。 */
+/** 追加一行往事索引（没给标题则标为未整理）。同一编号已在索引里则不写。 */
 export async function appendIndexLine(
   file: string,
   entry: IndexLineInput,
@@ -442,7 +457,8 @@ export async function appendIndexLine(
     const sec = findSec(ctx.segs, 'index')!
     const content = contentOf(sec)
     if (content.some((l) => lineEndsWithId(l, id))) return { written: false, reason: 'duplicate', trimmed: 0 }
-    content.push(formatIndexLine({ date, kind, title: null, id }))
+    const title = typeof entry.title === 'string' ? cleanItem(entry.title).replace(/[〔〕]/g, '').trim() : ''
+    content.push(formatIndexLine({ date, kind, title: title || null, id }))
     const trimmed = capItems(content, resolveLimit(opts.maxIndexLines, DEFAULT_MAX_INDEX_LINES))
     setContent(ctx, sec, content)
     return { written: true, trimmed }

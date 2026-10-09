@@ -57,7 +57,7 @@ describe('回执文字', () => {
     expect(d).toContain('剧团长')
     expect(d).not.toContain('掌柜')
     expect(dispatchReceipt(plain, 'new-session', {}).text).toContain('角色')
-    expect(dispatchReceipt(fools, 'new-session', {}).text).toContain('愚者')
+    expect(dispatchReceipt(fools, 'new-session', {}).text).toContain('面具')
   })
 
   it('自检一行带出模式、路径、主题、联网状态', async () => {

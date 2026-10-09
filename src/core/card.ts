@@ -202,20 +202,30 @@ export async function saveCharacter(
 export type NameMatch =
   | { kind: 'exact'; entry: CharacterEntry }
   | { kind: 'prefix'; entry: CharacterEntry }
+  | { kind: 'contains'; entry: CharacterEntry }
   | { kind: 'ambiguous'; candidates: CharacterEntry[] }
   | { kind: 'none' }
 
 const displayName = (e: CharacterEntry) => (e.ok ? e.card.name : e.dirName)
 
-/** 名字匹配：精确优先；否则前缀，唯一则采用，不唯一给候选，没有为 none。坏卡以目录名参与匹配。 */
-export function matchCharacterName(entries: CharacterEntry[], input: string): NameMatch {
-  const q = input.trim()
+/**
+ * 名字匹配（不分大小写，去首尾空白）：全名相等 > 开头匹配 > 包含匹配（仅 contains 为真时才有这一档）。
+ * 取命中的第一档：该档唯一则采用，多个则 ambiguous，候选为该档全部；都没有为 none。坏卡以目录名参与匹配。
+ */
+export function matchCharacterName(
+  entries: CharacterEntry[], input: string, opts: { contains?: boolean } = {},
+): NameMatch {
+  const q = input.trim().toLowerCase()
   if (!q) return { kind: 'none' }
-  const exact = entries.filter((e) => displayName(e) === q)
-  if (exact.length === 1) return { kind: 'exact', entry: exact[0]! }
-  if (exact.length > 1) return { kind: 'ambiguous', candidates: exact }
-  const pre = entries.filter((e) => displayName(e).startsWith(q))
-  if (pre.length === 1) return { kind: 'prefix', entry: pre[0]! }
-  if (pre.length > 1) return { kind: 'ambiguous', candidates: pre }
+  const tiers: Array<{ kind: 'exact' | 'prefix' | 'contains'; test: (n: string) => boolean }> = [
+    { kind: 'exact', test: (n) => n === q },
+    { kind: 'prefix', test: (n) => n.startsWith(q) },
+  ]
+  if (opts.contains) tiers.push({ kind: 'contains', test: (n) => n.includes(q) })
+  for (const t of tiers) {
+    const hit = entries.filter((e) => t.test(displayName(e).trim().toLowerCase()))
+    if (hit.length === 1) return { kind: t.kind, entry: hit[0]! }
+    if (hit.length > 1) return { kind: 'ambiguous', candidates: hit }
+  }
   return { kind: 'none' }
 }

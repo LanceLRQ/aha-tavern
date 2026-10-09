@@ -4,11 +4,14 @@
 import { appendRecord } from '../core/chat'
 import { buildContext, type HostAgent, type HostServices } from './context'
 import type { Log } from './runtime'
+import { isReadonly } from './writable'
 
 export interface ChatTarget {
   tavernDir: string
   chatId: string
   characterId: string
+  /** 酒馆数据比插件新：只读，不写记忆文件 */
+  readonly?: boolean
 }
 
 /** 回复流帧里本模块用到的最小子集（形状依据：dsh-agent 的 AssistantStreamFrame 与 dsh-llm 的 StreamChunk）。 */
@@ -85,6 +88,8 @@ export interface RecorderDeps {
   resolve(agent: HostAgent): Promise<ChatTarget | null>
   log: Pick<Log, 'debug' | 'warn'>
   append?: AppendFn
+  /** 这场聊天里用户的第一句话落盘后调用（每个会话成功一次即止；失败只记日志，下一句再试）。 */
+  onFirstUser?(target: ChatTarget, text: string): Promise<void>
 }
 
 interface SessionState {
@@ -94,6 +99,8 @@ interface SessionState {
   tail: Promise<void>
   target: ChatTarget | null
   warned: Set<string>
+  /** 第一句话的钩子已成功执行 */
+  firstUserDone: boolean
 }
 
 export class TranscriptRecorder {
@@ -107,7 +114,7 @@ export class TranscriptRecorder {
   private state(id: string): SessionState {
     let s = this.sessions.get(id)
     if (!s) {
-      s = { seen: new Set(), collector: new AttemptCollector(), tail: Promise.resolve(), target: null, warned: new Set() }
+      s = { seen: new Set(), collector: new AttemptCollector(), tail: Promise.resolve(), target: null, warned: new Set(), firstUserDone: false }
       this.sessions.set(id, s)
     }
     return s
@@ -158,6 +165,10 @@ export class TranscriptRecorder {
         const who = speaker ?? t.characterId
         await this.append(t.tavernDir, t.chatId, { type, speaker: who, text })
         this.deps.log.debug(`落盘 ${type} speaker=${who} ${[...text].length} 字`)
+        if (type === 'user' && !s.firstUserDone && this.deps.onFirstUser) {
+          await this.deps.onFirstUser(t, text)
+          s.firstUserDone = true
+        }
       } catch (e) {
         const msg = (e as Error).message
         if (s.warned.has(msg)) return
@@ -172,5 +183,8 @@ export class TranscriptRecorder {
 export async function resolveChatTarget(agent: HostAgent, services: HostServices, log: Log): Promise<ChatTarget | null> {
   const cc = await buildContext(agent, services, log)
   if (cc.state !== 'chatting' || !cc.tavern || !cc.record?.chatId || !cc.record.characterId) return null
-  return { tavernDir: cc.tavern.dir, chatId: cc.record.chatId, characterId: cc.record.characterId }
+  return {
+    tavernDir: cc.tavern.dir, chatId: cc.record.chatId, characterId: cc.record.characterId,
+    ...(isReadonly(cc.tavern) ? { readonly: true } : {}),
+  }
 }

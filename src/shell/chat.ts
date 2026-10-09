@@ -11,14 +11,14 @@ import {
 import { createChat, findChatDir } from '../core/chat'
 import { readMe, readWorld } from '../core/docs'
 import { isAhaError } from '../core/errors'
-import { appendIndexLine, memoryChars, readMemory, readMemoryText } from '../core/memory'
+import { appendIndexLine, memoryChars, provisionalTitle, readMemory, readMemoryText } from '../core/memory'
 import { saveSession } from '../core/state'
 import type { TavernInfo } from '../core/tavern'
 import type { Theme } from '../core/theme'
 import {
   answerItem, isAbort, SessionGate, shownName, type AskFn, type AskItem,
 } from './confirm'
-import { buildContext, sessionsFile, type CommandContext, type CommandHandler, type HostAgent, type HostServices } from './context'
+import { buildContext, localDate, sessionsFile, type CommandContext, type CommandHandler, type HostAgent, type HostServices } from './context'
 import { clip, uniqueLabel, type Labeled } from './importing'
 import { buildChatPrompt, buildDegradedPrompt, buildPickPrompt, type DegradeCause, type PickFacts } from './prompt'
 import {
@@ -30,7 +30,7 @@ import { makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
 import { createMemoryEnv, onChatStep, rememberHandler, rememberTool, reviewTool } from './remember'
 import { recallTool } from './recall'
-import { resolveChatTarget, TranscriptRecorder } from './transcript'
+import { resolveChatTarget, TranscriptRecorder, type ChatTarget } from './transcript'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:chat'
@@ -64,7 +64,9 @@ export type PickValue = { kind: 'character'; id: string } | { kind: 'more' }
  * 选角卡片：超过一页时分批，每批最后一项是"更多…"，最后一批放完剩下的。
  * 选项文字就是名字（重名加序号），说明是简介。
  */
-export function buildPickBatches(theme: Theme, sorted: readonly GoodEntry[], page = PICK_PAGE): Array<Labeled<PickValue>> {
+export function buildPickBatches(
+  theme: Theme, sorted: readonly GoodEntry[], page = PICK_PAGE, lead = '',
+): Array<Labeled<PickValue>> {
   const used = new Set<string>([OPT_MORE])
   const rows = sorted.map((e) => ({
     label: uniqueLabel(shownName(e.card.name), used),
@@ -88,9 +90,9 @@ export function buildPickBatches(theme: Theme, sorted: readonly GoodEntry[], pag
       item: {
         id: `pick-${n}`,
         header: theme.concept('character'),
-        question: only
+        question: lead + (only
           ? `和「${shownName(only.card.name)}」聊聊？`
-          : `和哪位${theme.concept('character')}聊？${batches.length > 0 || more ? `（第 ${n} 批）` : ''}`,
+          : `想和哪个${theme.concept('character')}聊？${batches.length > 0 || more ? `（第 ${n} 批）` : ''}`),
         options,
       },
       byLabel,
@@ -153,13 +155,11 @@ export function buildStartCue(firstMeeting: boolean): string {
       + '不要复述记忆，也不要重复出场白。不要提这条通知。'
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0')
-/** 本地日期 YYYY-MM-DD，往事索引用。 */
-export const localDate = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+export { localDate }
 
 // ---------- 初始化 ----------
 
-export type StepName = 'index' | 'prompt' | 'opening'
+export type StepName = 'prompt' | 'opening'
 export type RefusalWhy = 'readonly' | 'broken' | 'read-failed' | 'chat-dir-failed' | 'session-failed' | 'already-chatting'
 
 export type InitOutcome =
@@ -174,11 +174,10 @@ export type InitOutcome =
     }
   | { kind: 'refused'; why: RefusalWhy; detail?: string; broken?: BadEntry }
 
-/** 初始化第 2 至 6 步用到的动作；测试里可替换。setSection 与 steer 由调用方按会话接入。 */
+/** 初始化第 2 至 5 步用到的动作；测试里可替换。setSection 与 steer 由调用方按会话接入。 */
 export interface InitSteps {
   createChat: typeof createChat
   saveSession: typeof saveSession
-  appendIndexLine: typeof appendIndexLine
   readMemoryText: typeof readMemoryText
   removeDir(dir: string): Promise<void>
   /** 把会话的提示词段换成这段文字 */
@@ -189,7 +188,7 @@ export interface InitSteps {
 
 export function realSteps(io: Pick<InitSteps, 'setSection' | 'steer'>): InitSteps {
   return {
-    createChat, saveSession, appendIndexLine, readMemoryText,
+    createChat, saveSession, readMemoryText,
     removeDir: (dir) => fs.rm(dir, { recursive: true, force: true }),
     ...io,
   }
@@ -213,11 +212,11 @@ export interface InitRequest {
  *  3 存会话状态：失败 -> refused(session-failed)；刚建的聊天目录尽力删掉（里面只有 meta.yaml）。
  *    会话已是聊天中（session-locked）-> refused(already-chatting)。仍在选角状态。
  *    —— 从这一步成功起，会话状态不可逆，以下步骤失败都不回退，结果为 started 并列出没做成的步骤：
- *  4 追加往事索引：失败 -> failed 含 index；盘上有聊天目录和会话记录，主线记忆里缺这一行
- *    （回忆时找不到本次聊天，其余照常）。继续 5、6。
- *  5 换提示词段：失败 -> failed 含 prompt（并跳过第 6 步，没有角色提示词时不该让模型开口）；
+ *  4 换提示词段：失败 -> failed 含 prompt（并跳过第 5 步，没有角色提示词时不该让模型开口）；
  *    盘上状态完整，会话还挂着掌柜的段。调用方应让下一次 pre-step 重新规划（此时状态是聊天中，会按盘上内容装五段）。
- *  6 提交开场指令：失败 -> failed 含 opening；一切就绪，只是角色没有先开口，用户说话即可。
+ *  5 提交开场指令：失败 -> failed 含 opening；一切就绪，只是角色没有先开口，用户说话即可。
+ * 往事索引不在这里写：用户在这场聊天里说出第一句话时才追加（见 firstLineIndexer），没说话就关掉的聊天不进索引。
+ * 因此"是否第一次见面"看的是初始化时索引是否为空，仍然正确。
  */
 export async function initialize(req: InitRequest, steps: InitSteps): Promise<InitOutcome> {
   const { tavern, entry, theme, limits } = req
@@ -269,16 +268,7 @@ export async function initialize(req: InitRequest, steps: InitSteps): Promise<In
   // 此后状态不可逆
   const failed: StepName[] = []
 
-  // 4 往事索引追加"未整理"一行（不经过模型）
-  try {
-    await steps.appendIndexLine(memFile, { date: localDate(req.now), kind: 'chat', id: chat.id }, {
-      characterName: card.name, maxIndexLines: limits.pastIndexMaxLines,
-    })
-  } catch {
-    failed.push('index')
-  }
-
-  // 5 五段提示词替换掌柜的段；记忆重读一次，使其与恢复会话时读到的一致
+  // 4 五段提示词替换掌柜的段；记忆重读一次，使其与恢复会话时读到的一致
   let promptOk = true
   try {
     const memoryRaw = await steps.readMemoryText(memFile)
@@ -290,7 +280,7 @@ export async function initialize(req: InitRequest, steps: InitSteps): Promise<In
     failed.push('prompt')
   }
 
-  // 6 开场指令
+  // 5 开场指令
   if (promptOk) {
     try {
       steps.steer(buildStartCue(firstMeeting), `${MODE_LABEL.chat}：开场`)
@@ -324,11 +314,10 @@ export function pickCancelledReceipt(): Reply {
   return guide('已取消，没有开始聊天。')
 }
 
-const failedText = (theme: Theme): Record<StepName, string> => ({
-  index: `这次聊天没记进${theme.concept('core_memory')}的往事里`,
+const failedText: Record<StepName, string> = {
   prompt: '提示词没装好（你发下一句话时会再试一次）',
   opening: '开场指令没发出来（直接和 TA 说话就行）',
-})
+}
 
 function noteText(theme: Theme, n: InitNote): string {
   const setup = `「${MODE_LABEL.setup}」`
@@ -336,7 +325,7 @@ function noteText(theme: Theme, n: InitNote): string {
     case 'profile-empty':
       return `你的${theme.concept('profile')}还是空的，可以去${setup}补上。`
     case 'memory-over':
-      return `这位${theme.concept('character')}的${theme.concept('core_memory')}有 ${n.chars} 字，超过了 ${n.max} 字的上限，建议去${setup}精简。`
+      return `这个${theme.concept('character')}的${theme.concept('core_memory')}有 ${n.chars} 字，超过了 ${n.max} 字的上限，建议去${setup}精简。`
     case 'world-over':
       return `${theme.concept('world')}有 ${n.chars} 字，超过了 ${n.budget} 字的预算，建议精简。`
   }
@@ -345,7 +334,7 @@ function noteText(theme: Theme, n: InitNote): string {
 export function startedReceipt(theme: Theme, o: Extract<InitOutcome, { kind: 'started' }>): Reply {
   const name = shownName(o.name)
   const head = o.failed.length
-    ? `和「${name}」的聊天已经开始，但有 ${o.failed.length} 步没做成：${o.failed.map((f) => failedText(theme)[f]).join('；')}。`
+    ? `和「${name}」的聊天已经开始，但有 ${o.failed.length} 步没做成：${o.failed.map((f) => failedText[f]).join('；')}。`
     : `和「${name}」的聊天开始了。`
   return guide([head, ...o.notes.map((n) => noteText(theme, n))].join('\n'))
 }
@@ -442,6 +431,23 @@ export async function collectPickFacts(rt: Pick<Runtime, 'log'>, cc: CommandCont
   return facts
 }
 
+/**
+ * 用户在这场聊天里说出第一句话时，往事索引追加这场聊天的一行，标题暂取这句话（折成单行、截到 16 字）。
+ * 同一编号已在索引里则不写（恢复会话、整理过的聊天都不会被覆盖）。只读酒馆不写。
+ */
+export function firstLineIndexer(env: Pick<ChatEnv, 'rt' | 'now'>): (target: ChatTarget, text: string) => Promise<void> {
+  return async (target, text) => {
+    if (target.readonly) return
+    const entry = await readCharacter(target.tavernDir, target.characterId)
+    if (!entry || !entry.ok) throw new Error('往事索引：角色卡读不出来')
+    await appendIndexLine(
+      path.join(entry.dir, MEMORY_FILE),
+      { date: localDate(env.now()), kind: 'chat', id: target.chatId, title: provisionalTitle(text) },
+      { characterName: entry.card.name, maxIndexLines: env.rt.config.pastIndexMaxLines },
+    )
+  }
+}
+
 /** 会话提示词段的规划：聊天中按盘上内容装五段（恢复会话也走这里），否则装掌柜（选角）的段。 */
 export function chatPlan(env: ChatEnv, agent: HostAgent, services: HostServices, theme: Theme): () => Promise<SectionPlan> {
   return async () => {
@@ -487,56 +493,131 @@ export function chatPlan(env: ChatEnv, agent: HostAgent, services: HostServices,
   }
 }
 
-type Resolution =
+export interface StartInput {
+  id?: string
+  name?: string
+}
+
+/** 选角的结果：命令与工具共用，各自按自己的方式说明。 */
+export type StartResolution =
   | { kind: 'entry'; entry: CharacterEntry }
-  | { kind: 'reply'; reply: Reply }
+  /** 用户在卡片上跳过、取消，或会话被中止 */
+  | { kind: 'cancelled' }
+  | { kind: 'bad-id'; id: string }
+  /** 卡片不可用（没有 userQuestions 服务），退回文字说明 */
+  | { kind: 'no-card'; why: 'ambiguous'; candidates: CharacterEntry[] }
+  | { kind: 'no-card'; why: 'none'; input: string }
+  | { kind: 'no-card'; why: 'empty' }
+  | { kind: 'card-failed'; message: string }
 
 const displayOf = (e: CharacterEntry): string => (e.ok ? e.card.name : e.dirName)
 
-/** 名字 -> 要初始化的条目，或应回的说明。 */
-function resolveByName(theme: Theme, entries: readonly CharacterEntry[], input: string): Resolution {
-  const m = matchCharacterName([...entries], input)
+interface PickInvocation {
+  agent: HostAgent
+  theme: Theme
+  signal?: AbortSignal | undefined
+}
+
+/**
+ * 选角（规格 6.x 三个入口共用）：
+ *  给了 id 且存在 -> 直接用；给了 name -> 全名 > 开头 > 包含 三档匹配，唯一就用，多个弹候选卡片，没命中弹完整卡片；
+ *  什么都没给 -> 完整卡片。卡片由插件直接弹（不经模型），卡片不可用时退回文字。
+ */
+export async function resolveStart(
+  env: ChatEnv, inv: PickInvocation, entries: readonly CharacterEntry[], input: StartInput,
+): Promise<StartResolution> {
+  const { theme } = inv
+  const good = entries.filter((e): e is GoodEntry => e.ok)
+  if (input.id !== undefined) {
+    const hit = good.find((e) => e.card.id === input.id)
+    return hit ? { kind: 'entry', entry: hit } : { kind: 'bad-id', id: input.id }
+  }
+  const name = input.name?.trim() ?? ''
+  if (name === '') return askPick(env, inv, entries, good, '', { kind: 'no-card', why: 'empty' })
+  const m = matchCharacterName([...entries], name, { contains: true })
   switch (m.kind) {
     case 'exact':
     case 'prefix':
+    case 'contains':
       return { kind: 'entry', entry: m.entry }
-    case 'ambiguous':
-      return { kind: 'reply', reply: cardAmbiguousReceipt(theme, m.candidates.map(displayOf)) }
+    case 'ambiguous': {
+      const usable = m.candidates.filter((e): e is GoodEntry => e.ok)
+      // 候选里全是坏卡：交给初始化给出"读不出来"的说明
+      if (usable.length === 0) return { kind: 'entry', entry: m.candidates[0]! }
+      return askPick(env, inv, entries, usable, `有好几个都对得上「${shownName(name)}」。`, { kind: 'no-card', why: 'ambiguous', candidates: m.candidates })
+    }
     case 'none':
-      return { kind: 'reply', reply: pickNoneReceipt(theme, input, entries.map(displayOf)) }
+      return askPick(env, inv, entries, good, `没有叫「${shownName(name)}」的${theme.concept('character')}。`, { kind: 'no-card', why: 'none', input: name })
   }
 }
 
-/** 不带名字：弹单选卡片（不经过模型）。 */
-async function pickByCard(
-  env: ChatEnv, inv: Pick<Parameters<CommandHandler>[0], 'agent' | 'theme' | 'signal'>, entries: readonly CharacterEntry[],
-): Promise<Resolution> {
+/** 弹单选卡片（分批、最近聊过的在前）；没有卡片服务时返回 unavailable。 */
+async function askPick(
+  env: ChatEnv, inv: PickInvocation, entries: readonly CharacterEntry[], pool: readonly GoodEntry[], lead: string,
+  unavailable: StartResolution,
+): Promise<StartResolution> {
   const { theme, agent, signal } = inv
   const ask = env.getAsk()
   if (!ask) {
     env.rt.log.warn('选角：选择卡片不可用（没有 userQuestions 服务）')
-    return { kind: 'reply', reply: failureReceipt('选择卡片不可用，请敲 `/aha 开场 名字`') }
+    return unavailable
   }
-  const good = entries.filter((e): e is GoodEntry => e.ok)
-  const batches = buildPickBatches(theme, sortCandidates(good, await lastTalkedDates(good)))
+  const batches = buildPickBatches(theme, sortCandidates(pool, await lastTalkedDates(pool)), PICK_PAGE, lead)
   for (const q of batches) {
-    if (signal?.aborted) return { kind: 'reply', reply: pickCancelledReceipt() }
+    if (signal?.aborted) return { kind: 'cancelled' }
     let answer: unknown
     try {
       answer = await ask({ agent, ...(signal ? { signal } : {}), questions: [q.item] })
     } catch (e) {
-      if (isAbort(e, signal)) return { kind: 'reply', reply: pickCancelledReceipt() }
+      if (isAbort(e, signal)) return { kind: 'cancelled' }
       env.rt.log.warn(`选角卡片失败：${(e as Error).message}`)
-      return { kind: 'reply', reply: failureReceipt(`选择卡片没弹出来（${(e as Error).message}）`) }
+      return { kind: 'card-failed', message: (e as Error).message }
     }
     const r = interpretPick(answer, q)
     if (r.kind === 'more') continue
-    if (r.kind === 'cancel') return { kind: 'reply', reply: pickCancelledReceipt() }
-    if (r.kind === 'name') return resolveByName(theme, entries, r.text)
-    const hit = good.find((e) => e.card.id === r.id)
-    return hit ? { kind: 'entry', entry: hit } : { kind: 'reply', reply: pickCancelledReceipt() }
+    if (r.kind === 'cancel') return { kind: 'cancelled' }
+    if (r.kind === 'name') return resolveStart(env, inv, entries, { name: r.text })
+    const hit = pool.find((e) => e.card.id === r.id)
+    return hit ? { kind: 'entry', entry: hit } : { kind: 'cancelled' }
   }
-  return { kind: 'reply', reply: pickCancelledReceipt() }
+  return { kind: 'cancelled' }
+}
+
+/** 命令对选角结果的说明（用户可见，概念词走主题）；选定条目返回 null。 */
+function resolutionReply(theme: Theme, entries: readonly CharacterEntry[], r: StartResolution): Reply | null {
+  switch (r.kind) {
+    case 'entry':
+      return null
+    case 'cancelled':
+      return pickCancelledReceipt()
+    case 'bad-id':
+      return pickNoneReceipt(theme, r.id, entries.map(displayOf))
+    case 'no-card':
+      if (r.why === 'ambiguous') return cardAmbiguousReceipt(theme, r.candidates.map(displayOf))
+      if (r.why === 'none') return pickNoneReceipt(theme, r.input, entries.map(displayOf))
+      return failureReceipt('选择卡片不可用，请敲 `/aha 开场 名字`')
+    case 'card-failed':
+      return failureReceipt(`选择卡片没弹出来（${r.message}）`)
+  }
+}
+
+/** 工具对选角结果的返回（给模型看，固定标识）；选定条目返回 null。 */
+function resolutionToolText(entries: readonly CharacterEntry[], r: StartResolution): string | null {
+  const names = entries.map(displayOf).join(', ')
+  switch (r.kind) {
+    case 'entry':
+      return null
+    case 'cancelled':
+      return 'cancelled by user, still picking'
+    case 'bad-id':
+      return `error: no character with id ${r.id}; available: ${names}`
+    case 'no-card':
+      if (r.why === 'ambiguous') return `error: ambiguous name; candidates: ${r.candidates.map(displayOf).join(', ')}`
+      if (r.why === 'none') return `error: no character named ${r.input}; available: ${names}`
+      return `error: pick card unavailable; available: ${names}`
+    case 'card-failed':
+      return `error: pick card failed (${r.message}), still picking; available: ${names}`
+  }
 }
 
 function requestOf(env: ChatEnv, tavern: TavernInfo, entry: CharacterEntry, sessionId: string, theme: Theme): InitRequest {
@@ -573,10 +654,9 @@ export function startHandler(env: ChatEnv): CommandHandler {
       const entries = await listCharacters(tavern.dir)
       const problem = checkRoster(entries)
       if (problem) return rosterReceipt(theme, problem)
-      const res = inv.args.trim() !== ''
-        ? resolveByName(theme, entries, inv.args)
-        : await pickByCard(env, inv, entries)
-      if (res.kind === 'reply') return res.reply
+      const res = await resolveStart(env, inv, entries, { name: inv.args })
+      const reply = resolutionReply(theme, entries, res)
+      if (reply || res.kind !== 'entry') return reply ?? pickCancelledReceipt()
       const outcome = await initialize(
         requestOf(env, tavern, res.entry, agent.id, theme),
         realSteps({ setSection: sectionSetter(env, agent), steer: inv.steer }),
@@ -588,8 +668,10 @@ export function startHandler(env: ChatEnv): CommandHandler {
 }
 
 /** aha_start 工具的实现：返回给模型的文字。 */
-export function startTool(env: ChatEnv): (agent: HostAgent | undefined, args: StartArgs) => Promise<string> {
-  return async (agent, args) => {
+export function startTool(
+  env: ChatEnv,
+): (agent: HostAgent | undefined, args: StartArgs, signal?: AbortSignal) => Promise<string> {
+  return async (agent, args, signal) => {
     const services = env.getServices()
     if (!agent || !services) return 'error: session not ready'
     return env.gate.run(agent.id, async () => {
@@ -601,17 +683,10 @@ export function startTool(env: ChatEnv): (agent: HostAgent | undefined, args: St
       const entries = await listCharacters(cc.tavern.dir)
       const problem = checkRoster(entries)
       if (problem) return problem.kind === 'no-characters' ? 'error: no characters in this tavern' : 'error: every card is unreadable'
-      const names = entries.map(displayOf).join(', ')
-      let entry: CharacterEntry | undefined
-      if (args.id !== undefined) {
-        entry = entries.find((e) => e.ok && e.card.id === args.id)
-        if (!entry) return `error: no character with id ${args.id}; available: ${names}`
-      } else {
-        const m = matchCharacterName(entries, args.name!)
-        if (m.kind === 'ambiguous') return `error: ambiguous name; candidates: ${m.candidates.map(displayOf).join(', ')}`
-        if (m.kind === 'none') return `error: no character named ${args.name}; available: ${names}`
-        entry = m.entry
-      }
+      const res = await resolveStart(env, { agent, theme, signal }, entries, args)
+      const text = resolutionToolText(entries, res)
+      if (text !== null || res.kind !== 'entry') return text ?? 'error: pick failed'
+      const entry = res.entry
       const steer = (text: string, summary: string): void => {
         if (typeof agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
         agent.steer(makeNotice(text, summary))
@@ -662,7 +737,9 @@ export function installChat(ctx: Context, rt: Runtime): void {
     c.on('agent/created', (payload: { agent: HostAgent }) => {
       void ensure(payload.agent, 'created')
     })
-    const recorder = new TranscriptRecorder({ resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log })
+    const recorder = new TranscriptRecorder({
+      resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log, onFirstUser: firstLineIndexer(env),
+    })
     c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)

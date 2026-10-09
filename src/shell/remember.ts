@@ -4,9 +4,9 @@ import path from 'node:path'
 import { MEMORY_FILE, readCharacter } from '../core/card'
 import { setChatTitle, writeSummaryFile } from '../core/chat'
 import { AhaError } from '../core/errors'
-import { appendFact, appendPinned, replaceSections, setIndexTitle, type SectionPatch } from '../core/memory'
+import { appendFact, appendIndexLine, appendPinned, replaceSections, setIndexTitle, type SectionPatch } from '../core/memory'
 import { ReviewReminder } from '../core/reminder'
-import { buildContext, type CommandContext, type CommandHandler, type HostAgent, type HostServices } from './context'
+import { buildContext, localDate, type CommandContext, type CommandHandler, type HostAgent, type HostServices } from './context'
 import { failureReceipt, readonlyReceipt, type Reply } from './receipts'
 import type { Runtime } from './runtime'
 import { escapeClosingTag, injectNotice } from './steer'
@@ -110,7 +110,7 @@ export function problemReceipt(theme: Theme, p: TargetProblem): Reply {
     case 'readonly':
       return readonlyReceipt(theme)
     case 'card-unreadable':
-      return failureReceipt(`读不出这位${theme.concept('character')}的${theme.concept('card')}`)
+      return failureReceipt(`读不出这场聊天用的${theme.concept('card')}`)
     default:
       return failureReceipt('现在不在聊天中')
   }
@@ -266,7 +266,13 @@ export function reviewTool(env: MemoryEnv): (agent: HostAgent | undefined, args:
           failed.push(`chat_title: ${(e as Error).message}`)
         }
         try {
-          const r = await setIndexTitle(target.memoryFile, target.chatId, parsed.title)
+          let r = await setIndexTitle(target.memoryFile, target.chatId, parsed.title)
+          if (!r.written && r.reason === 'not-found') {
+            // 用户一句话都没说时索引里还没有这场聊天：补写这一行（带上标题）
+            r = await appendIndexLine(target.memoryFile, {
+              date: localDate(new Date()), kind: 'chat', id: target.chatId, title: parsed.title,
+            }, { characterName: target.characterName, maxIndexLines: env.rt.config.pastIndexMaxLines })
+          }
           if (r.written) saved.push('index_title')
           else failed.push(`index_title: not written (${r.reason ?? 'unknown'})`)
         } catch (e) {
@@ -292,8 +298,9 @@ export function reviewTool(env: MemoryEnv): (agent: HostAgent | undefined, args:
 
 // ---------- 审视提醒 ----------
 
-export const REVIEW_REMINDER_TEXT = '（通知）已经聊了一阵。如果 core_memory 里的 address、impression、facts 有需要更新的，'
-  + '请在这一轮顺手调用 aha_review 一次，同时给出这次聊天到目前为止的 summary 和一句话 title；无需改动就不调用。不要向 user 提起这条通知。'
+export const REVIEW_REMINDER_TEXT = '（通知）已经聊了一阵，该整理记忆了。请在这一轮顺手调用 aha_review 一次：'
+  + 'summary（这次聊天到目前为止的梗概）和 title（一句话标题）每次都要给；'
+  + 'core_memory 里的 address、impression、facts 有需要更新的栏才给，没有就只给 summary 和 title。不要向 user 提起这条通知。'
 
 /**
  * pre-step 里调用：登记轮次；本步带进来 newUserMessages 条用户消息时，逐条计数，
@@ -327,7 +334,8 @@ export async function onChatStep(
 // ---------- 记住 命令 ----------
 
 export const REVIEW_REQUEST_TEXT = '（通知）user 想让你现在整理一下记忆。请调用 aha_review 一次：'
-  + '给出需要更新的 address、impression、facts，以及这次聊天到目前为止的 summary 和一句话 title；无需改动的栏不用给。'
+  + 'summary（这次聊天到目前为止的梗概）和 title（一句话标题）必须给；'
+  + '根据这次聊天的上下文自己判断有什么值得记进 facts，address、impression、facts 有变化的栏才给，没有就只给 summary 和 title。'
   + '然后以 character 的身份用一句话自然地回应 user。不要提这条通知，也不要提工具。'
 
 export function rememberHandler(env: MemoryEnv): CommandHandler {

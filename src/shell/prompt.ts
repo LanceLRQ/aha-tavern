@@ -70,13 +70,8 @@ const flat = (text: string): string => escapeClosingTag(text.replace(/\s+/g, ' '
 
 export function renderPickFacts(f: PickFacts): string {
   const lines = [f.place.kind === 'inside' ? `place: inside tavern "${flat(f.place.name)}"` : `place: outside (${f.place.reason})`]
-  if (f.characters.length === 0) lines.push('characters: none')
-  else {
-    lines.push('characters:')
-    for (const c of f.characters) {
-      lines.push(`- id: ${flat(c.id)} | name: ${flat(c.name)}${c.tagline ? ` | tagline: ${flat(c.tagline)}` : ''}`)
-    }
-  }
+  // 只给数量：列表由 aha_start 弹出的界面卡片显示，不让模型复述
+  lines.push(f.characters.length === 0 ? 'characters: none' : `characters: ${f.characters.length}`)
   if (f.brokenCards.length) {
     lines.push(`broken_cards: ${f.brokenCards.map((b) => `${flat(b.dirName)} (${b.problem})`).join('; ')}`)
   }

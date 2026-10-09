@@ -125,6 +125,32 @@ describe('matchCharacterName', () => {
     if (m.kind === 'prefix') expect(m.entry.ok).toBe(false)
   })
 
+  it('不分大小写、去首尾空白', async () => {
+    await mk('Alice'); await mk('Bob')
+    expect(matchCharacterName(await listCharacters(dir), '  aLiCe ')).toMatchObject({ kind: 'exact' })
+    expect(matchCharacterName(await listCharacters(dir), 'bo')).toMatchObject({ kind: 'prefix' })
+  })
+
+  it('包含匹配只在 contains 开启时出现，且排在开头匹配之后', async () => {
+    await mk('小白狐'); await mk('白狐妖'); await mk('黑猫')
+    const list = await listCharacters(dir)
+    expect(matchCharacterName(list, '狐妖', {}).kind).toBe('none')
+    expect(matchCharacterName(list, '狐妖', { contains: true })).toMatchObject({ kind: 'contains' })
+    // 开头匹配有命中时不再看包含
+    const m = matchCharacterName(list, '白', { contains: true })
+    expect(m.kind).toBe('prefix')
+    if (m.kind === 'prefix' && m.entry.ok) expect(m.entry.card.name).toBe('白狐妖')
+  })
+
+  it('包含匹配多个：候选为该档全部；全名相等优先于包含', async () => {
+    await mk('小白狐'); await mk('大白狐'); await mk('白')
+    const list = await listCharacters(dir)
+    const amb = matchCharacterName(list, '白狐', { contains: true })
+    expect(amb.kind).toBe('ambiguous')
+    if (amb.kind === 'ambiguous') expect(amb.candidates).toHaveLength(2)
+    expect(matchCharacterName(list, '白', { contains: true })).toMatchObject({ kind: 'exact' })
+  })
+
   it('同名多个精确匹配返回 ambiguous', async () => {
     await mk('白狐')
     await writeRaw('另一个', 'id: c_2\nname: 白狐\npersona: p\n')

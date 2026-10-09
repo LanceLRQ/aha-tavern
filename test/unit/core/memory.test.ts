@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   parseMemory, roundTrip, readMemory, appendFact, appendPinned, replaceSections,
-  appendIndexLine, setIndexTitle, hasChatInIndex, memoryChars, readMemoryText,
+  appendIndexLine, setIndexTitle, hasChatInIndex, memoryChars, readMemoryText, provisionalTitle,
 } from '../../../src/core/memory'
 import { isAhaError } from '../../../src/core/errors'
 
@@ -728,5 +728,53 @@ describe('readMemoryText', () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+
+describe('provisionalTitle', () => {
+  it('折成单行并去掉标题符号', () => {
+    expect(provisionalTitle('# 你好\n\n今天天气不错')).toBe('你好 今天天气不错')
+    expect(provisionalTitle('  ## 标题  ')).toBe('标题')
+  })
+
+  it('去掉会破坏行格式的〔〕', () => {
+    expect(provisionalTitle('看看〔a1b2〕这个')).toBe('看看a1b2这个')
+  })
+
+  it('16 个字以内原样，超出截断加省略号', () => {
+    expect(provisionalTitle('一二三四五六七八九十一二三四五六')).toBe('一二三四五六七八九十一二三四五六')
+    expect(provisionalTitle('一二三四五六七八九十一二三四五六七')).toBe('一二三四五六七八九十一二三四五六…')
+  })
+
+  it('emoji 与中英文混排按字符数截', () => {
+    const t = provisionalTitle('Hello😀世界😀你好吗？今天过得怎么样呢朋友')
+    expect(t).toBe('Hello😀世界😀你好吗？今天过…')
+    expect([...(t ?? '')].length).toBe(17)
+    expect(provisionalTitle('😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀你好')).toBe('😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…')
+  })
+
+  it('空白或纯符号返回 null', () => {
+    for (const s of ['', '   \n ', '###', '？！…', '😀😀', '〔〕', '> - ']) expect(provisionalTitle(s)).toBeNull()
+  })
+})
+
+describe('带临时标题追加索引行', () => {
+  it('title 写进行里，仍可被 setIndexTitle 改写', async () => {
+    await put(STANDARD)
+    await appendIndexLine(file, { date: '2026-10-13', kind: 'chat', id: 'g7h8', title: '你好' })
+    expect(await read()).toBe(STANDARD + '- 2026-10-13 单聊：你好 〔g7h8〕\n')
+    expect((await readMemory(file)).index.at(-1)).toEqual({ date: '2026-10-13', kind: 'chat', title: '你好', id: 'g7h8' })
+    await setIndexTitle(file, 'g7h8', '聊了天气')
+    expect(await read()).toContain('- 2026-10-13 单聊：聊了天气 〔g7h8〕\n')
+  })
+
+  it('title 清理后为空则按未整理写；编号已在时不覆盖已有标题', async () => {
+    await appendIndexLine(file, { date: '2026-10-13', kind: 'chat', id: 'e1', title: '〔〕' })
+    expect(await read()).toContain('- 2026-10-13 单聊（未整理）〔e1〕\n')
+    await put(STANDARD)
+    const r = await appendIndexLine(file, { date: '2026-10-20', kind: 'chat', id: 'a1b2', title: '新的' })
+    expect(r.written).toBe(false)
+    expect(await read()).toBe(STANDARD)
   })
 })

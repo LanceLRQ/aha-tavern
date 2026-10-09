@@ -10,7 +10,8 @@ import { createTavern } from '../../../src/core/tavern'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import { startTool, type ChatEnv } from '../../../src/shell/chat'
 import { SessionGate } from '../../../src/shell/confirm'
-import type { HostAgent } from '../../../src/shell/context'
+import { readSession } from '../../../src/core/state'
+import { sessionsFile, type HostAgent } from '../../../src/shell/context'
 import { recallTool } from '../../../src/shell/recall'
 import { createMemoryEnv, onChatStep, rememberTool, type MemoryEnv } from '../../../src/shell/remember'
 import type { Runtime } from '../../../src/shell/runtime'
@@ -59,8 +60,10 @@ async function startChat(over: Partial<Runtime['config']> = {}): Promise<Started
   expect(await startTool(cenv)(agent, { id: card.id })).toBe(`started with ${card.id}`)
   const entry = (await listCharacters(dir)).find((e) => e.ok) as { dir: string }
   const memFile = path.join(entry.dir, MEMORY_FILE)
-  const mem = await readMemory(memFile)
-  return { memFile, chatId: mem.index.at(-1)!.id, charId: card.id, env: createMemoryEnv(rt, () => services) }
+  // 初始化不再写索引行；这里补上用户说过话之后才有的那一行
+  const chatId = (await readSession(sessionsFile(dir), 's1')).record!.chatId!
+  await appendIndexLine(memFile, { date: '2026-10-09', kind: 'chat', id: chatId }, { characterName: '白狐' })
+  return { memFile, chatId, charId: card.id, env: createMemoryEnv(rt, () => services) }
 }
 
 /** 造一次往事：聊天目录、往事索引一行、可选梗概与若干对话；返回聊天编号。 */

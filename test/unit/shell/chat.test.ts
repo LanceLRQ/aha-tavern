@@ -5,16 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULTS } from '../../../src/config'
 import { listCharacters, MEMORY_FILE, saveCharacter } from '../../../src/core/card'
 import { readMe, writeMe, writeWorld } from '../../../src/core/docs'
-import { appendIndexLine, readMemory } from '../../../src/core/memory'
+import { appendIndexLine, readMemory, setIndexTitle } from '../../../src/core/memory'
 import { readSession, saveSession } from '../../../src/core/state'
 import { openTavern, createTavern } from '../../../src/core/tavern'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import {
-  buildPickBatches, buildStartCue, chatPlan, checkRoster, collectNotes, initialize, interpretPick, localDate,
+  buildPickBatches, buildStartCue, firstLineIndexer, rosterReceipt, chatPlan, checkRoster, collectNotes, initialize, interpretPick, localDate,
   realSteps, sortCandidates, startHandler, startTool, startedReceipt, startedToolText, OPT_MORE, PICK_PAGE,
   type ChatEnv, type GoodEntry, type InitSteps,
 } from '../../../src/shell/chat'
 import { parseStartArgs } from '../../../src/shell/chat-tools'
+import houseRulesText from '../../../src/prompts/house-rules.md'
+import hostPickText from '../../../src/prompts/host-pick.md'
+import hostSetupText from '../../../src/prompts/host-setup.md'
 import { SessionGate, type AskFn } from '../../../src/shell/confirm'
 import { buildContext, sessionsFile, type HostAgent, type Invocation } from '../../../src/shell/context'
 import type { Runtime } from '../../../src/shell/runtime'
@@ -146,10 +149,10 @@ describe('checkRoster / collectNotes / buildStartCue / localDate', () => {
     const r = startedReceipt(theme, {
       kind: 'started', chatId: 'ab12', characterId: 'c_1', name: '白狐',
       notes: [{ kind: 'profile-empty' }, { kind: 'memory-over', chars: 4000, max: 3000 }, { kind: 'world-over', chars: 5000, budget: 4000 }],
-      failed: ['index'],
+      failed: ['prompt'],
     })
     expect(r.text).toContain('白狐')
-    expect(r.text).toContain('没记进')
+    expect(r.text).toContain('提示词没装好')
     expect(r.text).toContain('酒馆:筹备')
     expect(r.text).toContain('4000')
     expect(r.text).toContain('预算')
@@ -157,8 +160,10 @@ describe('checkRoster / collectNotes / buildStartCue / localDate', () => {
   it('parseStartArgs', () => {
     expect(parseStartArgs({ id: ' c_1 ' })).toEqual({ id: 'c_1' })
     expect(parseStartArgs({ name: '白狐', id: 'c_1' })).toEqual({ id: 'c_1', name: '白狐' })
-    expect(parseStartArgs({})).toMatch(/^error/)
-    expect(parseStartArgs({ id: '  ' })).toMatch(/^error/)
+    // id 与 name 都可选：什么都没给由界面弹出选角卡片
+    expect(parseStartArgs({})).toEqual({})
+    expect(parseStartArgs({ id: '  ', name: '' })).toEqual({})
+    expect(parseStartArgs({ name: ' 白 ' })).toEqual({ name: '白' })
     expect(parseStartArgs({ id: 5 })).toMatch(/^error/)
     expect(parseStartArgs(null)).toMatch(/^error/)
   })
@@ -195,7 +200,8 @@ describe('initialize', () => {
     expect(await chatDirs()).toHaveLength(1)
     expect(await sessionOf()).toMatchObject({ mode: 'chat', state: 'chatting', chatId: o.chatId, characterId: o.characterId })
     const mem = await readMemory(memFileOf(t.entry))
-    expect(mem.index).toEqual([{ date: '2026-10-09', kind: 'chat', title: null, id: o.chatId }])
+    // 初始化不写往事索引：用户说出第一句话时才写
+    expect(mem.index).toEqual([])
     // 提示词：五段齐全
     expect(t.setSection).toHaveBeenCalledTimes(1)
     const text = (t.setSection.mock.calls[0] as unknown as [string])[0]
@@ -203,7 +209,6 @@ describe('initialize', () => {
     expect(text).toContain('RULES')
     expect(text).toContain('白狐：你好')
     expect(text).toContain('我是老板。')
-    expect(text).toContain('未整理')
     // 开场指令：第一次见面
     expect(t.steer).toHaveBeenCalledTimes(1)
     expect(t.steer.mock.calls[0]![0]).toBe(buildStartCue(true))
@@ -216,7 +221,18 @@ describe('initialize', () => {
     expect(o.kind).toBe('started')
     expect(t.steer.mock.calls[0]![0]).toBe(buildStartCue(false))
     expect((t.setSection.mock.calls[0] as unknown as [string])[0]).toContain('old1')
-    expect((await readMemory(memFileOf(t.entry))).index).toHaveLength(2)
+    expect((await readMemory(memFileOf(t.entry))).index).toHaveLength(1)
+  })
+
+  it('开了聊天但用户没说话：索引仍为空，下一次开聊还是第一次见面', async () => {
+    const t = await setup()
+    expect((await t.run()).kind).toBe('started')
+    expect((await readMemory(memFileOf(t.entry))).index).toEqual([])
+    // 模拟新会话再次开聊
+    await fs.rm(sessionsFile(dir), { force: true })
+    t.steer.mockClear()
+    expect((await t.run()).kind).toBe('started')
+    expect(t.steer.mock.calls[0]![0]).toBe(buildStartCue(true))
   })
 
   it('提醒项照常初始化：档案为空、记忆超限、世界观超预算', async () => {
@@ -279,32 +295,22 @@ describe('initialize', () => {
     expect((await sessionOf())!.chatId).toBe('zzzz')
   })
 
-  it('第 4 步索引失败：状态已不可逆，继续 5、6', async () => {
-    const t = await setup({ steps: { appendIndexLine: vi.fn().mockRejectedValue(new Error('x')) } })
-    const o = await t.run()
-    expect(o).toMatchObject({ kind: 'started', failed: ['index'] })
-    expect((await sessionOf())!.state).toBe('chatting')
-    expect(t.setSection).toHaveBeenCalled()
-    expect(t.steer).toHaveBeenCalled()
-  })
-
-  it('第 5 步换段失败：started，failed 含 prompt，不发开场指令', async () => {
+  it('第 4 步换段失败：started，failed 含 prompt，不发开场指令', async () => {
     const t = await setup()
     t.setSection.mockRejectedValue(new Error('reg'))
     const o = await t.run()
     expect(o).toMatchObject({ kind: 'started', failed: ['prompt'] })
     expect((await sessionOf())!.state).toBe('chatting')
-    expect((await readMemory(memFileOf(t.entry))).index).toHaveLength(1)
     expect(t.steer).not.toHaveBeenCalled()
     expect(startedToolText(o)).toContain('not done: prompt')
   })
 
-  it('第 5 步重读记忆失败也算 prompt 失败', async () => {
+  it('第 4 步重读记忆失败也算 prompt 失败', async () => {
     const t = await setup({ steps: { readMemoryText: vi.fn().mockRejectedValue(new Error('r')) } })
     expect(await t.run()).toMatchObject({ kind: 'started', failed: ['prompt'] })
   })
 
-  it('第 6 步开场指令失败：started，failed 含 opening', async () => {
+  it('第 5 步开场指令失败：started，failed 含 opening', async () => {
     const t = await setup()
     t.steer.mockImplementation(() => { throw new Error('no steer') })
     expect(await t.run()).toMatchObject({ kind: 'started', failed: ['opening'] })
@@ -381,18 +387,55 @@ describe('startHandler / startTool', () => {
     await addChar('青衫')
     expect((await run('青')).text).toContain('开始了')
   })
-  it('歧义与没有', async () => {
+  it('歧义与没有（卡片不可用时退回文字）', async () => {
     await addChar('白狐')
     await addChar('白鹿')
-    const amb = await run('白')
+    const env = envOf()
+    env.getAsk = () => undefined
+    const amb = await startHandler(env)(await inv(env, '白'))
     expect(amb.text).toContain('白狐')
     expect(amb.text).toContain('白鹿')
     expect(await sessionOf()).toBeNull()
-    const none = await run('黑猫')
+    const none = await startHandler(env)(await inv(env, '黑猫'))
     expect(none.text).toContain('黑猫')
     expect(none.text).toContain('白狐')
     expect(registered).toHaveLength(0)
     expect(steered).toHaveLength(0)
+  })
+  it('命令：名字有多个候选 -> 弹候选卡片，只列这些候选，点哪个开哪个', async () => {
+    await addChar('白狐')
+    await addChar('白鹿')
+    await addChar('青衫')
+    ask.mockImplementation(async (req) => ({ answers: [{ id: req.questions[0].id, selected: ['白鹿'] }] }))
+    const r = await run('白')
+    const q = ask.mock.calls[0]![0].questions[0]
+    expect(q.options.map((o: { label: string }) => o.label).sort()).toEqual(['白狐', '白鹿'])
+    expect(q.question).toContain('「白」')
+    expect(r.text).toContain('白鹿')
+    expect((await sessionOf())!.state).toBe('chatting')
+  })
+  it('命令：没有命中 -> 弹完整卡片，问题里说明没有叫 X 的', async () => {
+    await addChar('白狐')
+    await addChar('青衫')
+    ask.mockImplementation(async (req) => ({ answers: [{ id: req.questions[0].id, selected: ['青衫'] }] }))
+    const r = await run('黑猫')
+    const q = ask.mock.calls[0]![0].questions[0]
+    expect(q.options).toHaveLength(2)
+    expect(q.question).toContain('没有叫「黑猫」的角色')
+    expect(r.text).toContain('青衫')
+  })
+  it('命令：包含匹配（名字的中间一段）也能命中', async () => {
+    await addChar('白狐妖')
+    await addChar('青衫')
+    expect((await run('狐妖')).text).toContain('白狐妖')
+    expect(ask).not.toHaveBeenCalled()
+  })
+  it('命令：候选卡片上跳过 -> 取消', async () => {
+    await addChar('白狐')
+    await addChar('白鹿')
+    ask.mockResolvedValue({ answers: [] })
+    expect((await run('白')).text).toContain('取消')
+    expect(await sessionOf()).toBeNull()
   })
   it('名字对上坏卡：说明哪个文件什么问题', async () => {
     await addChar('白狐')
@@ -491,15 +534,74 @@ describe('startHandler / startTool', () => {
     await addChar('青衫')
     expect(await startTool(envOf())(agent, { id: a.id, name: '青衫' })).toBe(`started with ${a.id}`)
   })
-  it('aha_start：只给 name；失败给原因和现有名字', async () => {
+  it('aha_start：只给 name，卡片不可用时失败给原因和现有名字', async () => {
     await addChar('白狐')
     await addChar('白鹿')
-    const tool = startTool(envOf())
+    const env = envOf()
+    env.getAsk = () => undefined
+    const tool = startTool(env)
     expect(await tool(agent, { name: '白' })).toMatch(/ambiguous.*白狐.*白鹿|ambiguous.*白鹿.*白狐/)
     expect(await tool(agent, { name: '黑' })).toMatch(/no character named 黑; available:/)
     expect(await tool(agent, { id: 'c_nope' })).toMatch(/no character with id c_nope/)
+    expect(await tool(agent, {})).toMatch(/^error: pick card unavailable; available: .*白狐/)
     expect(await sessionOf()).toBeNull()
     expect(await tool(agent, { name: '白狐' })).toMatch(/^started with c_/)
+  })
+  it('aha_start：name 唯一命中（含开头、包含、不分大小写）直接开聊，不弹卡', async () => {
+    await addChar('Alice白狐')
+    await addChar('青衫')
+    expect(await startTool(envOf())(agent, { name: ' 白狐 ' })).toMatch(/^started with c_/)
+    expect(ask).not.toHaveBeenCalled()
+  })
+  it('aha_start：name 有多个候选 -> 弹候选卡片，点哪个开哪个', async () => {
+    await addChar('白狐')
+    const b = await addChar('白鹿')
+    await addChar('青衫')
+    ask.mockImplementation(async (req) => ({ answers: [{ id: req.questions[0].id, selected: ['白鹿'] }] }))
+    expect(await startTool(envOf())(agent, { name: '白' })).toBe(`started with ${b.id}`)
+    expect(ask.mock.calls[0]![0].questions[0].options).toHaveLength(2)
+  })
+  it('aha_start：name 没命中 -> 弹完整卡片；什么都没给 -> 弹完整卡片', async () => {
+    await addChar('白狐')
+    const q = await addChar('青衫')
+    ask.mockImplementation(async (req) => ({ answers: [{ id: req.questions[0].id, selected: ['青衫'] }] }))
+    expect(await startTool(envOf())(agent, { name: '黑猫' })).toBe(`started with ${q.id}`)
+    expect(ask.mock.calls[0]![0].questions[0].options).toHaveLength(2)
+    expect(ask.mock.calls[0]![0].questions[0].question).toContain('没有叫「黑猫」')
+    await fs.rm(sessionsFile(dir), { force: true })
+    ask.mockClear()
+    expect(await startTool(envOf())(agent, {})).toBe(`started with ${q.id}`)
+    expect(ask.mock.calls[0]![0].questions[0].options).toHaveLength(2)
+  })
+  it('aha_start：卡片上跳过或取消 -> cancelled by user, still picking，不改动', async () => {
+    await addChar('白狐')
+    await addChar('白鹿')
+    ask.mockResolvedValue({ answers: [] })
+    for (const args of [{}, { name: '白' }, { name: '黑猫' }]) {
+      expect(await startTool(envOf())(agent, args)).toBe('cancelled by user, still picking')
+    }
+    ask.mockRejectedValue(Object.assign(new Error('x'), { code: 'ASK_ABORTED' }))
+    expect(await startTool(envOf())(agent, {})).toBe('cancelled by user, still picking')
+    expect(await sessionOf()).toBeNull()
+    expect(registered).toHaveLength(0)
+  })
+  it('aha_start：工具的取消信号传给卡片', async () => {
+    await addChar('白狐')
+    ask.mockResolvedValue({ answers: [] })
+    const ctl = new AbortController()
+    await startTool(envOf())(agent, {}, ctl.signal)
+    expect(ask.mock.calls[0]![0].signal).toBe(ctl.signal)
+    // 信号已中止：不弹卡
+    ask.mockClear()
+    ctl.abort()
+    expect(await startTool(envOf())(agent, {}, ctl.signal)).toBe('cancelled by user, still picking')
+    expect(ask).not.toHaveBeenCalled()
+  })
+  it('aha_start：卡片弹不出来 -> 如实返回错误，仍在选角', async () => {
+    await addChar('白狐')
+    ask.mockRejectedValue(new Error('boom'))
+    expect(await startTool(envOf())(agent, {})).toMatch(/^error: pick card failed \(boom\)/)
+    expect(await sessionOf()).toBeNull()
   })
   it('aha_start：没有角色、不在单聊模式、没有 agent', async () => {
     const tool = startTool(envOf())
@@ -527,7 +629,8 @@ describe('startHandler / startTool', () => {
     expect(pick).toMatchObject({ kind: 'text' })
     if (pick.kind !== 'text') throw new Error()
     expect(pick.text).toContain('aha_start')
-    expect(pick.text).toContain(`id: ${c.id} | name: 白狐`)
+    expect(pick.text).toContain('characters: 1')
+    expect(pick.text).not.toContain(c.id)
     expect(pick.text).not.toContain('<house_rules>')
 
     await startTool(env)(agent, { id: c.id })
@@ -637,11 +740,100 @@ describe('startHandler / startTool', () => {
     expect(registered).toHaveLength(2)
     expect(registered[1]).toContain('<card>')
   })
-  it('失败步骤与"还有 N 位"走主题称呼', async () => {
+  it('提醒项走主题称呼', async () => {
     const marked = { ...theme, concept: (id: string) => `〈${id}〉`, action: (id: string) => `《${id}》` } as unknown as Theme
-    const r = startedReceipt(marked, { kind: 'started', chatId: 'a', characterId: 'c', name: 'n', notes: [], failed: ['index'] })
+    const r = startedReceipt(marked, { kind: 'started', chatId: 'a', characterId: 'c', name: 'n', notes: [{ kind: 'memory-over', chars: 9, max: 3 }], failed: [] })
+    expect(r.text).toContain('〈character〉')
     expect(r.text).toContain('〈core_memory〉')
-    expect(r.text).not.toContain('往事索引')
   })
 
 })
+
+describe('buildPickBatches 前导说明', () => {
+  it('lead 接在问题前面', async () => {
+    await addChar('白狐')
+    await addChar('白鹿')
+    const b = buildPickBatches(theme, await goodOf(), PICK_PAGE, '有好几个都对得上「白」。')
+    expect(b[0]!.item.question.startsWith('有好几个都对得上「白」。')).toBe(true)
+    expect(b[0]!.item.question).toContain('想和哪个角色聊')
+  })
+})
+
+describe('firstLineIndexer（用户第一句话时写往事索引）', () => {
+  const target = async (charId: string, chatId: string) => ({ tavernDir: dir, chatId, characterId: charId })
+  const env = (over: Partial<Runtime['config']> = {}) => ({ rt: rtOf(over), now: () => new Date(2026, 9, 9, 12) })
+
+  it('写一行带临时标题的索引', async () => {
+    const c = await addChar('白狐')
+    const mem = memFileOf((await goodOf())[0]!)
+    await firstLineIndexer(env())(await target(c.id, 'ab12'), '# 你好呀\n今天天气不错，我们出去走走吧好不好呢')
+    const idx = (await readMemory(mem)).index
+    expect(idx).toEqual([{ date: '2026-10-09', kind: 'chat', title: '你好呀 今天天气不错，我们出去走…', id: 'ab12' }])
+  })
+  it('纯符号的第一句话：退回未整理的旧格式', async () => {
+    const c = await addChar('白狐')
+    const mem = memFileOf((await goodOf())[0]!)
+    await firstLineIndexer(env())(await target(c.id, 'ab12'), '？？？')
+    expect(await fs.readFile(mem, 'utf8')).toContain('单聊（未整理）〔ab12〕')
+  })
+  it('同一编号已在索引里（恢复会话、已整理）不重复写、不覆盖标题', async () => {
+    const c = await addChar('白狐')
+    const mem = memFileOf((await goodOf())[0]!)
+    const f = firstLineIndexer(env())
+    await f(await target(c.id, 'ab12'), '第一句')
+    await setIndexTitle(mem, 'ab12', '整理后的标题')
+    await f(await target(c.id, 'ab12'), '恢复后的第一句')
+    const idx = (await readMemory(mem)).index
+    expect(idx).toHaveLength(1)
+    expect(idx[0]!.title).toBe('整理后的标题')
+  })
+  it('只读酒馆不写；角色卡读不出来抛错（由落盘处记日志）', async () => {
+    const c = await addChar('白狐')
+    const mem = memFileOf((await goodOf())[0]!)
+    await firstLineIndexer(env())({ ...(await target(c.id, 'ab12')), readonly: true }, '你好')
+    expect((await readMemory(mem)).index).toEqual([])
+    await expect(firstLineIndexer(env())(await target('c_nope', 'ab12'), '你好')).rejects.toThrow()
+  })
+  it('受 pastIndexMaxLines 限制', async () => {
+    const c = await addChar('白狐')
+    const mem = memFileOf((await goodOf())[0]!)
+    const f = firstLineIndexer(env({ pastIndexMaxLines: 2 }))
+    for (const id of ['a001', 'a002', 'a003']) await f(await target(c.id, id), '你好')
+    expect((await readMemory(mem)).index.map((e) => e.id)).toEqual(['a002', 'a003'])
+  })
+})
+
+describe('提示词文字', () => {
+  it('掌柜（选角）：不负责列角色，没说清就不带参数调用，取消后不再调用', () => {
+    expect(hostPickText).toContain('aha_start')
+    expect(hostPickText).toContain('不带参数')
+    expect(hostPickText).toContain('cancelled by user, still picking')
+    expect(hostPickText).toContain('不用向 user 解释')
+    expect(hostPickText).not.toContain('照 <pick_state>')
+    expect([...hostPickText].length).toBeLessThan(500)
+  })
+  it('筹备掌柜：称呼直接用，不解释', () => {
+    expect(hostSetupText).toContain('不用向 user 解释')
+  })
+  it('house-rules 第 7 条：summary 与 title 每次都给', () => {
+    expect(houseRulesText).toContain('没有要改的栏就只给 summary 和 title')
+    expect(houseRulesText).not.toContain('就不调用')
+  })
+})
+
+describe('愚者主题下的用户可见文字读起来通顺', () => {
+  it('选角卡片与回执的量词', async () => {
+    const fools = (await loadTheme({ name: 'fools', builtinDir })).theme
+    await addChar('甲'); await addChar('乙')
+    const b = buildPickBatches(fools, await goodOf(), PICK_PAGE, '')
+    expect(b[0]!.item.header).toBe('面具')
+    expect(b[0]!.item.question).toBe('想和哪个面具聊？')
+    const one = (await goodOf()).slice(0, 1)
+    expect(buildPickBatches(fools, one)[0]!.item.question).toBe(`和「${one[0]!.card.name}」聊聊？`)
+    const r = startedReceipt(fools, { kind: 'started', chatId: 'a', characterId: 'c', name: '甲', notes: [{ kind: 'memory-over', chars: 9, max: 3 }], failed: [] })
+    expect(r.text).toContain('这个面具的光锥')
+    expect(rosterReceiptText(fools)).toContain('建面具档案')
+  })
+})
+
+const rosterReceiptText = (t: Theme): string => rosterReceipt(t, { kind: 'no-characters' }).text ?? ''
