@@ -28,6 +28,7 @@ import type { Runtime } from './runtime'
 import { hostSectionRegister, SessionSections, type SectionPlan } from './sections'
 import { makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
+import { resolveChatTarget, TranscriptRecorder } from './transcript'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:chat'
@@ -651,12 +652,19 @@ export function installChat(ctx: Context, rt: Runtime): void {
     c.on('agent/created', (payload: { agent: HostAgent }) => {
       void ensure(payload.agent, 'created')
     })
-    c.on('agent/pre-step', async (payload: { agent: HostAgent }, next: () => Promise<unknown>) => {
+    const recorder = new TranscriptRecorder({ resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log })
+    c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[] }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
+      recorder.onStep(payload.agent, (payload.messages ?? []) as never)
       return next()
+    })
+    // 通知类事件，不带 next
+    c.on('agent/assistant-stream', (payload: { agent: HostAgent; frame: unknown }) => {
+      recorder.onFrame(payload.agent, payload.frame as never)
     })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
+      recorder.forget(payload.agent.id)
     })
     rt.log.info('单聊外壳已装配（created / pre-step / disposed 监听）')
   })
