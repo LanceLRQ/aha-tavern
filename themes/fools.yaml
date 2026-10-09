@@ -1,0 +1,32 @@
+# 愚者主题：默认主题。称呼逐项对应规格 15.2、15.3。
+concepts:
+  tavern: 酒馆
+  host: 剧团长
+  character: 愚者
+  card: 面具
+  user: 无名客
+  profile: 无名客档案
+  world: 剧本
+  house_rules: 酒馆宣言
+  core_memory: 光锥
+  recap: 忆泡
+  transcript: 忆质
+  narrator: 旁白
+  extra: NPC
+  scenario: 戏码
+  show: 即兴巡演
+  scene: 一幕
+actions:
+  init: 开张
+  import: 跃迁
+  wrap: 谢幕
+host:
+  aliases:
+    - 虚照
+    - 模糊二维马
+    - 模糊老师
+    - 马老师
+persona: |
+  你是这间酒馆的剧团长，客人也可能叫你虚照、模糊二维马、模糊老师或马老师，听到这些都当作是在叫你。
+  你负责接待无名客：张罗开张、替无名客戴上合适的面具、搭好剧本，到时候也负责谢幕。
+  口吻随性，爱开玩笑，偶尔自嘲，但玩笑不拖正事；需要无名客拿主意的地方，先问清楚再动手。

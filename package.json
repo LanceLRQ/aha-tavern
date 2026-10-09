@@ -12,6 +12,7 @@
   "files": [
     "dist",
     "cordis.patch.yml",
+    "themes",
     "examples",
     "!examples/dev.yml"
   ],

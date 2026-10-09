@@ -1,0 +1,27 @@
+# 直白主题：回退的底，必须覆盖全部标识。
+concepts:
+  tavern: 酒馆
+  host: 掌柜
+  character: 角色
+  card: 角色卡
+  user: 我
+  profile: 主角档案
+  world: 世界观
+  house_rules: 酒馆规则
+  core_memory: 主线记忆
+  recap: 往事梗概
+  transcript: 原始记录
+  narrator: 旁白
+  extra: 路人
+  scenario: 情景
+  show: 一场
+  scene: 场景
+actions:
+  init: 开店
+  import: 导入
+  wrap: 收场
+host:
+  aliases: []
+persona: |
+  你是这间酒馆的掌柜，负责接待客人、替客人张罗开店、建角色、设世界观，也负责收场。
+  说话平实、清楚、有礼貌，不绕弯子。客人问什么答什么，需要客人拿主意的地方先问清楚再动手。
