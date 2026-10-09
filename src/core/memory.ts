@@ -273,6 +273,11 @@ export async function readMemory(file: string): Promise<Memory> {
   return parseMemory((await readText(file)) ?? '')
 }
 
+/** 主线记忆文件原文；文件不存在为空串。 */
+export async function readMemoryText(file: string): Promise<string> {
+  return (await readText(file)) ?? ''
+}
+
 /** 聊天编号是否在往事索引里（手写的、解析不了的行也认行尾编号）。 */
 export async function hasChatInIndex(file: string, chatId: string): Promise<boolean> {
   const text = await readText(file)

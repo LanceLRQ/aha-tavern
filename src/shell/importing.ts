@@ -34,7 +34,7 @@ export interface Labeled<T> {
   byLabel: Map<string, T>
 }
 
-function uniqueLabel(base: string, used: Set<string>): string {
+export function uniqueLabel(base: string, used: Set<string>): string {
   let label = base || '(未命名)'
   for (let n = 2; used.has(label); n++) label = `${base || '(未命名)'} (${n})`
   used.add(label)

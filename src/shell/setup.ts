@@ -15,6 +15,7 @@ import { buildDocCue, buildOpeningCue, buildSetupPrompt, planCardCommand, type S
 import { DeclineTracker, SessionGate, type AskFn } from './confirm'
 import { importHandler } from './importing'
 import { isReadonly, openResolved } from './writable'
+import { hostSectionRegister, SessionSections, type SectionPlan } from './sections'
 import { registerSetupTools } from './setup-tools'
 import type { Theme } from '../core/theme'
 
@@ -24,9 +25,6 @@ const SECTION_ORDER = 5000
 /** 宿主 agent 里筹备外壳用到的最小子集。 */
 interface SetupAgent extends HostAgent {
   steer(message: unknown): unknown
-}
-interface SectionHost {
-  systemPrompt: { section(s: { name: string; order: number; text: string; interpolate?: boolean }): () => void }
 }
 
 /** 收集状态事实；每一项读取失败都降级为"空"并记警告，不影响整体。 */
@@ -79,122 +77,48 @@ export interface SectionHooks {
   register(agent: HostAgent, text: string): () => void
 }
 
-/**
- * 按会话记账的提示词段。同一会话的注册操作串行执行；
- * done 只在段注册成功（或确认该会话不是筹备模式）后记账，失败可重试；
- * gen 是会话的"代数"：forget 之后，进行中的 apply 发现代数变了就放弃注册，避免泄漏。
- */
+/** 筹备模式的掌柜段：规划（取模式、收事实、拼文字）在这里，注册与记账交给通用的会话段管理器。 */
 export class SetupSections {
-  private readonly disposers = new Map<string, () => void>()
-  private readonly done = new Set<string>()
-  private readonly texts = new Map<string, string>()
-  private readonly chains = new Map<string, Promise<unknown>>()
-  private readonly gen = new Map<string, number>()
+  private readonly core: SessionSections
   private readonly hooks: SectionHooks
 
   constructor(private readonly rt: Runtime, private readonly guide: string, hooks: Partial<SectionHooks> = {}) {
     this.hooks = {
       loadContext: (agent, services) => buildContext(agent, services, rt.log),
       collect: (agent, cc) => collectFacts(rt, agent, cc),
-      register: (agent, text) => (agent.ctx as SectionHost).systemPrompt.section({
-        name: SECTION_NAME, order: SECTION_ORDER, text, interpolate: false,
-      }),
+      register: hostSectionRegister(SECTION_NAME, SECTION_ORDER),
       ...hooks,
     }
+    this.core = new SessionSections(rt.log, (agent, text) => this.hooks.register(agent, text), '掌柜提示词段')
   }
 
-  /** 入队时捕获会话代数；执行时发现代数变了（会话已销毁）就什么都不做。 */
-  private serial(id: string, task: (g: number) => Promise<void>): Promise<void> {
-    const g = this.gen.get(id) ?? 0
-    const run = async (): Promise<void> => {
-      if ((this.gen.get(id) ?? 0) !== g) {
-        this.rt.log.debug(`会话 ${id}：排队期间会话已结束，放弃`)
-        return
-      }
-      await task(g)
+  private plan(agent: HostAgent, services: HostServices, theme: Theme, known?: CommandContext): () => Promise<SectionPlan> {
+    return async () => {
+      // 已知上下文来自开店等只在筹备模式才会执行的路径：模式为空按筹备处理
+      const cc = known ? { ...known, mode: known.mode ?? ('setup' as const) } : await this.hooks.loadContext(agent, services)
+      if (cc.mode === null) return { kind: 'wait' }
+      if (cc.mode !== 'setup') return { kind: 'skip', note: `实际模式 ${cc.mode}` }
+      const facts = await this.hooks.collect(agent, cc)
+      return { kind: 'text', text: buildSetupPrompt(theme, this.guide, facts), note: `place=${facts.place.kind}` }
     }
-    const prev = this.chains.get(id) ?? Promise.resolve()
-    const next = prev.then(run, run)
-    this.chains.set(id, next.catch(() => undefined))
-    return next
   }
 
   /** 每会话只做一次；已成功处理过的会话直接返回。 */
   ensure(agent: HostAgent, services: HostServices, theme: Theme): Promise<void> {
-    return this.serial(agent.id, async (g) => {
-      if (this.done.has(agent.id)) return
-      await this.apply(agent, services, theme, g)
-    })
+    return this.core.ensure(agent, this.plan(agent, services, theme))
   }
 
   /** 状态变了：换成按最新状态生成的段。known 为调用方已知的上下文，给了就不再取。 */
   refresh(agent: HostAgent, services: HostServices, theme: Theme, known?: CommandContext): Promise<void> {
-    return this.serial(agent.id, (g) => this.apply(agent, services, theme, g, known))
+    return this.core.refresh(agent, this.plan(agent, services, theme, known))
   }
 
-  private async apply(
-    agent: HostAgent, services: HostServices, theme: Theme, g: number, known?: CommandContext,
-  ): Promise<void> {
-    const id = agent.id
-    // 已知上下文来自开店等只在筹备模式才会执行的路径：模式为空按筹备处理
-    const cc = known ? { ...known, mode: known.mode ?? ('setup' as const) } : await this.hooks.loadContext(agent, services)
-    // 取不到实际模式：留给之后的 pre-step 再试
-    if (cc.mode === null) {
-      this.rt.log.debug(`会话 ${id}：还取不到实际模式，稍后再试`)
-      return
-    }
-    if (cc.mode !== 'setup') {
-      this.rt.log.debug(`会话 ${id}：实际模式 ${cc.mode}，不注册掌柜提示词段`)
-      if ((this.gen.get(id) ?? 0) === g) this.done.add(id)
-      return
-    }
-    // 先把新段的文字准备好，再做替换
-    const facts = await this.hooks.collect(agent, cc)
-    const text = buildSetupPrompt(theme, this.guide, facts)
-    if ((this.gen.get(id) ?? 0) !== g) {
-      this.rt.log.debug(`会话 ${id}：注册途中会话已结束，放弃`)
-      return
-    }
-    const oldDispose = this.disposers.get(id)
-    const oldText = this.texts.get(id)
-    oldDispose?.()
-    this.disposers.delete(id)
-    this.texts.delete(id)
-    try {
-      this.disposers.set(id, this.hooks.register(agent, text))
-      this.texts.set(id, text)
-    } catch (e) {
-      // 新段注册失败：把旧段原样放回；放不回就清掉记账，让下一次 ensure 重试
-      let restored = false
-      if (oldDispose && oldText !== undefined) {
-        try {
-          this.disposers.set(id, this.hooks.register(agent, oldText))
-          this.texts.set(id, oldText)
-          restored = true
-        } catch (e2) {
-          this.rt.log.warn(`会话 ${id}：旧段也没能放回：${(e2 as Error).message}`)
-        }
-      }
-      if (!restored) this.done.delete(id)
-      throw e
-    }
-    this.done.add(id)
-    this.rt.log.debug(`会话 ${id}：掌柜提示词段已注册（${text.length} 字，place=${facts.place.kind}）`)
-  }
-
-  /** 会话结束：撤销并忘掉；进行中的 apply 会因代数变化而放弃。 */
   forget(id: string): void {
-    this.gen.set(id, (this.gen.get(id) ?? 0) + 1)
-    this.disposers.get(id)?.()
-    this.disposers.delete(id)
-    this.texts.delete(id)
-    this.done.delete(id)
-    this.chains.delete(id)
-    this.rt.log.debug(`会话 ${id}：已结束，清掉提示词段记账`)
+    this.core.forget(id)
   }
 
   has(id: string): boolean {
-    return this.disposers.has(id)
+    return this.core.has(id)
   }
 }
 

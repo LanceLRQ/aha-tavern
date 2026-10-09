@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   parseMemory, roundTrip, readMemory, appendFact, appendPinned, replaceSections,
-  appendIndexLine, setIndexTitle, hasChatInIndex, memoryChars,
+  appendIndexLine, setIndexTitle, hasChatInIndex, memoryChars, readMemoryText,
 } from '../../../src/core/memory'
 import { isAhaError } from '../../../src/core/errors'
 
@@ -714,5 +714,19 @@ describe('非字符串参数', () => {
   it('不存在的文件也不被创建', async () => {
     await appendFact(file, {} as never).catch(() => undefined)
     await expect(fs.stat(file)).rejects.toThrow()
+  })
+})
+
+describe('readMemoryText', () => {
+  it('返回原文；文件不存在为空串', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'aha-memtext-'))
+    try {
+      const f = path.join(dir, 'memory.md')
+      expect(await readMemoryText(f)).toBe('')
+      await fs.writeFile(f, STANDARD)
+      expect(await readMemoryText(f)).toBe(STANDARD)
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
   })
 })

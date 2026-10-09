@@ -3,9 +3,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { doctorHandler } from './doctor'
 import type { Runtime } from './runtime'
+import { installChat } from './chat'
 import { installSetup } from './setup'
 
 export function installHandlers(rt: Runtime, ctx: Context): void {
   rt.handlers.doctor = doctorHandler
   if (rt.config.mode === 'setup') installSetup(ctx, rt)
+  if (rt.config.mode === 'chat') installChat(ctx, rt)
 }
