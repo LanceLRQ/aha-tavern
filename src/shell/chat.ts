@@ -28,14 +28,16 @@ import type { Runtime } from './runtime'
 import { hostSectionRegister, SessionSections, type SectionPlan } from './sections'
 import { flatText, makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
-import { createMemoryEnv, onChatStep, rememberHandler, rememberTool, reviewTool } from './remember'
+import { createMemoryEnv, onChatStep, RememberTurns, rememberHandler, rememberTool, reviewTool } from './remember'
 import { recallTool } from './recall'
-import { defaultDrawDeps, DrawAvailability } from './draw'
+import { defaultDrawDeps, drawPromptSync, DrawAvailability, DrawEcho, drawTool } from './draw'
 import { resolveChatTarget, TranscriptRecorder, type ChatTarget } from './transcript'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:chat'
 const SECTION_ORDER = 5000
+const DRAW_SECTION_NAME = 'aha-tavern-drawing'
+const DRAW_SECTION_ORDER = 5100
 /** 选择卡片一页最多的选项数（含"更多…"）。宿主的实际上限没有查到，12 是保守取值。 */
 export const PICK_PAGE = 12
 const TAGLINE_MAX = 60
@@ -736,7 +738,24 @@ export function installChat(ctx: Context, rt: Runtime): void {
     ask = (req) => uq.ask(req)
   })
   const memoryEnv = createMemoryEnv(rt, () => services)
-  registerChatTools(ctx, { start: startTool(env), remember: rememberTool(memoryEnv), review: reviewTool(memoryEnv), recall: recallTool(memoryEnv) })
+  // 画图提示词段：有画图能力时装上（auto 决定版本），没有时撤掉
+  const drawSections = new SessionSections(rt.log, hostSectionRegister(DRAW_SECTION_NAME, DRAW_SECTION_ORDER), '画图提示词段')
+  const drawing = new DrawAvailability({
+    log: rt.log,
+    ...defaultDrawDeps(() => rt.servicesPath()),
+    inspect: async (agent) => {
+      if (!services) return { chatting: false, readonly: false }
+      const cc = await buildContext(agent, services, rt.log)
+      return { chatting: cc.state === 'chatting', readonly: isReadonly(cc.tavern) }
+    },
+    onChange: drawPromptSync(drawSections, (m) => rt.log.warn(m)),
+  })
+  const drawTurns = new RememberTurns()
+  const drawEcho = new DrawEcho(rt.log)
+  const draw = drawTool({ rt, getServices: () => services, drawing, turns: drawTurns, echo: drawEcho })
+  registerChatTools(ctx, {
+    start: startTool(env), remember: rememberTool(memoryEnv), review: reviewTool(memoryEnv), recall: recallTool(memoryEnv), draw,
+  })
   rt.handlers.start = startHandler(env)
   rt.handlers.remember = rememberHandler(memoryEnv)
   host.inject(['agentPresets'], (c) => {
@@ -749,25 +768,20 @@ export function installChat(ctx: Context, rt: Runtime): void {
       }
     }
     // 新建与恢复会话时就注册（恢复的聊天中会话在这里还原五段，规格 9.3）；pre-step 兜底，且必须 return next()
-    const drawing = new DrawAvailability({
-      log: rt.log,
-      ...defaultDrawDeps(() => rt.servicesPath()),
-      inspect: async (agent) => {
-        const cc = await buildContext(agent, c, rt.log)
-        return { chatting: cc.state === 'chatting', readonly: isReadonly(cc.tavern) }
-      },
-    })
     c.on('agent/created', (payload: { agent: HostAgent }) => {
       drawing.conceal(payload.agent)
       void ensure(payload.agent, 'created')
     })
     const recorder = new TranscriptRecorder({
       resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log, onFirstUser: firstLineIndexer(env),
+      onReply: (agent, text) => drawEcho.onReply(agent.id, text),
     })
     c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
       await drawing.ensure(payload.agent)
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
+      drawTurns.onStep(payload.agent.id, payload.turn, newUsers)
+      drawEcho.onUser(payload.agent.id, newUsers)
       await onChatStep(memoryEnv, payload.agent, payload.turn, newUsers)
       return next()
     })
@@ -778,6 +792,9 @@ export function installChat(ctx: Context, rt: Runtime): void {
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
       drawing.forget(payload.agent.id)
+      drawSections.forget(payload.agent.id)
+      drawTurns.forget(payload.agent.id)
+      drawEcho.forget(payload.agent.id)
       clearWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
       memoryEnv.reminder.forget(payload.agent.id)

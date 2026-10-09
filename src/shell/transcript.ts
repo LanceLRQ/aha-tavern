@@ -90,6 +90,8 @@ export interface RecorderDeps {
   append?: AppendFn
   /** 这场聊天里用户的第一句话落盘后调用（每个会话成功一次即止；失败只记日志，下一句再试）。 */
   onFirstUser?(target: ChatTarget, text: string): Promise<void>
+  /** 角色的一段回复提交时同步调用（不论是否在聊天中、落盘是否成功）。 */
+  onReply?(agent: HostAgent, text: string): void
 }
 
 interface SessionState {
@@ -138,7 +140,10 @@ export class TranscriptRecorder {
     try {
       const s = this.state(agent.id)
       const text = s.collector.feed(frame)
-      if (text !== null) this.enqueue(agent, s, 'character', null, text)
+      if (text !== null) {
+        this.enqueue(agent, s, 'character', null, text)
+        this.deps.onReply?.(agent, text)
+      }
     } catch (e) {
       this.deps.log.warn(`对话落盘（回复流）出错：${(e as Error).message}`)
     }
