@@ -30,6 +30,7 @@ import { flatText, makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
 import { createMemoryEnv, onChatStep, rememberHandler, rememberTool, reviewTool } from './remember'
 import { recallTool } from './recall'
+import { defaultDrawDeps, DrawAvailability } from './draw'
 import { resolveChatTarget, TranscriptRecorder, type ChatTarget } from './transcript'
 import { isReadonly } from './writable'
 
@@ -748,7 +749,16 @@ export function installChat(ctx: Context, rt: Runtime): void {
       }
     }
     // 新建与恢复会话时就注册（恢复的聊天中会话在这里还原五段，规格 9.3）；pre-step 兜底，且必须 return next()
+    const drawing = new DrawAvailability({
+      log: rt.log,
+      ...defaultDrawDeps(() => rt.servicesPath()),
+      inspect: async (agent) => {
+        const cc = await buildContext(agent, c, rt.log)
+        return { chatting: cc.state === 'chatting', readonly: isReadonly(cc.tavern) }
+      },
+    })
     c.on('agent/created', (payload: { agent: HostAgent }) => {
+      drawing.conceal(payload.agent)
       void ensure(payload.agent, 'created')
     })
     const recorder = new TranscriptRecorder({
@@ -756,6 +766,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
     })
     c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
+      await drawing.ensure(payload.agent)
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
       await onChatStep(memoryEnv, payload.agent, payload.turn, newUsers)
       return next()
@@ -766,6 +777,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
     })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
+      drawing.forget(payload.agent.id)
       clearWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
       memoryEnv.reminder.forget(payload.agent.id)
