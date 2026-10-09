@@ -3,6 +3,7 @@ import { appendFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveConfig, type TavernConfig } from '../config'
+import { expandHome } from '../core/fsx'
 import type { CommandId } from '../core/dispatch'
 import { loadTheme, type Theme } from '../core/theme'
 import type { CommandHandler, HostTools } from './context'
@@ -18,6 +19,9 @@ export interface Runtime {
   readonly config: TavernConfig
   readonly log: Log
   readonly builtinThemeDir: string
+  readonly builtinWorkflowDir: string
+  /** 服务配置文件的实际路径（已展开 ~）；每次用到时再读取。 */
+  servicesPath(): string
   /** 宿主工具运行时（顶层 inject 的 tools）；取不到为 undefined。 */
   tools(): HostTools | undefined
   /** 命令处理时 await 同一个 Promise；加载失败时拒绝。 */
@@ -29,6 +33,11 @@ export interface Runtime {
 /** dist/index.js 的上一级的 themes/；源码态（src/index.ts）下同样成立。 */
 export function builtinThemeDirOf(entryUrl: string): string {
   return path.resolve(path.dirname(fileURLToPath(entryUrl)), '..', 'themes')
+}
+
+/** dist/index.js 的上一级的 workflows/；与内置主题目录同样的求法。 */
+export function builtinWorkflowDirOf(entryUrl: string): string {
+  return path.resolve(path.dirname(fileURLToPath(entryUrl)), '..', 'workflows')
 }
 
 const LOGGER_NAME = 'aha-tavern'
@@ -85,5 +94,7 @@ export function createRuntime(host: unknown, rawConfig: unknown, entryUrl: strin
       return undefined
     }
   }
-  return { config, log, builtinThemeDir, tools, theme: () => themePromise, handlers: {} }
+  const builtinWorkflowDir = builtinWorkflowDirOf(entryUrl)
+  const servicesPath = () => expandHome(config.servicesPath)
+  return { config, log, builtinThemeDir, builtinWorkflowDir, servicesPath, tools, theme: () => themePromise, handlers: {} }
 }

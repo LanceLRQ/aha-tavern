@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULTS, resolveConfig } from '../../src/config'
+import { DEFAULTS, resolveConfig, tavernDataDir } from '../../src/config'
 
 describe('配置默认值', () => {
   it('与全局约束一致', () => {
@@ -55,5 +55,28 @@ describe('登记表默认路径跟随 DSH_HOME', () => {
 
   it('用户显式配置的 registryPath 不受影响', () => {
     expect(resolveConfig({ registryPath: '/x/r.yaml' }, { DSH_HOME: '/data/dsh' }).registryPath).toBe('/x/r.yaml')
+  })
+})
+
+describe('服务配置路径', () => {
+  it('默认与登记表同目录', () => {
+    expect(DEFAULTS.servicesPath).toBe('~/.dsh/aha-tavern/services.yaml')
+    expect(resolveConfig({}, {}).servicesPath).toBe('~/.dsh/aha-tavern/services.yaml')
+  })
+
+  it('设了 DSH_HOME 时两者同时跟随', () => {
+    const c = resolveConfig({}, { DSH_HOME: '/data/dsh/' })
+    expect(c.registryPath).toBe('/data/dsh/aha-tavern/taverns.yaml')
+    expect(c.servicesPath).toBe('/data/dsh/aha-tavern/services.yaml')
+  })
+
+  it('显式配置的 servicesPath 优先，支持 ~ 开头', () => {
+    expect(resolveConfig({ servicesPath: '~/s.yaml' }, { DSH_HOME: '/data/dsh' }).servicesPath).toBe('~/s.yaml')
+    expect(resolveConfig({ servicesPath: '' }, {}).servicesPath).toBe('~/.dsh/aha-tavern/services.yaml')
+  })
+
+  it('酒馆数据目录解析函数', () => {
+    expect(tavernDataDir({})).toBe('~/.dsh/aha-tavern')
+    expect(tavernDataDir({ DSH_HOME: '/d/' })).toBe('/d/aha-tavern')
   })
 })

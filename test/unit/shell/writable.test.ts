@@ -33,7 +33,7 @@ const setVersion = (v: number) => fs.writeFile(path.join(dir, 'aha-tavern.yaml')
 const rtOf = (): Runtime => ({
   config: { ...DEFAULTS, mode: 'setup', registryPath: path.join(dir, '.reg.yaml') },
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  builtinThemeDir: builtinDir, tools: () => undefined, theme: async () => theme, handlers: {},
+  builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined, theme: async () => theme, handlers: {},
 }) as Runtime
 const agent: HostAgent = { id: 's1', ctx: {}, session: { header: { cwd: '' } } }
 const agentAt = (): HostAgent => ({ id: 's1', ctx: {}, session: { header: { cwd: dir } } })

@@ -13,7 +13,7 @@ function fakeRuntime(mode: TavernMode, theme: Promise<Theme>): Runtime {
   return {
     config: { ...DEFAULTS, mode },
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    builtinThemeDir: builtinDir,
+    builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '',
     tools: () => undefined,
     theme: () => theme,
     handlers: {},

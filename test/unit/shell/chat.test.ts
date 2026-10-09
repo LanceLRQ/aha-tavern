@@ -38,7 +38,7 @@ afterEach(async () => {
 const rtOf = (over: Partial<Runtime['config']> = {}): Runtime => ({
   config: { ...DEFAULTS, mode: 'chat', registryPath: path.join(dir, '.reg.yaml'), ...over },
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  builtinThemeDir: builtinDir, tools: () => undefined, theme: async () => theme, handlers: {},
+  builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined, theme: async () => theme, handlers: {},
 }) as Runtime
 
 const addChar = async (name: string, extra: Record<string, string> = {}) =>

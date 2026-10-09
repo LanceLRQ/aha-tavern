@@ -25,7 +25,7 @@ afterEach(async () => {
 const rtOf = (): Runtime => ({
   config: { ...DEFAULTS, mode: 'setup', registryPath: path.join(tmp, 'reg.yaml') },
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  builtinThemeDir: builtinDir,
+  builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '',
   tools: () => undefined,
   theme: async () => theme,
   handlers: {},

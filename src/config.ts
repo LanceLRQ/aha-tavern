@@ -22,6 +22,14 @@ export interface TavernConfig {
   recallExcerptMaxChars: number
   /** 全局登记表路径，支持 ~ 开头。 */
   registryPath: string
+  /** 外部服务（生图等）的配置文件路径，支持 ~ 开头。 */
+  servicesPath: string
+}
+
+/** 酒馆数据目录：跟随宿主的数据目录（DSH_HOME，未设时是 ~/.dsh）。 */
+export function tavernDataDir(env: Record<string, string | undefined> = process.env): string {
+  const home = env.DSH_HOME?.trim()
+  return home ? `${home.replace(/\/+$/, '')}/aha-tavern` : '~/.dsh/aha-tavern'
 }
 
 export const DEFAULTS: TavernConfig = {
@@ -34,6 +42,7 @@ export const DEFAULTS: TavernConfig = {
   reviewIntervalTurns: 30,
   recallExcerptMaxChars: 2000,
   registryPath: '~/.dsh/aha-tavern/taverns.yaml',
+  servicesPath: '~/.dsh/aha-tavern/services.yaml',
 }
 
 const MODES: readonly TavernMode[] = ['setup', 'chat']
@@ -45,10 +54,12 @@ export function resolveConfig(input: unknown, env: Record<string, string | undef
 
   if (MODES.includes(raw.mode as TavernMode)) out.mode = raw.mode as TavernMode
   if (typeof raw.theme === 'string' && raw.theme) out.theme = raw.theme
-  // 默认的登记表跟随宿主的数据目录（DSH_HOME，未设时是 ~/.dsh）；用户显式配置的路径优先
-  const home = env.DSH_HOME?.trim()
-  if (home) out.registryPath = `${home.replace(/\/+$/, '')}/aha-tavern/taverns.yaml`
+  // 默认的登记表与服务配置跟随酒馆数据目录；用户显式配置的路径优先
+  const dataDir = tavernDataDir(env)
+  out.registryPath = `${dataDir}/taverns.yaml`
+  out.servicesPath = `${dataDir}/services.yaml`
   if (typeof raw.registryPath === 'string' && raw.registryPath) out.registryPath = raw.registryPath
+  if (typeof raw.servicesPath === 'string' && raw.servicesPath) out.servicesPath = raw.servicesPath
 
   const numericKeys = [
     'worldBudget',

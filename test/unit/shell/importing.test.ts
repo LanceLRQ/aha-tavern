@@ -208,7 +208,7 @@ describe('importHandler', () => {
     const rt = {
       config: { ...DEFAULTS, mode: 'setup', registryPath: reg() },
       log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-      theme: async () => theme, handlers: {}, builtinThemeDir: builtinDir, tools: () => undefined,
+      theme: async () => theme, handlers: {}, builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined,
     } as unknown as Runtime
     const steer = vi.fn()
     const inv = {
@@ -225,7 +225,7 @@ describe('importHandler', () => {
     const rt = {
       config: { ...DEFAULTS, mode: 'setup', registryPath: reg() },
       log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-      theme: async () => theme, handlers: {}, builtinThemeDir: builtinDir, tools: () => undefined,
+      theme: async () => theme, handlers: {}, builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined,
     } as unknown as Runtime
     const inv = {
       agent: { id: 's1', ctx: {} }, services: { agentPresets: { composedPreset: () => 'tavern-setup' } }, rt, theme, steer: vi.fn(),

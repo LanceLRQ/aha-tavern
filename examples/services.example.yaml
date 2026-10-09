@@ -1,0 +1,18 @@
+# 阿哈酒馆的外部服务配置示例。
+# 复制到 <DSH_HOME>/aha-tavern/services.yaml（未设 DSH_HOME 时是 ~/.dsh/aha-tavern/services.yaml）。
+# 文件不存在，或没有 image / endpoint，等同于没有配置生图服务。
+# 每次用到时重新读取，改完不用重启；已经在聊的会话用 /aha 自检 让新配置生效。
+
+image:
+  endpoint: http://127.0.0.1:8188   # 必填：ComfyUI 的地址，没有这一项就是没配置
+  workflow: qwen-image-2.1          # 内置工作流名，或工作流文件的绝对路径
+  auto: true                        # 角色能否自己决定出图；false 时只响应用户要求
+  style: 动漫风格插画，线条干净，光影柔和   # 拼在每个提示词最前面
+  width: 832                        # 会向下取到 32 的倍数，不小于 256
+  height: 1216
+  steps: 12
+  timeoutSeconds: 180               # 单张出图的等待上限
+  # models:                         # 覆盖工作流里的默认模型文件名，按需填写
+  #   unet: your-model.safetensors
+  #   clip: your-text-encoder.safetensors
+  #   vae: your-vae.safetensors
