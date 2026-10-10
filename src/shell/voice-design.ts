@@ -154,6 +154,8 @@ async function designVoice(
   const s = cfg.settings
   if (hasUserInfo(s.endpoint)) return T.userInfo
   if (s.launch !== 'mlx') return T.unsupported
+  // 进程能应答不等于模型已加载好；启动没结束就别动：设计模型的加载与朗读模型会叠加内存，还可能与启动流程互相打断
+  if (deps.isLaunching(s.modelsDir)) return T.starting
   const info = await deps.inspect(s, deps.rt.voiceServerDeps(), { sizes: false })
   if (!info.reachable) return deps.isLaunching(s.modelsDir) ? T.starting : T.unreachable
   if (!info.owned) return T.unsupported

@@ -511,8 +511,16 @@ describe('朗读命令：不能朗读的情况', () => {
     expect((await w.invoke('你好呀朋友')).text).toBe('语音服务连不上，可以用 /aha 语音 启动。')
     expect(w.env.probe).toHaveBeenCalledWith(SETTINGS.endpoint)
     w.env.isLaunching.mockReturnValue(true)
-    expect((await w.invoke('你好呀朋友')).text).toBe('语音服务还在启动中，稍后再试。')
+    expect((await w.invoke('你好呀朋友')).text).toBe('语音服务正在启动，等启动好了再念。')
     expect(w.env.isLaunching).toHaveBeenCalledWith('/models')
+    expect(w.speaker.owner()).toBeNull()
+  })
+  it('服务进程已能应答但仍在启动（预热中）：不当作可用，不开口也不探测', async () => {
+    const w = await world()
+    w.env.isLaunching.mockReturnValue(true)
+    const r = await w.invoke('你好呀朋友')
+    expect(r.text).toBe('语音服务正在启动，等启动好了再念。')
+    expect(w.env.probe).not.toHaveBeenCalled()
     expect(w.speaker.owner()).toBeNull()
   })
   it('角色没有音色：提示到筹备模式配声音', async () => {

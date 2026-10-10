@@ -233,6 +233,14 @@ describe('前置检查：命中即返回，不发生成请求', () => {
     expect(r).not.toContain('/aha 语音 启动')
     none()
   })
+  it('服务进程已能应答但仍在启动（预热中）：同样提示稍后再试，不弹卡片不合成', async () => {
+    inspect.mockResolvedValue({ reachable: true, owned: { pid: 9, port: 18123, startedAt: 1 } })
+    isLaunching.mockReturnValue(true)
+    const r = await exec()
+    expect(r).toContain('still starting')
+    expect(isLaunching).toHaveBeenCalledWith('/data/voice')
+    none()
+  })
   it('服务不是插件启动的：归为不支持', async () => {
     inspect.mockResolvedValue({ reachable: true, owned: null })
     const r = await exec()

@@ -11,7 +11,7 @@ import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
 import { VOICE_OPT_CANCEL, VOICE_OPT_GO } from '../../../src/shell/receipts'
 import {
   BUILTIN_VOICE_TEXT, START_WAIT_MS, abortLaunch, builtinVoice, createVoiceHandler, installVoice, parseVoiceArgs,
-  launchSnapshot, resetLaunchesForTest, startServiceHeld, whichOnPath, lastStartOffline, restartVoiceService, type VoiceInstanceState, type VoiceOps,
+  launchSnapshot, isLaunching, resetLaunchesForTest, startServiceHeld, whichOnPath, lastStartOffline, restartVoiceService, type VoiceInstanceState, type VoiceOps,
 } from '../../../src/shell/voice'
 
 const MODEL_06 = 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit'
@@ -991,6 +991,49 @@ describe('restartVoiceService：由插件重启服务', () => {
     expect(await restartVoiceService(rt, settings(), { offline: true, signal: ac.signal, ops: ops as unknown as VoiceOps })).toBe(false)
     expect(ops.stop).not.toHaveBeenCalled()
     expect(ops.start).not.toHaveBeenCalled()
+  })
+  it('别人的启动进行中：不去停服务，返回 false', async () => {
+    ops.sleep.mockResolvedValue(undefined)
+    let release!: () => void
+    ops.start.mockImplementationOnce(() => new Promise((res) => { release = () => res({ ok: true, pid: 9, alreadyRunning: false }) }))
+    const rt = setup()
+    await rt.handlers.voice(mkInv('启动'))
+    expect(isLaunching(DIR)).toBe(true)
+    ops.stop.mockClear()
+    expect(await restartVoiceService(rt, settings(), { offline: false, ops: ops as unknown as VoiceOps })).toBe(false)
+    expect(ops.stop).not.toHaveBeenCalled()
+    release()
+  })
+  it('重启期间登记为启动中（朗读、启动命令、状态都看得到），结束后清掉', async () => {
+    const rt = setup()
+    let release!: () => void
+    ops.stop.mockImplementationOnce(() => new Promise((res) => { release = () => res({ status: 'stopped', forced: false }) }))
+    const p = restartVoiceService(rt, settings(), { offline: false, ops: ops as unknown as VoiceOps })
+    expect(isLaunching(DIR)).toBe(true)
+    expect(launchSnapshot(DIR)).toMatchObject({ finished: false })
+    expect((await run('启动')).text).toBe('语音服务正在启动中，请稍候。')
+    release()
+    expect(await p).toBe(true)
+    expect(isLaunching(DIR)).toBe(false)
+  })
+  it('重启失败也会清掉登记', async () => {
+    const rt = setup()
+    ops.start.mockResolvedValue({ ok: false, kind: 'timeout', detail: '' })
+    expect(await restartVoiceService(rt, settings(), { offline: false, ops: ops as unknown as VoiceOps })).toBe(false)
+    expect(isLaunching(DIR)).toBe(false)
+  })
+  it('重启期间被停止命令打断：start 收到的信号被中止', async () => {
+    const rt = setup()
+    let sig!: AbortSignal
+    ops.start.mockImplementationOnce((_s: unknown, _d: unknown, o: { signal: AbortSignal }) => {
+      sig = o.signal
+      return new Promise((res) => o.signal.addEventListener('abort', () => res({ ok: false, kind: 'cancelled', detail: '' })))
+    })
+    const p = restartVoiceService(rt, settings(), { offline: false, ops: ops as unknown as VoiceOps })
+    await vi.waitFor(() => expect(ops.start).toHaveBeenCalled())
+    abortLaunch(DIR)
+    expect(sig.aborted).toBe(true)
+    expect(await p).toBe(false)
   })
   it('重启后卸载时会停掉这个新进程', async () => {
     let cleanup!: () => Promise<void>

@@ -596,7 +596,7 @@ export function voiceStatusNotConfiguredReceipt(): Reply {
 const SPEAK_FAIL_TEXT: Record<string, string> = {
   unreachable: '服务连不上', timeout: '合成超时', cancelled: '已取消', 'bad-response': '服务返回异常',
   'no-player': '没有找到播放器', 'spawn-failed': '播放器启动失败', 'play-failed': '播放失败',
-  'convert-failed': '音频转换失败', 'trial-timeout': '等了 60 秒还没念完', other: '出错',
+  'convert-failed': '音频转换失败', 'trial-timeout': '等了 60 秒还没念完', starting: '语音服务还在启动，等启动好了再试', other: '出错',
 }
 
 /** 朗读失败的归类说明；不认识的种类一律"出错"。 */
@@ -635,7 +635,7 @@ export function voiceDoctorIssues(r: VoiceDoctorReport): string[] {
   if (!r.configured) return ['未配置']
   const out: string[] = []
   const s = r.service
-  if (s && !s.connected) {
+  if (s && (!s.connected || s.launching)) {
     out.push(s.credentials ? '地址里带了用户名和密码' : s.launching ? '正在启动' : `连不上 ${s.host}`)
   }
   if (r.player && !r.player.found) out.push('没有播放器')
@@ -656,20 +656,23 @@ function voiceDoctorItems(r: VoiceDoctorReport): DoctorItem[] {
   }
   const s = r.service
   if (s) {
+    const launchingItem = (): void => {
+      if (!s.launching) return
+      const { stage, seconds } = s.launching
+      items.push({
+        mark: '',
+        text: stage !== undefined && seconds !== undefined
+          ? `正在启动：${VOICE_STAGE_NAME[stage]}，已用 ${seconds} 秒`
+          : '正在启动（别处发起的安装或启动）',
+      })
+    }
     if (s.credentials) items.push({ mark: '✗', text: `语音服务 ${s.host} 地址里不要带用户名和密码` })
     else if (s.connected) {
       items.push({ mark: '✓', text: `语音服务 ${s.host} 已连上（${s.ours === 'plugin' ? '由插件启动' : '外部启动'}）` })
+      launchingItem() // 进程能应答但模型还在下载或加载
     } else {
       items.push({ mark: '✗', text: `语音服务 ${s.host} 连不上` })
-      if (s.launching) {
-        const { stage, seconds } = s.launching
-        items.push({
-          mark: '',
-          text: stage !== undefined && seconds !== undefined
-            ? `正在启动：${VOICE_STAGE_NAME[stage]}，已用 ${seconds} 秒`
-            : '正在启动（别处发起的安装或启动）',
-        })
-      }
+      launchingItem()
       if (s.lastFailure && r.launch) {
         items.push({ mark: '✗', text: `上次启动失败：${clip(s.lastFailure)}（日志 ${r.launch.modelsDir}/server.log）` })
       }
@@ -735,7 +738,7 @@ export function voiceDoctorBrief(r: VoiceDoctorReport): VoiceDoctorBrief {
   if (!r.configured) return { status: '未配置', flagged: r.problems.length > 0 }
   const s = r.service
   if (s?.credentials) return { status: '不可用：地址带账号密码', flagged: true }
-  if (s && !s.connected) {
+  if (s && (!s.connected || s.launching)) {
     return { status: s.launching ? '启动中' : s.lastFailure ? '未启动（上次启动失败）' : '未启动', flagged: true }
   }
   if (r.player && !r.player.found) return { status: '不可用：没有播放器', flagged: true }
@@ -778,7 +781,7 @@ export function speakBlockReason(block: SpeakBlock, theme: Theme): string {
     case 'unreachable':
       return '语音服务连不上，可以用 /aha 语音 启动'
     case 'starting':
-      return '语音服务还在启动中，稍后再试'
+      return '语音服务正在启动，等启动好了再念'
     case 'no-voice':
       return `这个${theme.concept('character')}还没有声音，请到「${MODE_LABEL.setup}」给它配声音`
     case 'no-player':

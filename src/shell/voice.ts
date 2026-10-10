@@ -532,21 +532,40 @@ export async function restartVoiceService(
   const ops = opts.ops ?? realVoiceOps
   const deps = rt.voiceServerDeps()
   if (opts.signal?.aborted) return false
-  const state = instanceStates.get(rt)
-  const offline = opts.offline ?? await ops.modelDownloaded(s.modelsDir, s.model)
-  if (state?.started?.settings.modelsDir === s.modelsDir) state.started = null
-  startOffline.delete(s.modelsDir)
-  await ops.stop(s, deps)
-  // 调用方已放弃（比如收尾超时）：不再起新进程
-  if (opts.signal?.aborted) return false
-  const r = await ops.start(s, deps, { offline, ...(opts.signal ? { signal: opts.signal } : {}) })
-  if (!r.ok) {
-    rt.log.warn(`重启语音服务未完成（${r.kind}）：${redactUrls(r.detail)}`)
+  // 别人的启动（含另一次重启）进行中：不去停服务，免得互相打断
+  if (isLaunching(s.modelsDir)) {
+    rt.log.warn('重启语音服务未进行：该目录上已有启动在进行')
     return false
   }
-  if (state) state.started = { settings: s, pid: r.pid }
-  startOffline.set(s.modelsDir, offline)
-  return true
+  // 同步登记成"启动中"（与上面的检查之间没有 await）：朗读、启动命令、状态都能看到，停止命令也能打断它
+  const ctl = new AbortController()
+  const onOuter = () => ctl.abort()
+  opts.signal?.addEventListener('abort', onOuter, { once: true })
+  const launch: Launch = {
+    phase: 'start', startedAt: ops.now(), ctl, finished: false, done: Promise.resolve({ kind: 'success', text: '' }),
+  }
+  launches.set(s.modelsDir, launch)
+  try {
+    const state = instanceStates.get(rt)
+    const offline = opts.offline ?? await ops.modelDownloaded(s.modelsDir, s.model)
+    if (state?.started?.settings.modelsDir === s.modelsDir) state.started = null
+    startOffline.delete(s.modelsDir)
+    await ops.stop(s, deps)
+    // 调用方已放弃（比如收尾超时）或被停止命令打断：不再起新进程
+    if (ctl.signal.aborted) return false
+    const r = await ops.start(s, deps, { offline, signal: ctl.signal })
+    if (!r.ok) {
+      rt.log.warn(`重启语音服务未完成（${r.kind}）：${redactUrls(r.detail)}`)
+      return false
+    }
+    if (state) state.started = { settings: s, pid: r.pid }
+    startOffline.set(s.modelsDir, offline)
+    return true
+  } finally {
+    opts.signal?.removeEventListener('abort', onOuter)
+    launch.finished = true
+    if (launches.get(s.modelsDir) === launch) launches.delete(s.modelsDir)
+  }
 }
 
 export interface InstallVoiceOptions {

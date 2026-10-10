@@ -14,7 +14,7 @@ import {
 } from '../../../src/shell/receipts'
 import { createVoiceHandler, resetLaunchesForTest, type VoiceInstanceState, type VoiceOps } from '../../../src/shell/voice'
 import {
-  checkVoice, TRIAL_LIMIT_MS, TRIAL_TEXT, trialSpeak, type VoiceDoctorDeps, type VoiceDoctorReport,
+  checkVoice, TRIAL_LIMIT_MS, TRIAL_TEXT, trialSpeak, voiceCardMode, type VoiceDoctorDeps, type VoiceDoctorReport,
 } from '../../../src/shell/voice-doctor'
 import { fakeRuntime } from './helpers/runtime'
 
@@ -424,6 +424,32 @@ describe('Markdown 与一行文字', () => {
 })
 
 // ---------- 试念 ----------
+
+describe('启动中的预热阶段不算可用', () => {
+  const starting = { stage: 'warmup' as const, startedAt: 1, finished: false }
+
+  it('连得上但启动记录未结束：报告里标启动中，卡片归 starting，一行小结也是启动中', async () => {
+    const deps = makeDeps({ inspect: vi.fn(async () => up()), launchOf: vi.fn(() => starting) })
+    const r = await checkVoice(deps, { detail: false })
+    expect(r.service).toMatchObject({ connected: true, launching: { stage: 'warmup' } })
+    expect(voiceCardMode(r)).toBe('starting')
+    expect(voiceDoctorBrief(r)).toEqual({ status: '启动中', flagged: true })
+    expect(voiceDoctorIssues(r)).toContain('正在启动')
+    expect(voiceDoctorOneLine(r)).toContain('正在启动：下载并加载模型')
+  })
+
+  it('试念：正在启动就不开口，返回 starting', async () => {
+    const deps = makeDeps({ launchOf: vi.fn(() => starting) })
+    expect(await trialSpeak(deps)).toEqual({ status: 'failed', kind: 'starting' })
+    expect(deps.speaker.speakAndWait).not.toHaveBeenCalled()
+    expect(voiceTrialMarkdown({ status: 'failed', kind: 'starting' })).toContain('还在启动')
+  })
+
+  it('启动记录已结束：试念照常', async () => {
+    const deps = makeDeps({ launchOf: vi.fn(() => ({ ...starting, finished: true })) })
+    expect((await trialSpeak(deps)).status).toBe('ok')
+  })
+})
 
 describe('trialSpeak', () => {
   const s = settings()

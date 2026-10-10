@@ -104,11 +104,12 @@ export async function checkVoice(deps: VoiceDoctorDeps, opts: VoiceDoctorOptions
   const running = snap !== null && !snap.finished
   const service: NonNullable<VoiceDoctorReport['service']> = { host, connected: info.reachable }
   if (info.reachable) service.ours = info.owned ? 'plugin' : 'external'
-  else if (running || info.busy) {
+  // 连得上也可能还在启动（模型下载、加载中），此时不算可用
+  if (running || (!info.reachable && info.busy)) {
     service.launching = running
       ? { stage: snap.stage, seconds: Math.max(0, Math.round((deps.now() - snap.startedAt) / 1000)) }
       : {}
-  } else if (snap?.failure) service.lastFailure = snap.failure
+  } else if (!info.reachable && snap?.failure) service.lastFailure = snap.failure
   report.service = service
 
   report.model = { name: s.modelAlias ?? s.model }
@@ -159,6 +160,9 @@ export async function trialSpeak(deps: VoiceDoctorDeps, signal?: AbortSignal): P
   const svc = await deps.loadService()
   if (!svc.configured || hasUserInfo(svc.settings.endpoint)) return { status: 'failed', kind: 'other' }
   const settings = svc.settings
+  // 启动没结束时进程可能已能应答，但模型还在下载或加载，念不了
+  const snap = deps.launchOf(settings.modelsDir)
+  if (snap !== null && !snap.finished) return { status: 'failed', kind: 'starting' }
   const player = await deps.findPlayer()
   if (!player) return { status: 'failed', kind: 'no-player' }
   let own: { audio: string; text: string } | null = null
@@ -190,7 +194,7 @@ export type VoiceCardMode = 'ready' | 'startable' | 'starting' | 'problem'
 export function voiceCardMode(r: VoiceDoctorReport): VoiceCardMode {
   const s = r.service
   if (!r.configured || !s || s.credentials) return 'problem'
-  if (s.connected) return r.player?.found ? 'ready' : 'problem'
   if (s.launching) return 'starting'
+  if (s.connected) return r.player?.found ? 'ready' : 'problem'
   return r.launch?.supported && r.launch.uv ? 'startable' : 'problem'
 }

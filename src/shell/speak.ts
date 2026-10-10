@@ -345,10 +345,12 @@ export async function checkReadiness(
   if (!cfg.configured) return blocked('not-configured')
   const s = cfg.settings
   if (hasUserInfo(s.endpoint)) return blocked('user-info')
+  // 进程能应答 /v1/models 不等于能念：模型可能还在下载或加载，启动没结束一律按"启动中"处理
+  if (env.isLaunching(s.modelsDir)) return blocked('starting')
   try {
     await env.probe(s.endpoint)
   } catch {
-    return blocked(env.isLaunching(s.modelsDir) ? 'starting' : 'unreachable')
+    return blocked('unreachable')
   }
   const entry = await readCharacter(target.tavernDir, target.characterId)
   const voice = entry ? await readVoice(entry.dir) : null
