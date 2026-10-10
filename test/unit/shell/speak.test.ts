@@ -44,7 +44,7 @@ interface Play {
   fail(e: unknown): void
 }
 
-function harness(opts: { auto?: boolean; honorAbort?: boolean } = {}) {
+function harness(opts: { auto?: boolean; honorAbort?: boolean; playIgnoresAbort?: boolean } = {}) {
   const auto = opts.auto ?? true
   const honor = opts.honorAbort ?? true
   const disk = new Map<string, Uint8Array>()
@@ -77,13 +77,14 @@ function harness(opts: { auto?: boolean; honorAbort?: boolean } = {}) {
       new Promise<void>((resolve, reject) => {
         const p: Play = { file, existed: disk.has(file), aborted: false, end: resolve, fail: reject }
         plays.push(p)
-        o.signal?.addEventListener('abort', () => { p.aborted = true; reject(new PlayerError('cancelled')) }, { once: true })
+        o.signal?.addEventListener('abort', () => { p.aborted = true; if (!opts.playIgnoresAbort) reject(new PlayerError('cancelled')) }, { once: true })
         if (auto) p.end()
       }),
     tempFile: () => `/tmp/aha-${++seq}.wav`,
     writeFile: async (f, b) => { disk.set(f, b) },
     removeFile: async (f) => { disk.delete(f) },
     now: () => 1000,
+    settleLimitMs: 50,
     log,
   }
   return { deps, disk, synths, plays, endpoints, client, log }
@@ -307,6 +308,82 @@ describe('Speaker', () => {
     await sp.stop()
   })
 
+  it('换段：新段的第一次播放等旧播放进程真正结束之后', async () => {
+    const h = harness({ auto: false, playIgnoresAbort: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['甲甲甲']))
+    await settle()
+    h.synths[0]!.done()
+    await settle()
+    sp.speak(req(['乙乙乙'], { owner: 's2' }))
+    await settle()
+    expect(h.plays[0]!.aborted).toBe(true)
+    h.synths[1]!.done() // 合成可以先完成
+    await settle()
+    expect(h.plays).toHaveLength(1) // 旧进程还没结束，新段不出声
+    h.plays[0]!.end()
+    await settle()
+    expect(h.plays).toHaveLength(2)
+    h.plays[1]!.end()
+    await settle()
+    expect(h.disk.size).toBe(0)
+  })
+
+  it('换段：旧段收尾卡住时，最多等到上限就开始播', async () => {
+    const h = harness({ auto: false, playIgnoresAbort: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['甲甲甲']))
+    await settle()
+    h.synths[0]!.done()
+    await settle()
+    sp.speak(req(['乙乙乙'], { owner: 's2' }))
+    await settle()
+    h.synths[1]!.done()
+    await new Promise((r) => setTimeout(r, 120))
+    expect(h.plays).toHaveLength(2)
+    h.plays[0]!.end()
+    h.plays[1]!.end()
+    await settle()
+  })
+
+  it('停下后马上换段，同样等上一段收尾', async () => {
+    const h = harness({ auto: false, playIgnoresAbort: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['甲甲甲']))
+    await settle()
+    h.synths[0]!.done()
+    await settle()
+    void sp.stop()
+    sp.speak(req(['乙乙乙']))
+    await settle()
+    h.synths[1]!.done()
+    await settle()
+    expect(h.plays).toHaveLength(1)
+    h.plays[0]!.end()
+    await settle()
+    expect(h.plays).toHaveLength(2)
+    h.plays[1]!.end()
+    await settle()
+  })
+
+  it('被取消的一段即使播放进程正常结束，也不清掉最近错误', async () => {
+    const h = harness({ auto: false, playIgnoresAbort: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['丁丁丁']))
+    await settle()
+    h.synths[0]!.fail(new TtsError('timeout'))
+    await settle()
+    expect(sp.lastError()?.kind).toBe('timeout')
+    sp.speak(req(['甲甲甲']))
+    await settle()
+    h.synths[1]!.done()
+    await settle()
+    const stopped = sp.stop()
+    h.plays[0]!.end()
+    await stopped
+    expect(sp.lastError()?.kind).toBe('timeout')
+  })
+
   it('stopIfOwner：只停属于该来源的', async () => {
     const h = harness({ auto: false })
     const sp = new Speaker(h.deps)
@@ -441,7 +518,7 @@ describe('朗读命令：不能朗读的情况', () => {
   it('角色没有音色：提示到筹备模式配声音', async () => {
     const w = await world({ voice: false })
     const r = await w.invoke('你好呀朋友')
-    expect(r.text).toContain('筹备')
+    expect(r.text).toContain('「酒馆:筹备」')
     expect(r.text).toContain('声音')
     expect(w.speaker.owner()).toBeNull()
   })
@@ -585,7 +662,7 @@ describe('自动朗读', () => {
 
     await setChatAutoRead(tavernDir, w.chatId, true)
     w.auto.setFlag('s1', true)
-    w.auto.onStep('s1', 1)
+    w.auto.onStep('s1', undefined, 1)
     w.auto.onReply('s1', REPLY)
     await w.auto.onTurnStopping(agentOf(w), 2)
     await settle()
@@ -599,7 +676,7 @@ describe('自动朗读', () => {
     await w.auto.onTurnStopping(agentOf(w), 1)
     expect(w.h.synths).toHaveLength(0)
     await w.invoke('开')
-    w.auto.onStep('s1', 1)
+    w.auto.onStep('s1', undefined, 1)
     w.auto.onReply('s1', REPLY)
     await w.auto.onTurnStopping(agentOf(w), 2)
     await settle()
@@ -611,7 +688,7 @@ describe('自动朗读', () => {
     w.auto.setFlag('s1', true)
     w.auto.onReply('s1', '被打断的那一轮说了很长的一段话。')
     // 该轮没有 turn-stopping；用户发来新消息，开始下一轮
-    w.auto.onStep('s1', 1)
+    w.auto.onStep('s1', undefined, 1)
     w.auto.onReply('s1', REPLY)
     await w.auto.onTurnStopping(agentOf(w), 2)
     await settle()
@@ -667,7 +744,7 @@ describe('自动朗读', () => {
   it('拿不到轮次号时按用户消息划分"同一轮"', async () => {
     const w = await world({ auto: false })
     w.auto.setFlag('s1', true)
-    w.auto.onStep('s1', 1)
+    w.auto.onStep('s1', undefined, 1)
     w.auto.onReply('s1', REPLY)
     await w.auto.onTurnStopping(agentOf(w), undefined)
     await settle()
@@ -677,6 +754,48 @@ describe('自动朗读', () => {
     await w.auto.onTurnStopping(agentOf(w), undefined)
     await settle()
     expect(w.h.plays[0]!.aborted).toBe(false)
+  })
+
+  it('同一轮两次收尾遇到慢检查：按提交顺序念，第一段在前', async () => {
+    const w = await world({ auto: true })
+    w.auto.setFlag('s1', true)
+    let release: () => void = () => undefined
+    w.env.probe.mockImplementationOnce(() => new Promise<void>((r) => { release = r }))
+    w.auto.onReply('s1', '这是先提交的第一段话，慢慢说。')
+    const a = w.auto.onTurnStopping(agentOf(w), 3)
+    await settle()
+    w.auto.onReply('s1', '这是补发后的第二段话，接着说。')
+    const b = w.auto.onTurnStopping(agentOf(w), 3)
+    await settle()
+    expect(w.h.synths).toHaveLength(0)
+    release()
+    await Promise.all([a, b])
+    await settle()
+    expect(w.h.synths.map((x) => x.text)).toEqual(['这是先提交的第一段话，慢慢说。', '这是补发后的第二段话，接着说。'])
+  })
+
+  it('轮次变了就清掉上一轮残留的回复，哪怕不是用户消息触发的新一轮', async () => {
+    const w = await world({ auto: true })
+    w.auto.setFlag('s1', true)
+    w.auto.onStep('s1', 1, 1)
+    w.auto.onReply('s1', '被停止的那一轮说了半截话。')
+    w.auto.onStep('s1', 1, 0) // 同一轮的后续步骤不清
+    w.auto.onStep('s1', 2, 0) // 新一轮，没有新的用户消息
+    w.auto.onReply('s1', REPLY)
+    await w.auto.onTurnStopping(agentOf(w), 2)
+    await settle()
+    expect(w.h.synths.map((s) => s.text).join('')).toBe(REPLY)
+  })
+
+  it('同一轮的后续步骤不清掉已提交的回复', async () => {
+    const w = await world({ auto: true })
+    w.auto.setFlag('s1', true)
+    w.auto.onStep('s1', 1, 1)
+    w.auto.onReply('s1', REPLY)
+    w.auto.onStep('s1', 1, 0)
+    await w.auto.onTurnStopping(agentOf(w), 1)
+    await settle()
+    expect(w.h.synths.map((s) => s.text).join('')).toBe(REPLY)
   })
 
   it('只有图片行的回复不念', async () => {
@@ -695,7 +814,7 @@ describe('自动朗读', () => {
     w.env.probe.mockRejectedValue(new TtsError('unreachable'))
     const skipLogs = () => (w.log.debug as ReturnType<typeof vi.fn>).mock.calls.filter((c) => String(c[0]).includes('自动朗读'))
     for (let i = 1; i <= 3; i++) {
-      w.auto.onStep('s1', 1)
+      w.auto.onStep('s1', undefined, 1)
       w.auto.onReply('s1', REPLY)
       await w.auto.onTurnStopping(agentOf(w), i)
     }
@@ -703,7 +822,7 @@ describe('自动朗读', () => {
     w.env.probe.mockResolvedValue(undefined)
     w.env.findPlayer.mockResolvedValue(null)
     for (let i = 4; i <= 5; i++) {
-      w.auto.onStep('s1', 1)
+      w.auto.onStep('s1', undefined, 1)
       w.auto.onReply('s1', REPLY)
       await w.auto.onTurnStopping(agentOf(w), i)
     }
@@ -723,11 +842,11 @@ describe('自动朗读', () => {
     await settle()
     w.h.synths[0]!.done()
     await settle()
-    w.auto.onStep('s2', 1)
+    w.auto.onStep('s2', undefined, 1)
     expect(w.speaker.owner()).toBe('s1')
-    w.auto.onStep('s1', 0) // 没有新的用户消息
+    w.auto.onStep('s1', undefined, 0) // 没有新的用户消息
     expect(w.speaker.owner()).toBe('s1')
-    w.auto.onStep('s1', 1)
+    w.auto.onStep('s1', undefined, 1)
     await settle()
     expect(w.h.plays[0]!.aborted).toBe(true)
     expect(w.speaker.owner()).toBeNull()
@@ -741,7 +860,7 @@ describe('自动朗读', () => {
     w.auto.onReply('s1', REPLY)
     const done = w.auto.onTurnStopping(agentOf(w), 1)
     await settle()
-    w.auto.onStep('s1', 1)
+    w.auto.onStep('s1', undefined, 1)
     release()
     await done
     await settle()

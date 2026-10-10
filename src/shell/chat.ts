@@ -802,7 +802,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
       drawTurns.onStep(payload.agent.id, payload.turn, newUsers)
       drawEcho.onStep(payload.agent.id, payload.turn, newUsers)
-      speaking.auto.onStep(payload.agent.id, newUsers)
+      speaking.auto.onStep(payload.agent.id, payload.turn, newUsers)
       await onChatStep(memoryEnv, payload.agent, payload.turn, newUsers)
       return next()
     })

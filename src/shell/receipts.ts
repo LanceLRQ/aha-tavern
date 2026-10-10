@@ -584,7 +584,7 @@ export function speakBlockReason(block: SpeakBlock, theme: Theme): string {
     case 'starting':
       return '语音服务还在启动中，稍后再试'
     case 'no-voice':
-      return `这个${theme.concept('character')}还没有声音，请到筹备模式给它配声音`
+      return `这个${theme.concept('character')}还没有声音，请到「${MODE_LABEL.setup}」给它配声音`
     case 'no-player':
       return '没有找到播放器（macOS 需要 afplay，其他系统需要 ffplay、paplay 或 aplay 之一）'
   }

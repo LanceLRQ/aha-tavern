@@ -43,6 +43,8 @@ export interface SpeakerDeps {
   /** 删除；文件不存在不算错。 */
   removeFile(file: string): Promise<void>
   now(): number
+  /** 换段时最多等上一段收尾多久（毫秒），默认 2000。 */
+  settleLimitMs?: number
   log: Pick<Log, 'debug' | 'warn'>
 }
 
@@ -81,6 +83,8 @@ interface Run {
 export class Speaker {
   private current: Run | null = null
   private lastErr: SpeakError | null = null
+  /** 最近开始的那一段的收尾；新的一段在第一次播放前等它（被顶掉或停下的旧段进程可能还没退） */
+  private lastFinished: Promise<void> = Promise.resolve()
 
   constructor(private readonly deps: SpeakerDeps) {}
 
@@ -94,7 +98,8 @@ export class Speaker {
     }
     this.current = run
     prev?.ctl.abort()
-    run.finished = this.loop(run)
+    run.finished = this.loop(run, this.lastFinished)
+    this.lastFinished = run.finished
   }
 
   /** 同一来源正在念时追加到队尾，否则等同于 speak。 */
@@ -132,13 +137,29 @@ export class Speaker {
     return this.lastErr
   }
 
-  private async loop(run: Run): Promise<void> {
+  /** 等上一段收尾完成，最多等 settleLimitMs，免得它卡住时这一段永远不出声。 */
+  private async waitPrevious(before: Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const limit = new Promise<void>((resolve) => { timer = setTimeout(resolve, this.deps.settleLimitMs ?? 2000) })
+    try {
+      await Promise.race([before, limit])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private async loop(run: Run, before: Promise<void>): Promise<void> {
+    let waited = false
     try {
       this.prefetch(run, true)
       while (run.ahead) {
         const file = await run.ahead
         run.ahead = null
         this.prefetch(run, true)
+        if (!waited) {
+          waited = true
+          await this.waitPrevious(before)
+        }
         run.playing = true
         try {
           await this.deps.play(run.req.player, file, { signal: run.ctl.signal })
@@ -149,7 +170,7 @@ export class Speaker {
         await this.drop(file)
         this.prefetch(run, true)
       }
-      this.lastErr = null
+      if (!run.ctl.signal.aborted) this.lastErr = null
     } catch (e) {
       if (!run.ctl.signal.aborted) this.fail(e)
     } finally {
@@ -279,6 +300,10 @@ interface SessionSpeech {
   userSeq: number
   /** 最近一次朗读所属的轮次 */
   lastKey?: string
+  /** pre-step 最近见到的轮次号 */
+  turn?: number
+  /** 轮次收尾的处理链：同一会话的处理按到达顺序串行 */
+  chain: Promise<void>
 }
 
 /**
@@ -296,7 +321,7 @@ export class AutoReader {
   private state(id: string): SessionSpeech {
     let s = this.sessions.get(id)
     if (!s) {
-      s = { pending: [], skipped: new Set(), userSeq: 0 }
+      s = { pending: [], skipped: new Set(), userSeq: 0, chain: Promise.resolve() }
       this.sessions.set(id, s)
     }
     return s
@@ -307,10 +332,17 @@ export class AutoReader {
     this.state(session).pending.push(text)
   }
 
-  /** pre-step：见到新的用户消息就清掉残留的回复，并停下属于这个会话的朗读。 */
-  onStep(session: string, newUserMessages: number): void {
-    if (newUserMessages <= 0) return
+  /**
+   * pre-step：轮次变了（上一轮被停止，回复没经过收尾）就清掉残留的回复；
+   * 见到新的用户消息也清，并停下属于这个会话的朗读。
+   */
+  onStep(session: string, turn: unknown, newUserMessages: number): void {
     const s = this.state(session)
+    if (typeof turn === 'number') {
+      if (s.turn !== undefined && s.turn !== turn) s.pending = []
+      s.turn = turn
+    }
+    if (newUserMessages <= 0) return
     s.userSeq += 1
     s.pending = []
     void this.env.speaker.stopIfOwner(session)
@@ -330,14 +362,20 @@ export class AutoReader {
    * agent/turn-stopping：取走这一轮已提交的回复，开着自动朗读且能念时交给朗读队列。
    * 同一轮第二次收尾（补发图片之后）只会拿到新提交的那段，追加到正在念的后面。从不拒绝。
    */
-  async onTurnStopping(agent: HostAgent, turn: unknown): Promise<void> {
+  onTurnStopping(agent: HostAgent, turn: unknown): Promise<void> {
     const s = this.sessions.get(agent.id)
-    if (!s || s.pending.length === 0) return
+    if (!s || s.pending.length === 0) return Promise.resolve()
+    // 取走回复要同步完成，保证提交顺序；检查可能很慢，处理再按会话串行，免得后一批抢在前一批前面开口
     const text = s.pending.splice(0).join('\n\n')
     // 'all' 取字是 'lines' 的超集：连它都念不出东西（比如只有图片行）就不必再做任何检查
-    if (planSpeech(text, { mode: 'all' }).sentences.length === 0) return
+    if (planSpeech(text, { mode: 'all' }).sentences.length === 0) return Promise.resolve()
     const seq = s.userSeq
     const key = typeof turn === 'number' ? `t${turn}` : `u${seq}`
+    s.chain = s.chain.then(() => this.speakTurn(agent, s, text, seq, key))
+    return s.chain
+  }
+
+  private async speakTurn(agent: HostAgent, s: SessionSpeech, text: string, seq: number, key: string): Promise<void> {
     try {
       const target = s.target ?? (await this.resolveTarget(agent))
       if (!target) return
@@ -393,7 +431,10 @@ export function parseSpeakArgs(args: string): SpeakArgs {
   }
 }
 
-/** 这场聊天里最近一条取字后非空的角色回复；没有则 null。 */
+/**
+ * 这场聊天里最近一条取字后非空的角色回复；没有则 null。
+ * 会把整份原始记录读进内存，但只在手动 `/aha 朗读` 不带参数时触发，可以接受。
+ */
 async function latestPlan(target: ChatTarget, mode: 'lines' | 'all'): Promise<SpeechPlan | null> {
   const { records } = await readRecords(target.tavernDir, target.chatId)
   for (let i = records.length - 1; i >= 0; i--) {
