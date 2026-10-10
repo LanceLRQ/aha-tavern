@@ -302,9 +302,9 @@ function checkPauseRelation(doc: YAML.Document, touched: (k: string) => boolean)
     const hit = pair.filter(touched)
     for (const k of hit.length > 0 ? hit : pair.filter((k) => touched(k))) errors[k] = msg
   }
-  if (min > pause) mark(['pauseMinSeconds', 'pauseSeconds'], '最短停顿不能大于基准停顿')
-  if (max < pause) mark(['pauseMaxSeconds', 'pauseSeconds'], '最长停顿不能小于基准停顿')
-  throw new ServicesEditError('invalid', '停顿的大小关系不对：最短 ≤ 基准 ≤ 最长', errors)
+  if (min > pause) mark(['pauseMinSeconds', 'pauseSeconds'], '最短停顿不能大于段间停顿')
+  if (max < pause) mark(['pauseMaxSeconds', 'pauseSeconds'], '最长停顿不能小于段间停顿')
+  throw new ServicesEditError('invalid', '停顿的大小关系不对：最短停顿 ≤ 段间停顿 ≤ 最长停顿', errors)
 }
 
 // ---------- 读给表单用的原始取值 ----------
