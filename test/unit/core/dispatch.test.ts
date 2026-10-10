@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { COMMAND_IDS, dispatch, type CommandId } from '../../../src/core/dispatch'
 
-// 独立抄写规格 §4 的表（列顺序：init card me world import start remember reroll speak doctor）
+// 独立抄写规格 §4 的表（列顺序：init card me world import start remember reroll speak doctor voice）
 // R=可用 I=init-first S=go-setup C=go-chat N=new-session A=already-tavern M=meaningless U=unavailable
-const ORDER: CommandId[] = ['init', 'card', 'me', 'world', 'import', 'start', 'remember', 'reroll', 'speak', 'doctor']
+const ORDER: CommandId[] = ['init', 'card', 'me', 'world', 'import', 'start', 'remember', 'reroll', 'speak', 'doctor', 'voice']
 const SHEET: Record<string, string> = {
-  'setup/outside':    'R I I I I C M U U R',
-  'setup/preparing':  'A R R R R C M U U R',
-  'chat/outside':     'S S S S S S M U U R',
-  'chat/picking':     'S S S S S R M U U R',
-  'chat/chatting':    'S S S S S N R R U R',
+  'setup/outside':    'R I I I I C M U U R R',
+  'setup/preparing':  'A R R R R C M U U R R',
+  'chat/outside':     'S S S S S S M U U R R',
+  'chat/picking':     'S S S S S R M U U R R',
+  'chat/chatting':    'S S S S S N R R U R R',
 }
 const REASON: Record<string, string> = {
   I: 'init-first', S: 'go-setup', C: 'go-chat', N: 'new-session', A: 'already-tavern', M: 'meaningless', U: 'unavailable',

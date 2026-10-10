@@ -16,6 +16,8 @@ describe('parseSubcommand', () => {
     expect(parseSubcommand('说话')).toEqual({ kind: 'command', id: 'speak', args: '' })
     expect(parseSubcommand('世界观')).toEqual({ kind: 'command', id: 'world', args: '' })
     expect(parseSubcommand('自检')).toEqual({ kind: 'command', id: 'doctor', args: '' })
+    expect(parseSubcommand('语音 启动')).toEqual({ kind: 'command', id: 'voice', args: '启动' })
+    expect(parseSubcommand('VOICE stop')).toEqual({ kind: 'command', id: 'voice', args: 'stop' })
   })
 
   it('同义写法与主名等价', () => {

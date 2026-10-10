@@ -389,3 +389,140 @@ export function importNothingReceipt(theme: Theme, sourceName: string, brokenCou
   const broken = brokenCount > 0 ? `（另有 ${brokenCount} 张${theme.concept('card')}读不出来）` : ''
   return guide(`「${sourceName}」里没有可以${theme.action('import')}的${theme.concept('character')}或${theme.concept('profile')}${broken}。`)
 }
+
+// ---------- 语音命令的回执 ----------
+
+export const VOICE_USAGE_TEXT = '用法：`/aha 语音 启动`、`/aha 语音 停止`、`/aha 语音 状态`（不带参数等同状态）。'
+export const VOICE_CARD_BUSY_TEXT = '有一张卡片还没回答，先处理它再启动语音服务。'
+
+export function voiceNotConfiguredReceipt(): Reply {
+  return guide('还没有配置语音服务，配置方法见 docs/voice-setup.md。')
+}
+
+export function voiceUserInfoReceipt(): Reply {
+  return guide('语音服务地址里不能带用户名或密码，请去掉后再试。')
+}
+
+export function voiceAlreadyRunningReceipt(ours: boolean): Reply {
+  return guide(ours ? '语音服务已在运行。' : '语音服务已在运行（不是由插件启动的）。')
+}
+
+export function voiceSelfLaunchReceipt(why: 'launch' | 'platform'): Reply {
+  return guide(
+    why === 'launch'
+      ? '配置里的 launch 不是 mlx，插件不会代为启动，请自己启动语音服务。'
+      : '这台机器不是苹果芯片的 Mac，插件不能代为启动，请自己启动语音服务。',
+  )
+}
+
+export function voiceNoUvReceipt(): Reply {
+  return guide('没有找到 uv，请先安装 uv（见 docs/voice-setup.md）再启动。')
+}
+
+export function voiceBusyReceipt(): Reply {
+  return guide('语音服务正在启动中，请稍候。')
+}
+
+export function voiceNeedsCardReceipt(): Reply {
+  return guide('启动前要先安装运行环境或下载模型，需要你确认，请在界面里操作。')
+}
+
+export function voiceDeclinedReceipt(): Reply {
+  return guide('已取消，什么都没有安装。')
+}
+
+export function voiceCancelledReceipt(): Reply {
+  return guide('语音服务的启动已取消。')
+}
+
+export function voiceStartedReceipt(model: string, modelsDir: string): Reply {
+  return guide(`语音服务已启动，模型 ${model}，权重目录 ${modelsDir}。`)
+}
+
+/** 确认卡片：要装的环境与要下的模型。已装好、已下载的项传 null 不列出。 */
+export interface VoiceCardInfo {
+  env: boolean
+  model: { name: string; size: string } | null
+  modelsDir: string
+  hfEndpoint: string | undefined
+}
+
+export const VOICE_ENV_SIZE = '约 0.5GB'
+export const VOICE_MEMORY_NOTE = '加载模型时内存占用峰值约 9GB。'
+export const VOICE_CARD_HEADER = '语音服务'
+export const VOICE_CARD_QUESTION = '启动语音服务前需要先准备下面这些，现在开始吗？'
+export const VOICE_OPT_GO = '开始'
+export const VOICE_OPT_CANCEL = '取消'
+
+export function voiceCardMarkdown(c: VoiceCardInfo): string {
+  const lines: string[] = []
+  if (c.env) lines.push(`- 运行环境（${VOICE_ENV_SIZE}）`)
+  if (c.model) lines.push(`- 模型 ${c.model.name}（${c.model.size}）`)
+  lines.push(`- 存放目录：${c.modelsDir}`)
+  lines.push(`- 下载源：${c.hfEndpoint ?? '官方'}`)
+  lines.push('', VOICE_MEMORY_NOTE)
+  return lines.join('\n')
+}
+
+const INSTALL_FAIL: Record<string, string> = {
+  network: '安装运行环境时网络不通，请检查网络后重试。',
+  unsupported: '这台机器不是苹果芯片的 Mac，插件不能代为安装。',
+  'no-uv': '没有找到 uv，请先安装 uv（见 docs/voice-setup.md）。',
+  failed: '安装运行环境失败，详情见语音目录下的 server.log。',
+}
+
+export function voiceInstallFailedReceipt(kind: string): Reply {
+  return fail(INSTALL_FAIL[kind] ?? INSTALL_FAIL.failed!)
+}
+
+const START_FAIL: Record<string, string> = {
+  unsupported: '这台机器不是苹果芯片的 Mac，插件不能代为启动。',
+  'not-installed': '运行环境还没装好，请重新启动一次。',
+  occupied: '端口已被别的服务占用（不是由插件启动的），请换一个端口或先关掉它。',
+  timeout: '等待语音服务启动超时，详情见语音目录下的 server.log。',
+  exited: '语音服务启动后马上退出了，详情见语音目录下的 server.log。',
+  failed: '语音服务启动失败，详情见语音目录下的 server.log。',
+}
+
+export function voiceStartFailedReceipt(kind: string): Reply {
+  return fail(START_FAIL[kind] ?? START_FAIL.failed!)
+}
+
+const WARMUP_FAIL: Record<string, string> = {
+  unreachable: '服务连不上',
+  timeout: '等待超时',
+  'bad-response': '服务返回了无法使用的结果',
+  other: '未知原因',
+}
+
+export function voiceWarmupFailedReceipt(kind: string): Reply {
+  return fail(`语音服务已启动，但模型加载失败：${WARMUP_FAIL[kind] ?? WARMUP_FAIL.other}。详情见语音目录下的 server.log。`)
+}
+
+export function voiceStopReceipt(status: 'stopped' | 'not-ours' | 'not-running'): Reply {
+  switch (status) {
+    case 'stopped':
+      return guide('语音服务已停止。')
+    case 'not-ours':
+      return guide('这是外部启动的服务，插件不会停它。')
+    case 'not-running':
+      return guide('语音服务没有在运行。')
+  }
+}
+
+export interface VoiceStatusInfo {
+  reachable: boolean
+  ours: boolean
+  busy: boolean
+  model: string
+}
+
+export function voiceStatusReceipt(s: VoiceStatusInfo): Reply {
+  if (!s.reachable) return guide(s.busy ? '语音服务：正在启动中。' : '语音服务：未启动。')
+  const who = s.ours ? '由插件启动' : '外部启动'
+  return guide(`语音服务：已在运行（${who}），模型 ${s.model}${s.busy ? '，正在启动中' : ''}。`)
+}
+
+export function voiceStatusNotConfiguredReceipt(): Reply {
+  return guide('语音服务：未配置（见 docs/voice-setup.md）。')
+}

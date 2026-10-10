@@ -38,6 +38,7 @@ export const SUBCOMMANDS: readonly Subcommand[] = [
   sub('reroll', ['重新生图', '重掷'], '上一张图重新生成', '[修改词]'),
   sub('speak', ['说话', '朗读'], '念出来', '[文本]'),
   sub('doctor', ['自检'], '检查当前状态与外部服务'),
+  sub('voice', ['语音'], '启动、停止或查看语音服务', '[启动|停止|状态]'),
 ]
 
 export type ParsedSubcommand =
@@ -126,7 +127,7 @@ async function processCommand(
     }
     const d = dispatch(context.mode, context.state, parsed.id)
     if (!d.run) return dispatchReceipt(theme, d.reason, { label, outsideReason: context.outsideReason })
-    if (isReadonly(context.tavern) && parsed.id !== 'doctor') return readonlyReceipt(theme)
+    if (isReadonly(context.tavern) && parsed.id !== 'doctor' && parsed.id !== 'voice') return readonlyReceipt(theme)
     const handler = rt.handlers[parsed.id]
     if (!handler) return pendingReceipt(label)
     return await handler({ agent, services, rt, theme, context, args: parsed.args, label, steer, ...(signal ? { signal } : {}) })
