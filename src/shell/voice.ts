@@ -16,7 +16,7 @@ import { redactUrls } from './draw-doctor'
 import {
   VOICE_CARD_BUSY_TEXT, VOICE_CARD_HEADER, VOICE_CARD_QUESTION, VOICE_OPT_CANCEL, VOICE_OPT_GO, VOICE_USAGE_TEXT,
   voiceAlreadyRunningReceipt, voiceBusyReceipt, voiceCancelledReceipt, voiceCardMarkdown, voiceDeclinedReceipt,
-  voiceFailureReason, voiceInstallFailedReceipt, voiceLastFailedReceipt, voiceNeedsCardReceipt, voiceNoUvReceipt,
+  voiceEnvNotOursReceipt, voiceFailureReason, voiceInstallFailedReceipt, voiceLastFailedReceipt, voiceNeedsCardReceipt, voiceNoUvReceipt,
   voiceNotConfiguredReceipt, voiceProgressReceipt, voiceSelfLaunchReceipt, voiceStartedReceipt, voiceStartFailedReceipt,
   voiceStartingReceipt, voiceStatusNotConfiguredReceipt, voiceStatusReceipt, voiceStopReceipt, voiceUserInfoReceipt,
   voiceUnavailableReceipt, voiceWarmupFailedReceipt, type Reply, type VoiceStage,
@@ -282,7 +282,7 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
   }
 
   /** 用随包录音发一次很短的克隆合成，触发模型下载与加载。返回失败回执，成功为 null。 */
-  async function warmup(rt: Runtime, s: VoiceServiceSettings, launch: Launch): Promise<{ reply: Reply; outcome: Outcome } | null> {
+  async function warmup(rt: Runtime, s: VoiceServiceSettings, launch: Launch): Promise<{ reply: Reply; outcome: Outcome; kind: string } | null> {
     try {
       const ref = builtinVoice(rt)
       await ops.createClient(s.endpoint).synthesize(
@@ -295,8 +295,9 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
       const detail = e instanceof TtsError ? e.detail || e.message : (e as Error).message
       rt.log.warn(`语音预热失败（${kind}）：${redactUrls(detail)}`)
       // 后台任务不接宿主的取消信号，预热被取消只会来自"停止"命令或卸载
-      if (kind === 'cancelled' || launch.ctl.signal.aborted) return { reply: voiceCancelledReceipt(), outcome: { kind: 'cancelled' } }
+      if (kind === 'cancelled' || launch.ctl.signal.aborted) return { reply: voiceCancelledReceipt(), outcome: { kind: 'cancelled' }, kind }
       return {
+        kind,
         reply: voiceWarmupFailedReceipt(kind, s.modelsDir),
         outcome: { kind: 'failed', reason: voiceFailureReason('warmup', kind) },
       }
@@ -324,6 +325,9 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
         if (r.kind === 'cancelled') return end(voiceCancelledReceipt(), { kind: 'cancelled' })
         if (r.kind === 'busy') return end(voiceBusyReceipt(), { kind: 'failed', reason: voiceFailureReason('install', r.kind) })
         if (r.kind === 'no-uv') return end(voiceNoUvReceipt(), { kind: 'failed', reason: voiceFailureReason('install', r.kind) })
+        if (r.kind === 'env-not-ours') {
+          return end(voiceEnvNotOursReceipt(path.join(s.modelsDir, 'env')), { kind: 'failed', reason: voiceFailureReason('install', r.kind) })
+        }
         return end(voiceInstallFailedReceipt(r.kind), { kind: 'failed', reason: voiceFailureReason('install', r.kind) })
       }
     }
@@ -345,8 +349,9 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     let online = !plan.offline
     launch.phase = 'warmup'
     let failed = await warmup(rt, s, launch)
-    // 离线启动时快照不完整会让加载失败：停掉后联网重启，再预热一次（只补救一次）
-    if (failed?.outcome.kind === 'failed' && plan.offline && !signal.aborted) {
+    // 离线启动时快照不完整会让加载失败（服务返回异常）：停掉后联网重启，再预热一次（只补救一次）。
+    // 超时、连不上等不是快照问题，联网重试也无济于事，直接按原失败返回
+    if (failed?.outcome.kind === 'failed' && failed.kind === 'bad-response' && plan.offline && !signal.aborted) {
       rt.log.warn('离线加载模型失败，改为联网重启并重试一次')
       state.started = null
       await ops.stop(s, deps)
@@ -412,6 +417,8 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     if (!info.supported) return reply(voiceSelfLaunchReceipt('platform'))
     if (!info.uv) return reply(voiceNoUvReceipt())
     if (info.busy) return reply(voiceBusyReceipt())
+    // 安装会清空 env 位置：那里不是插件建的环境就在出卡片之前说清楚，免得用户点了"开始"才失败
+    if (!info.envInstalled && info.envForeign) return reply(voiceEnvNotOursReceipt(path.join(s.modelsDir, 'env')))
 
     const needModel = !info.modelDownloaded
     const card = !info.envInstalled || needModel

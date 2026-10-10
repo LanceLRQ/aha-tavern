@@ -69,11 +69,13 @@ export interface VoiceServerInfo {
   reachable: boolean
   /** 本目录上有安装或启动正在进行。 */
   busy: boolean
+  /** 运行环境没装好，且 env 位置上已有别的内容（不是插件建的虚拟环境），安装会被拒绝。 */
+  envForeign?: boolean
 }
 
 export type InstallResult =
   | { ok: true }
-  | { ok: false; kind: 'busy' | 'unsupported' | 'no-uv' | 'network' | 'cancelled' | 'failed'; detail: string }
+  | { ok: false; kind: 'busy' | 'unsupported' | 'no-uv' | 'network' | 'cancelled' | 'env-not-ours' | 'failed'; detail: string }
 
 export type StartResult =
   | { ok: true; pid: number; alreadyRunning: boolean }
@@ -199,6 +201,27 @@ async function envInstalled(modelsDir: string): Promise<boolean> {
   try {
     const v = JSON.parse(await fs.readFile(markerPath(modelsDir), 'utf8')) as { mlxAudio?: unknown }
     return v.mlxAudio === MLX_AUDIO_VERSION
+  } catch {
+    return false
+  }
+}
+
+/**
+ * env 位置上能不能放心交给 `uv venv --clear`：不存在、是空目录、或里面有 pyvenv.cfg（是虚拟环境）才行。
+ * 其余（有别的内容的目录、普通文件、读不了）一律当作不是插件建的，不去动它。
+ */
+async function envDirIsOurs(modelsDir: string): Promise<boolean> {
+  const dir = envDir(modelsDir)
+  let st
+  try {
+    st = await fs.lstat(dir)
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT'
+  }
+  if (!st.isDirectory()) return false
+  try {
+    const names = await fs.readdir(dir)
+    return names.length === 0 || names.includes('pyvenv.cfg')
   } catch {
     return false
   }
@@ -342,10 +365,12 @@ export async function inspect(
     findOwned(settings, deps),
     probeOk(settings, deps, PROBE_MS),
   ])
+  const envForeign = installed ? false : !(await envDirIsOurs(dir))
   return {
     supported: isApple(deps),
     uv,
     envInstalled: installed,
+    envForeign,
     modelDownloaded: downloaded,
     ...(wantSizes ? { sizes: { env: envSize, hf: hfSize } } : {}),
     owned: owned && { pid: owned.pid, port: owned.port, startedAt: owned.startedAt },
@@ -443,6 +468,8 @@ export async function install(
     const uv = await deps.which('uv')
     if (!uv) return { ok: false, kind: 'no-uv', detail: '' }
     await fs.mkdir(dir, { recursive: true })
+    // --clear 会清空目标：env 位置上不是插件建的东西就不动，也不执行任何命令
+    if (!(await envDirIsOurs(dir))) return { ok: false, kind: 'env-not-ours', detail: '' }
     await fs.rm(markerPath(dir), { force: true })
 
     let chain: Promise<void> = Promise.resolve()

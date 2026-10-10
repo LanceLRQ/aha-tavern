@@ -131,6 +131,7 @@ const logFile = () => path.join(dir, 'server.log')
 async function installEnvFiles(version = MLX_AUDIO_VERSION) {
   await fs.mkdir(path.join(dir, 'env', 'bin'), { recursive: true })
   await fs.writeFile(path.join(dir, 'env', 'bin', 'python'), '')
+  await fs.writeFile(path.join(dir, 'env', 'pyvenv.cfg'), 'home = /usr/bin')
   await fs.writeFile(path.join(dir, 'env.installed'), JSON.stringify({ mlxAudio: version }))
 }
 
@@ -552,6 +553,48 @@ describe('install', () => {
     expect(await fs.readFile(logFile(), 'utf8')).toContain('line two')
   })
 
+  describe('env 目录核对（uv venv --clear 会清空目标）', () => {
+    it('env 里有别的内容、没有 pyvenv.cfg：不执行任何命令，返回 env-not-ours，内容原样保留', async () => {
+      await fs.mkdir(path.join(dir, 'env', 'src'), { recursive: true })
+      await fs.writeFile(path.join(dir, 'env', 'src', 'a.txt'), 'mine')
+      const h = harness({ behave: (c) => ok(c) })
+      const r = await install(settings, h.deps)
+      expect(r).toMatchObject({ ok: false, kind: 'env-not-ours' })
+      expect(h.spawned).toHaveLength(0)
+      expect(await fs.readFile(path.join(dir, 'env', 'src', 'a.txt'), 'utf8')).toBe('mine')
+    })
+
+    it('env 是普通文件：同样拒绝', async () => {
+      await fs.writeFile(path.join(dir, 'env'), 'x')
+      const h = harness({ behave: (c) => ok(c) })
+      expect(await install(settings, h.deps)).toMatchObject({ ok: false, kind: 'env-not-ours' })
+      expect(h.spawned).toHaveLength(0)
+    })
+
+    it('env 不存在、为空、或带 pyvenv.cfg：继续', async () => {
+      const a = harness({ behave: (c) => ok(c) })
+      expect(await install(settings, a.deps)).toEqual({ ok: true })
+      await fs.rm(path.join(dir, 'env.installed'), { force: true })
+      await fs.mkdir(path.join(dir, 'env'), { recursive: true })
+      const b = harness({ behave: (c) => ok(c) })
+      expect(await install(settings, b.deps)).toEqual({ ok: true })
+      await fs.writeFile(path.join(dir, 'env', 'pyvenv.cfg'), 'home = /x')
+      await fs.writeFile(path.join(dir, 'env', 'other.txt'), 'x')
+      const c = harness({ behave: (ch) => ok(ch) })
+      expect(await install(settings, c.deps)).toEqual({ ok: true })
+      expect(c.spawned).toHaveLength(2)
+    })
+
+    it('inspect 在环境没装好且 env 里是别的内容时标出 envForeign', async () => {
+      await fs.mkdir(path.join(dir, 'env'), { recursive: true })
+      await fs.writeFile(path.join(dir, 'env', 'a.txt'), 'x')
+      const h = harness()
+      expect((await inspect(settings, h.deps, { sizes: false })).envForeign).toBe(true)
+      await fs.rm(path.join(dir, 'env'), { recursive: true })
+      expect((await inspect(settings, h.deps, { sizes: false })).envForeign).toBe(false)
+    })
+  })
+
   it('没有 uv', async () => {
     const h = harness({ uv: null })
     expect(await install(settings, h.deps)).toMatchObject({ ok: false, kind: 'no-uv' })
@@ -630,6 +673,7 @@ describe('install', () => {
   it('env 目录已存在、标记不存在：能走完安装', async () => {
     await fs.mkdir(path.join(dir, 'env', 'bin'), { recursive: true })
     await fs.writeFile(path.join(dir, 'env', 'bin', 'python'), '')
+    await fs.writeFile(path.join(dir, 'env', 'pyvenv.cfg'), 'home = /usr/bin')
     const h = harness({ behave: (c) => ok(c) })
     expect(await install(settings, h.deps)).toEqual({ ok: true })
     expect(h.spawned[0]!.args).toContain('--clear')

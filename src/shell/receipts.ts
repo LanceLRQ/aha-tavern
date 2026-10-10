@@ -485,6 +485,15 @@ const INSTALL_FAIL: Record<string, string> = {
   failed: '安装运行环境失败，详情见语音目录下的 server.log。',
 }
 
+/** env 位置上已有别的内容：安装会清空它，所以拒绝；envPath 是那个位置。 */
+export function voiceEnvNotOursText(envPath: string): string {
+  return `${envPath} 里已有别的内容，不是插件建的运行环境，请换一个权重目录或清空它。`
+}
+
+export function voiceEnvNotOursReceipt(envPath: string): Reply {
+  return fail(voiceEnvNotOursText(envPath))
+}
+
 export function voiceInstallFailedReceipt(kind: string): Reply {
   return fail(INSTALL_FAIL[kind] ?? INSTALL_FAIL.failed!)
 }
@@ -536,6 +545,7 @@ export function voiceLastFailedReceipt(reason: string, modelsDir: string): Reply
 
 const INSTALL_REASON: Record<string, string> = {
   network: '安装运行环境时网络不通', unsupported: '这台机器不是苹果芯片的 Mac', 'no-uv': '没有找到 uv', busy: '已有安装或启动在进行',
+  'env-not-ours': '权重目录的 env 里已有别的内容，不是插件建的运行环境',
 }
 const START_REASON: Record<string, string> = {
   unsupported: '这台机器不是苹果芯片的 Mac', 'not-installed': '运行环境没装好', occupied: '端口被别的服务占用',

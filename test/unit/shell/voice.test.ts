@@ -189,6 +189,22 @@ describe('启动：不起进程的情况', () => {
     expect((await run('启动')).text).toBe('语音服务正在启动中，请稍候。')
     noProcess()
   })
+  it('env 位置上已有别的内容：规划阶段就回说明，不弹卡片、不安装', async () => {
+    ops.inspect.mockResolvedValue(info({ envInstalled: false, envForeign: true }))
+    const r = await run('启动')
+    expect(r.kind).toBe('error')
+    expect(r.text).toBe(`${DIR}/env 里已有别的内容，不是插件建的运行环境，请换一个权重目录或清空它。`)
+    noProcess()
+  })
+  it('安装时才发现 env 不是插件建的（别处改了目录）：同样的说明，记为失败', async () => {
+    ops.install.mockResolvedValue({ ok: false, kind: 'env-not-ours', detail: '' })
+    ops.inspect.mockResolvedValue(info({ envInstalled: false }))
+    pick(VOICE_OPT_GO)
+    const r = await run('启动')
+    expect(r.text).toBe(`${DIR}/env 里已有别的内容，不是插件建的运行环境，请换一个权重目录或清空它。`)
+    expect(ops.start).not.toHaveBeenCalled()
+    expect((await run('状态')).text).toContain('上次启动失败')
+  })
   it('需要安装但没有提问服务：不启动，说明要在界面里操作', async () => {
     askFn = undefined
     ops.inspect.mockResolvedValue(info({ envInstalled: false }))
@@ -636,6 +652,14 @@ describe('离线加载失败后联网重试一次', () => {
     await run('停止')
     await vi.waitFor(() => expect(state.launching).toBeNull())
     expect(ops.start).toHaveBeenCalledTimes(1)
+    expect(synth).toHaveBeenCalledTimes(1)
+  })
+  it.each([['timeout'], ['unreachable'], ['other']] as const)('预热失败种类是 %s：不补救，直接按原失败返回', async (kind) => {
+    synth.mockRejectedValue(new TtsError(kind, 'x'))
+    const r = await run('启动')
+    expect(r.kind).toBe('error')
+    expect(ops.start).toHaveBeenCalledTimes(1)
+    expect(ops.stop).not.toHaveBeenCalled()
     expect(synth).toHaveBeenCalledTimes(1)
   })
   it('本来就是联网启动（需要下载）：预热失败不补救', async () => {
