@@ -458,6 +458,8 @@ export interface VoiceCardInfo {
   model: { name: string; size: string } | null
   modelsDir: string
   hfEndpoint: string | undefined
+  /** 本实例在旧配置下启动的服务还在运行，开始后会先停掉它。 */
+  stopsOld?: boolean
 }
 
 export const VOICE_ENV_SIZE = '约 0.5GB'
@@ -474,6 +476,7 @@ export function voiceCardMarkdown(c: VoiceCardInfo): string {
   lines.push(`- 存放目录：${c.modelsDir}`)
   // 下载源只对模型下载有意义；只装运行环境时走的是 PyPI，不列
   if (c.model) lines.push(`- 下载源：${c.hfEndpoint ?? '官方'}`)
+  if (c.stopsOld) lines.push('- 会先停掉正在运行的旧语音服务')
   lines.push('', VOICE_MEMORY_NOTE)
   return lines.join('\n')
 }

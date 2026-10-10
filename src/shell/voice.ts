@@ -313,6 +313,7 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
   /** 后台任务：install → start → 预热。结果写进 launch.outcome，返回最终回执。 */
   async function runLaunch(
     rt: Runtime, s: VoiceServiceSettings, launch: Launch, plan: { install: boolean; offline: boolean },
+    prevLaunching: VoiceServiceSettings | null,
   ): Promise<Reply> {
     const deps = rt.voiceServerDeps()
     const signal = launch.ctl.signal
@@ -320,6 +321,9 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
       launch.outcome = outcome
       return reply
     }
+    // 已经确认、占位也有了：先停掉旧配置下的服务（和别处的进行中启动），再装、再起
+    await stopRecorded(rt, s, prevLaunching)
+    if (signal.aborted) return end(voiceCancelledReceipt(), { kind: 'cancelled' })
     if (plan.install) {
       launch.phase = 'install'
       const r = await ops.install(s, deps, {
@@ -390,8 +394,9 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
       done: Promise.resolve({ kind: 'success', text: '' }),
     }
     launches.set(s.modelsDir, launch)
+    const prevLaunching = state.launching
     state.launching = s
-    launch.done = runLaunch(rt, s, launch, plan)
+    launch.done = runLaunch(rt, s, launch, plan, prevLaunching)
       .catch((e): Reply => {
         // 后台任务里的异常不能变成未处理的拒绝；日志本身出错也不能让 done 拒绝
         try {
@@ -413,9 +418,10 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
    * 本实例记着的服务（和进行中的启动）与给定配置不是同一个（用户改了端口或权重目录）：
    * 按记下的 settings 与 pid 把它停掉，进程号对不上就只清标记。返回是否真的停了什么。
    */
-  async function stopRecorded(rt: Runtime, s: VoiceServiceSettings): Promise<boolean> {
+  async function stopRecorded(
+    rt: Runtime, s: VoiceServiceSettings, launching: VoiceServiceSettings | null = state.launching,
+  ): Promise<boolean> {
     let acted = false
-    const launching = state.launching
     if (launching && !sameService(launching, s)) {
       abortLaunch(launching.modelsDir)
       await launches.get(launching.modelsDir)?.done
@@ -435,10 +441,18 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     return acted || r.status === 'stopped'
   }
 
+  /** 本实例记着的、与给定配置不是同一个、且进程还是当时那个的服务；只读，没有副作用。 */
+  async function liveStale(rt: Runtime, s: VoiceServiceSettings): Promise<VoiceServiceSettings | null> {
+    const old = state.started
+    if (!old || sameService(old.settings, s)) return null
+    const cur = await ops.inspect(old.settings, rt.voiceServerDeps(), { sizes: false })
+    return cur.owned?.pid === old.pid ? old.settings : null
+  }
+
   async function planStart(rt: Runtime, s: VoiceServiceSettings): Promise<StartPlan> {
     const reply = (r: Reply): StartPlan => ({ kind: 'reply', reply: r })
-    // 改过端口或权重目录后，旧配置下启动的服务没人管了：先停掉它，再按新配置走
-    await stopRecorded(rt, s)
+    // 规划阶段不停任何东西：只认出本实例在旧配置下启动、还活着的服务，真正停它在确认之后的启动阶段
+    const stale = await liveStale(rt, s)
     // 再次启动前清掉上次的结果
     const prev = launches.get(s.modelsDir)
     if (prev?.finished) launches.delete(s.modelsDir)
@@ -446,7 +460,9 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     const running = launches.get(s.modelsDir)
     if (running && !running.finished) return reply(voiceBusyReceipt())
     const info = await ops.inspect(s, deps, { sizes: false })
-    if (info.reachable) return reply(voiceAlreadyRunningReceipt(info.owned !== null))
+    // 旧服务占着同一个端口时，新配置下探测到的就是它，不是外部服务
+    const oldAnswers = stale !== null && stale.port === s.port
+    if (info.reachable && !oldAnswers) return reply(voiceAlreadyRunningReceipt(info.owned !== null))
     if (s.launch !== 'mlx') return reply(voiceSelfLaunchReceipt('launch'))
     if (!info.supported) return reply(voiceSelfLaunchReceipt('platform'))
     if (!info.uv) return reply(voiceNoUvReceipt())
@@ -461,6 +477,7 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
           model: needModel ? { name: modelLabel(s), size: MODEL_SIZE[s.model] ?? '大小未知' } : null,
           modelsDir: s.modelsDir,
           hfEndpoint: s.hfEndpoint ? redactUrls(s.hfEndpoint) : undefined,
+          stopsOld: stale !== null,
         })
       : null
     // 权重已在本地时让服务离线启动，免得去查连不上的仓库

@@ -692,6 +692,57 @@ describe('改了端口或权重目录后，旧服务由记着的 settings 与 pi
     expect(state.started?.pid).toBe(9)
     expect(state.started?.settings.modelsDir).toBe(DIR)
   })
+  it('规划后点取消：旧服务一个字节都没动（stop 没被调用，标记还在）', async () => {
+    wire(7)
+    ops.inspect.mockImplementation(async (st: VoiceServiceSettings) =>
+      (st.modelsDir === '/old/voice' ? oldOwned(7) : info({ envInstalled: false })))
+    pick(VOICE_OPT_CANCEL)
+    const r = await run('启动')
+    expect(r.text).toContain('已取消')
+    expect(ops.stop).not.toHaveBeenCalled()
+    expect(ops.install).not.toHaveBeenCalled()
+    expect(ops.start).not.toHaveBeenCalled()
+    expect(state.started?.pid).toBe(7)
+  })
+  it('规划后确认：卡片写明会先停旧的；确认后先 stop 旧的，再 install、再 start 新的', async () => {
+    wire(7)
+    ops.inspect.mockImplementation(async (st: VoiceServiceSettings) =>
+      (st.modelsDir === '/old/voice' ? oldOwned(7) : info({ envInstalled: false })))
+    pick(VOICE_OPT_GO)
+    const order: string[] = []
+    ops.stop.mockImplementation(async (st: VoiceServiceSettings) => (order.push(`stop:${st.modelsDir}`), { status: 'stopped', forced: false }))
+    ops.install.mockImplementation(async () => (order.push('install'), { ok: true }))
+    ops.start.mockImplementation(async () => (order.push('start'), { ok: true, pid: 9, alreadyRunning: false }))
+    await run('启动')
+    expect(askFn!.mock.calls[0]![0].questions[0].detail).toContain('会先停掉正在运行的旧语音服务')
+    expect(order).toEqual(['stop:/old/voice', 'install', 'start'])
+    expect(state.started?.pid).toBe(9)
+  })
+  it('端口不变只改目录：新配置下探测到的是旧服务，不能当外部服务；确认后先停旧的再起新的', async () => {
+    const OLD_SAME_PORT = settings({ modelsDir: '/old/voice' })
+    state.started = { settings: OLD_SAME_PORT, pid: 7 }
+    ops.inspect.mockImplementation(async (st: VoiceServiceSettings) =>
+      (st.modelsDir === '/old/voice'
+        ? info({ reachable: true, owned: { pid: 7, port: 18123, startedAt: 1 } })
+        : info({ reachable: true, envInstalled: false })))
+    pick(VOICE_OPT_GO)
+    const order: string[] = []
+    ops.stop.mockImplementation(async (st: VoiceServiceSettings) => (order.push(`stop:${st.modelsDir}`), { status: 'stopped', forced: false }))
+    ops.start.mockImplementation(async (st: VoiceServiceSettings) => (order.push(`start:${st.modelsDir}`), { ok: true, pid: 9, alreadyRunning: false }))
+    const r = await run('启动')
+    expect(r.text).not.toContain('已在运行')
+    expect(order).toEqual(['stop:/old/voice', `start:${DIR}`])
+  })
+  it('端口不变只改目录、取消：同样不停', async () => {
+    state.started = { settings: settings({ modelsDir: '/old/voice' }), pid: 7 }
+    ops.inspect.mockImplementation(async (st: VoiceServiceSettings) =>
+      (st.modelsDir === '/old/voice'
+        ? info({ reachable: true, owned: { pid: 7, port: 18123, startedAt: 1 } })
+        : info({ reachable: true, envInstalled: false })))
+    pick(VOICE_OPT_CANCEL)
+    await run('启动')
+    expect(ops.stop).not.toHaveBeenCalled()
+  })
   it('旧标记里的进程号对不上（已不是那个进程）：不停，只清标记', async () => {
     state.started = { settings: OLD, pid: 7 }
     ops.inspect.mockImplementation(async (st: VoiceServiceSettings) => (st.modelsDir === '/old/voice' ? oldOwned(8) : info()))
