@@ -11,7 +11,7 @@ import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
 import { VOICE_OPT_CANCEL, VOICE_OPT_GO } from '../../../src/shell/receipts'
 import {
   BUILTIN_VOICE_TEXT, START_WAIT_MS, abortLaunch, builtinVoice, createVoiceHandler, installVoice, parseVoiceArgs,
-  launchSnapshot, resetLaunchesForTest, startServiceHeld, whichOnPath, type VoiceInstanceState, type VoiceOps,
+  launchSnapshot, resetLaunchesForTest, startServiceHeld, whichOnPath, lastStartOffline, restartVoiceService, type VoiceInstanceState, type VoiceOps,
 } from '../../../src/shell/voice'
 
 const MODEL_06 = 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit'
@@ -861,5 +861,68 @@ describe('startServiceHeld：调用方已持有同会话卡片队列', () => {
   it('没有登记 voice 处理函数：回执说明，不抛错', async () => {
     const r = await heldRun(mkInv(''))
     expect(r.kind).toBe('error')
+  })
+})
+
+describe('记录最近一次启动的离线方式', () => {
+  it('没启动过为 undefined；启动后记下 offline；联网重试后记 false', async () => {
+    expect(lastStartOffline(DIR)).toBeUndefined()
+    await run('启动')
+    expect(lastStartOffline(DIR)).toBe(true)
+  })
+  it('离线预热失败改联网重启后记 false', async () => {
+    synth.mockRejectedValueOnce(new TtsError('bad-response', 'IncompleteSnapshotError'))
+    await run('启动')
+    expect(lastStartOffline(DIR)).toBe(false)
+  })
+  it('停止后清掉记录', async () => {
+    await run('启动')
+    await run('停止')
+    expect(lastStartOffline(DIR)).toBeUndefined()
+  })
+})
+
+describe('restartVoiceService：由插件重启服务', () => {
+  const setup = () => {
+    const ctx: any = { effect: () => undefined }
+    const rt: any = { log, handlers: {}, voiceServerDeps: () => serverDeps }
+    installVoice(rt, ctx, { ops: ops as unknown as VoiceOps })
+    return rt
+  }
+  it('先停后启，离线与否按所配模型是否已下载；更新本实例标记与离线记录', async () => {
+    const rt = setup()
+    ops.modelDownloaded.mockResolvedValue(true)
+    const order: string[] = []
+    ops.stop.mockImplementation(async () => (order.push('stop'), { status: 'stopped', forced: false }))
+    ops.start.mockImplementation(async (_s: unknown, _d: unknown, o: { offline: boolean }) => (order.push(`start:${o.offline}`), { ok: true, pid: 77, alreadyRunning: false }))
+    expect(await restartVoiceService(rt, settings(), { ops: ops as unknown as VoiceOps })).toBe(true)
+    expect(order).toEqual(['stop', 'start:true'])
+    expect(ops.modelDownloaded).toHaveBeenCalledWith(DIR, MODEL_06)
+    expect(lastStartOffline(DIR)).toBe(true)
+  })
+  it('明确指定 offline: false 时不看模型是否已下载', async () => {
+    const rt = setup()
+    expect(await restartVoiceService(rt, settings(), { offline: false, ops: ops as unknown as VoiceOps })).toBe(true)
+    expect(ops.modelDownloaded).not.toHaveBeenCalled()
+    expect(ops.start.mock.calls[0]![2]).toMatchObject({ offline: false })
+    expect(lastStartOffline(DIR)).toBe(false)
+  })
+  it('启动失败：返回 false，不留"本实例启动的"标记', async () => {
+    const rt = setup()
+    ops.start.mockResolvedValue({ ok: false, kind: 'timeout', detail: 'x' })
+    expect(await restartVoiceService(rt, settings(), { offline: true, ops: ops as unknown as VoiceOps })).toBe(false)
+    expect(lastStartOffline(DIR)).toBeUndefined()
+  })
+  it('重启后卸载时会停掉这个新进程', async () => {
+    let cleanup!: () => Promise<void>
+    const ctx: any = { effect: (fn: () => () => Promise<void>) => { cleanup = fn() } }
+    const rt: any = { log, handlers: {}, voiceServerDeps: () => serverDeps }
+    installVoice(rt, ctx, { ops: ops as unknown as VoiceOps })
+    ops.start.mockResolvedValue({ ok: true, pid: 77, alreadyRunning: false })
+    ops.inspect.mockResolvedValue(info({ owned: { pid: 77, port: 18123, startedAt: 1 } }))
+    await restartVoiceService(rt, settings(), { offline: true, ops: ops as unknown as VoiceOps })
+    ops.stop.mockClear()
+    await cleanup()
+    expect(ops.stop).toHaveBeenCalledTimes(1)
   })
 })

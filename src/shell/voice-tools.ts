@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import os from 'node:os'
 import path from 'node:path'
-import { listCharacters, matchCharacterName } from '../core/card'
+import { listCharacters, matchCharacterName, type CharacterEntry } from '../core/card'
 import {
   MAX_VOICE_BYTES, MAX_VOICE_SECONDS, MIN_VOICE_SECONDS, VOICE_TEXT_MAX_CHARS, readVoice, registerVoice,
   type VoiceConvert, type VoiceRegisterResult,
@@ -71,7 +71,7 @@ function resolveAudioPath(input: string, home: string): string | null {
   return path.isAbsolute(expanded) ? expanded : null
 }
 
-const fail = (message: string): string => `error: ${message}`
+export const fail = (message: string): string => `error: ${message}`
 
 /** 登记失败的种类 -> 给掌柜的说明，让他能据此告诉用户怎么办。 */
 function failureText(r: Exclude<VoiceRegisterResult, { kind: 'registered' }>): string {
@@ -94,6 +94,23 @@ function failureText(r: Exclude<VoiceRegisterResult, { kind: 'registered' }>): s
     case 'convert-failed':
       return fail('convert-failed, converting the file to wav failed; ask the user to convert it to wav first')
   }
+}
+
+/** 按名字找角色（给音色类工具共用）；找不到、不唯一、卡片读不出时给出交给掌柜的说明。 */
+export async function resolveCharacter(
+  dir: string, name: string,
+): Promise<{ ok: true; entry: Extract<CharacterEntry, { ok: true }> } | { ok: false; message: string }> {
+  const match = matchCharacterName(await listCharacters(dir), name)
+  if (match.kind === 'none') {
+    return { ok: false, message: fail(`no character named "${flatText(name, 'voice')}"; call aha_list_characters for valid names`) }
+  }
+  if (match.kind === 'ambiguous') {
+    const names = match.candidates.map((e) => flatText(e.ok ? e.card.name : e.dirName, 'voice')).join(', ')
+    return { ok: false, message: fail(`the name matches several characters: ${names}; use the full name`) }
+  }
+  const entry = match.entry
+  if (!entry.ok) return { ok: false, message: fail(`the character card of ${flatText(entry.dirName, 'voice')} is unreadable; fix the card first`) }
+  return { ok: true, entry }
 }
 
 type VoiceSetArgs = { character: unknown; audioPath: unknown; text: unknown }
@@ -156,14 +173,9 @@ async function setVoice(
   const source = resolveAudioPath(audioPath, deps.homeDir())
   if (!source) return fail('audioPath must be an absolute path (or start with ~/), voice not registered; ask the user for the full path')
 
-  const match = matchCharacterName(await listCharacters(dir), character)
-  if (match.kind === 'none') return fail(`no character named "${flatText(character, 'voice')}"; call aha_list_characters for valid names`)
-  if (match.kind === 'ambiguous') {
-    const names = match.candidates.map((e) => flatText(e.ok ? e.card.name : e.dirName, 'voice')).join(', ')
-    return fail(`the name matches several characters: ${names}; use the full name`)
-  }
-  const entry = match.entry
-  if (!entry.ok) return fail(`the character card of ${flatText(entry.dirName, 'voice')} is unreadable; fix the card first`)
+  const found = await resolveCharacter(dir, character)
+  if (!found.ok) return found.message
+  const entry = found.entry
 
   if ((await readVoice(entry.dir)).ok) {
     const no = await confirmReplace(deps, agent, entry.card.name, signal)

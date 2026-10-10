@@ -149,6 +149,15 @@ interface Launch {
   done: Promise<Reply>
 }
 const launches = new Map<string, Launch>()
+/** 各权重目录上，插件最近一次启动服务时用的 offline 值；服务停止后清掉。 */
+const startOffline = new Map<string, boolean>()
+/** 每个插件实例的状态，按 Runtime 索引：音色设计这类工具重启服务时据此更新"本实例启动的"标记。 */
+const instanceStates = new WeakMap<object, VoiceInstanceState>()
+
+/** 插件最近一次启动该目录上的服务时是否离线；不是插件启动的、或没记录时为 undefined。 */
+export function lastStartOffline(modelsDir: string): boolean | undefined {
+  return startOffline.get(modelsDir)
+}
 
 /** 打断该目录上进行中的启动（取消 install/start，预热也随之取消）；没有则什么也不做。 */
 export function abortLaunch(modelsDir: string): void {
@@ -196,6 +205,7 @@ export async function startServiceHeld(inv: Invocation): Promise<CommandReply> {
 export function resetLaunchesForTest(): void {
   for (const l of launches.values()) if (!l.finished) l.ctl.abort()
   launches.clear()
+  startOffline.clear()
 }
 
 /** 本插件实例启动的服务与进行中的启动（用于卸载时收尾）。 */
@@ -303,6 +313,7 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     if (started.alreadyRunning) return end(voiceAlreadyRunningReceipt(true), { kind: 'ok' })
     // 进程起来就记标记，哪怕预热还没完成
     state.started = { settings: s, pid: started.pid }
+    startOffline.set(s.modelsDir, plan.offline)
 
     launch.phase = 'warmup'
     let failed = await warmup(rt, s, launch)
@@ -314,6 +325,7 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
       const again = await ops.start(s, deps, { signal, offline: false })
       if (!again.ok) return startFail(again)
       state.started = { settings: s, pid: again.pid }
+      startOffline.set(s.modelsDir, false)
       failed = await warmup(rt, s, launch)
     }
     if (failed) return end(failed.reply, failed.outcome)
@@ -435,6 +447,7 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
       abortLaunch(s.modelsDir)
       const r = await ops.stop(s, rt.voiceServerDeps())
       if (r.status === 'stopped' && state.started?.settings.modelsDir === s.modelsDir) state.started = null
+      if (r.status === 'stopped') startOffline.delete(s.modelsDir)
       return voiceStopReceipt(r.status)
     }
     // 再次启动前清掉上次的结果
@@ -442,6 +455,31 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     if (prev?.finished) launches.delete(s.modelsDir)
     return startFlow(inv, s)
   }
+}
+
+/**
+ * 由插件重启本机语音服务：先停后启，不预热。offline 不传时按所配模型是否已下载决定（已下载就离线启动）。
+ * 成功后更新本实例"启动的服务"标记与最近一次的离线记录；失败返回 false，服务可能已停。
+ * 音色设计用它：卸载模型不归还内存，只能重启进程。
+ */
+export async function restartVoiceService(
+  rt: Pick<Runtime, 'log' | 'voiceServerDeps'>, s: VoiceServiceSettings, opts: { offline?: boolean; ops?: VoiceOps } = {},
+): Promise<boolean> {
+  const ops = opts.ops ?? realVoiceOps
+  const deps = rt.voiceServerDeps()
+  const state = instanceStates.get(rt)
+  const offline = opts.offline ?? await ops.modelDownloaded(s.modelsDir, s.model)
+  if (state?.started?.settings.modelsDir === s.modelsDir) state.started = null
+  startOffline.delete(s.modelsDir)
+  await ops.stop(s, deps)
+  const r = await ops.start(s, deps, { offline })
+  if (!r.ok) {
+    rt.log.warn(`重启语音服务未完成（${r.kind}）：${redactUrls(r.detail)}`)
+    return false
+  }
+  if (state) state.started = { settings: s, pid: r.pid }
+  startOffline.set(s.modelsDir, offline)
+  return true
 }
 
 export interface InstallVoiceOptions {
@@ -460,6 +498,7 @@ export function installVoice(rt: Runtime, ctx: Context, opts: InstallVoiceOption
   const limit = opts.cleanupLimitMs ?? CLEANUP_LIMIT_MS
   const state: VoiceInstanceState = { started: null, launching: null }
   rt.handlers.voice = createVoiceHandler(state, ops)
+  instanceStates.set(rt, state)
 
   async function cleanup(): Promise<void> {
     const launching = state.launching

@@ -986,3 +986,73 @@ describe('Speaker.speakAndWait', () => {
     return sp.stop()
   })
 })
+
+describe('Speaker.playFileAndWait', () => {
+  const FILE = '/user/clip.wav'
+  const opts = (over: Record<string, unknown> = {}) => ({ player: PLAYER, owner: 'design', limitMs: 1000, ...over })
+
+  it('只播放这个文件：不合成，播完返回 ok，也不删文件', async () => {
+    const h = harness()
+    h.disk.set(FILE, new Uint8Array([1]))
+    const sp = new Speaker(h.deps)
+    expect(await sp.playFileAndWait(FILE, opts())).toEqual({ status: 'ok' })
+    expect(h.synths).toHaveLength(0)
+    expect(h.plays.map((p) => p.file)).toEqual([FILE])
+    expect(h.disk.has(FILE)).toBe(true)
+    expect(sp.owner()).toBeNull()
+  })
+
+  it('顶掉正在念的朗读', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['一一一']))
+    await settle()
+    const waiting = sp.playFileAndWait(FILE, opts())
+    expect(sp.owner()).toBe('design')
+    await settle()
+    h.plays.at(-1)!.end()
+    expect(await waiting).toEqual({ status: 'ok' })
+  })
+
+  it('超过时限：停下并返回 timeout，文件仍在', async () => {
+    const h = harness({ auto: false })
+    h.disk.set(FILE, new Uint8Array([1]))
+    const sp = new Speaker(h.deps)
+    expect(await sp.playFileAndWait(FILE, opts({ limitMs: 20 }))).toEqual({ status: 'timeout' })
+    expect(h.plays[0]!.aborted).toBe(true)
+    expect(h.disk.has(FILE)).toBe(true)
+  })
+
+  it('收到取消信号：返回 stopped；信号一开始就已取消则不播', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const ac = new AbortController()
+    const waiting = sp.playFileAndWait(FILE, opts({ signal: ac.signal }))
+    await settle()
+    ac.abort()
+    expect(await waiting).toEqual({ status: 'stopped' })
+    const done = new AbortController()
+    done.abort()
+    const before = h.plays.length
+    expect(await sp.playFileAndWait(FILE, opts({ signal: done.signal }))).toEqual({ status: 'stopped' })
+    expect(h.plays).toHaveLength(before)
+  })
+
+  it('播放器失败：返回失败种类', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const waiting = sp.playFileAndWait(FILE, opts())
+    await settle()
+    h.plays[0]!.fail(new PlayerError('play-failed'))
+    expect(await waiting).toEqual({ status: 'failed', kind: 'play-failed' })
+  })
+
+  it('stopIfOwner 能停掉它', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const waiting = sp.playFileAndWait(FILE, opts())
+    await settle()
+    await sp.stopIfOwner('design')
+    expect(await waiting).toEqual({ status: 'stopped' })
+  })
+})

@@ -16,6 +16,7 @@ import { createConfirm, DeclineTracker, SessionGate, type AskFn, type Confirm } 
 import { renderCard } from './setup-prompt'
 import { escapeClosingTag, flatText } from './steer'
 import { readonlyToolMessage } from './writable'
+import { realVoiceDesignDeps, registerVoiceDesignTool, type VoiceDesignDeps } from './voice-design'
 import { realVoiceToolDeps, registerVoiceTools, type VoiceToolDeps } from './voice-tools'
 
 export interface SaveResult {
@@ -311,7 +312,7 @@ export function registerSetupTools(
   rt: Runtime,
   onSaved: (agent: HostAgent) => Promise<void>,
   getAsk: () => AskFn | undefined = () => undefined,
-  shared: { gate?: SessionGate; declines?: DeclineTracker; voice?: VoiceToolDeps } = {},
+  shared: { gate?: SessionGate; declines?: DeclineTracker; voice?: VoiceToolDeps; voiceDesign?: VoiceDesignDeps } = {},
 ): void {
   const gate = shared.gate ?? new SessionGate()
   const declines = shared.declines ?? new DeclineTracker()
@@ -460,7 +461,7 @@ export function registerSetupTools(
       rewriteMemoryText(dir, (args as { id?: unknown }).id, args, confirm), false),
   }))
 
-  registerVoiceTools(ctx, shared.voice ?? realVoiceToolDeps(rt, {
-    getAsk, gate, declines, tavernDirOf, onRegistered: onSaved,
-  }))
+  const voiceShared = { getAsk, gate, declines, tavernDirOf, onRegistered: onSaved }
+  registerVoiceTools(ctx, shared.voice ?? realVoiceToolDeps(rt, voiceShared))
+  registerVoiceDesignTool(ctx, shared.voiceDesign ?? realVoiceDesignDeps(rt, voiceShared))
 }

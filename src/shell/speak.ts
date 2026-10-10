@@ -72,14 +72,17 @@ export type SpeakOutcome =
 
 interface Run {
   owner: string
-  req: SpeakRequest
+  /** 播放用的播放器 */
+  player: Player
+  /** 合成请求；只播放现成文件的那一段为 null */
+  req: SpeakRequest | null
   queue: string[]
   ctl: AbortController
   /** 已写出、尚未删除的临时文件 */
   files: Set<string>
   /** 不再接受追加 */
   closed: boolean
-  client: Pick<TtsClient, 'synthesize'>
+  client: Pick<TtsClient, 'synthesize'> | null
   /** 已发起、尚未取用的下一句合成（最多领先播放一句） */
   ahead: Promise<string> | null
   /** 正在播放一句 */
@@ -100,12 +103,16 @@ export class Speaker {
   /** 顶掉正在念的，开始念这一批。只做同步的排队，不等合成。 */
   speak(req: SpeakRequest): void {
     if (req.sentences.length === 0) return
+    this.begin({
+      owner: req.owner, player: req.player, req, queue: [...req.sentences], ctl: new AbortController(), files: new Set(),
+      closed: false, client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false,
+      finished: Promise.resolve(), outcome: { status: 'stopped' },
+    })
+  }
+
+  /** 顶掉正在念的，开始这一段。 */
+  private begin(run: Run): void {
     const prev = this.current
-    const run: Run = {
-      owner: req.owner, req, queue: [...req.sentences], ctl: new AbortController(), files: new Set(), closed: false,
-      client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false, finished: Promise.resolve(),
-      outcome: { status: 'stopped' },
-    }
     this.current = run
     prev?.ctl.abort()
     run.finished = this.loop(run, this.lastFinished)
@@ -120,7 +127,27 @@ export class Speaker {
     if (req.sentences.length === 0) return { status: 'ok' }
     if (opts.signal?.aborted) return { status: 'stopped' }
     this.speak(req)
-    const run = this.current!
+    return this.waitRun(this.current!, opts)
+  }
+
+  /**
+   * 顶掉正在念的，播放一个现成的音频文件并等它结束；不经合成，也不删这个文件（归调用方管）。
+   * 结局与超时、中止的处理同 speakAndWait。
+   */
+  async playFileAndWait(
+    file: string, opts: { player: Player; owner: string; limitMs: number; signal?: AbortSignal },
+  ): Promise<SpeakOutcome> {
+    if (opts.signal?.aborted) return { status: 'stopped' }
+    const run: Run = {
+      owner: opts.owner, player: opts.player, req: null, queue: [], ctl: new AbortController(), files: new Set(),
+      closed: false, client: null, ahead: Promise.resolve(file), playing: false, finished: Promise.resolve(),
+      outcome: { status: 'stopped' },
+    }
+    this.begin(run)
+    return this.waitRun(run, { timeoutMs: opts.limitMs, ...(opts.signal ? { signal: opts.signal } : {}) })
+  }
+
+  private async waitRun(run: Run, opts: { timeoutMs: number; signal?: AbortSignal }): Promise<SpeakOutcome> {
     let timer: ReturnType<typeof setTimeout> | undefined
     let onAbort: (() => void) | undefined
     const interrupted = new Promise<'timeout' | 'aborted'>((resolve) => {
@@ -200,12 +227,12 @@ export class Speaker {
         }
         run.playing = true
         try {
-          await this.deps.play(run.req.player, file, { signal: run.ctl.signal })
+          await this.deps.play(run.player, file, { signal: run.ctl.signal })
         } finally {
           run.playing = false
         }
-        run.files.delete(file)
-        await this.drop(file)
+        // 只删自己合成的临时文件；现成文件归调用方管
+        if (run.files.delete(file)) await this.drop(file)
         this.prefetch(run, true)
       }
       if (!run.ctl.signal.aborted) {
@@ -238,8 +265,10 @@ export class Speaker {
   }
 
   private async synth(run: Run, text: string): Promise<string> {
-    const { voice, settings } = run.req
-    const audio = await run.client.synthesize(
+    const { req, client } = run
+    if (!req || !client) throw new TtsError('other', 'synth without request')
+    const { voice, settings } = req
+    const audio = await client.synthesize(
       { kind: 'clone', model: settings.model, text, refAudio: voice.audio, refText: voice.text, language: settings.language },
       { timeoutMs: settings.timeoutSeconds * 1000, signal: run.ctl.signal },
     )

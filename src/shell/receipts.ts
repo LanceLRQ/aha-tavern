@@ -827,3 +827,134 @@ export function voiceReplaceQuestion(name: string): AskItem {
     ],
   }
 }
+
+// ---------- 音色设计 ----------
+
+export const VOICE_DESIGN_HEADER = '音色设计'
+export const VOICE_DESIGN_DOWNLOAD_ID = 'voice-design-download'
+export const VOICE_DESIGN_LIST_ID = 'voice-design'
+export const VOICE_DESIGN_PICK_ID = 'voice-design-pick'
+export const VOICE_DESIGN_OPT_DOWNLOAD = '开始下载'
+export const VOICE_DESIGN_OPT_CANCEL = '取消'
+export const VOICE_DESIGN_OPT_REGEN = '重新生成'
+export const VOICE_DESIGN_OPT_AGAIN = '再听一遍'
+export const VOICE_DESIGN_OPT_USE = '用这一段'
+export const VOICE_DESIGN_OPT_BACK = '返回'
+/** 音色设计模型的大小说明（固定模型，大小固定）。 */
+export const VOICE_DESIGN_MODEL_SIZE = '约 2.9GB'
+export const VOICE_DESIGN_MEMORY_NOTE = '设计时内存占用约 6GB，建议先关掉占内存的应用。设计结束后语音服务会重启一次，以释放内存。'
+
+export const voiceDesignSegmentLabel = (n: number): string => `第 ${n} 段`
+
+/** 从选项文字认出"第 N 段"；认不出为 null。 */
+export function parseVoiceDesignSegment(label: string): number | null {
+  const m = /^第 (\d+) 段$/.exec(label)
+  return m ? Number(m[1]) : null
+}
+
+const oneDecimal = (n: number): string => `${Math.round(n * 10) / 10}`
+
+export function voiceDesignDownloadQuestion(info: { modelsDir: string; hfEndpoint: string | undefined }): AskItem {
+  const detail = [
+    `- 音色设计模型（${VOICE_DESIGN_MODEL_SIZE}）`,
+    `- 存放目录：${info.modelsDir}`,
+    `- 下载源：${info.hfEndpoint ?? '官方'}`,
+    '',
+    VOICE_DESIGN_MEMORY_NOTE,
+  ].join('\n')
+  return {
+    id: VOICE_DESIGN_DOWNLOAD_ID,
+    header: VOICE_DESIGN_HEADER,
+    question: '设计声音需要先下载音色设计模型，现在开始吗？',
+    detail,
+    options: [
+      { label: VOICE_DESIGN_OPT_DOWNLOAD, description: '下载并开始设计，可能要几分钟' },
+      { label: VOICE_DESIGN_OPT_CANCEL, description: '什么都不做' },
+    ],
+  }
+}
+
+export interface VoiceDesignListInfo {
+  /** 已压平、去掉引号类符号的角色名 */
+  name: string
+  description: string
+  sampleText: string
+  clips: Array<{ seconds: number; file: string }>
+  /** 角色已有音色：采用后会替换 */
+  replacing: boolean
+  /** 有播放器可试听 */
+  canPlay: boolean
+  /** 还能重新生成 */
+  canRegenerate: boolean
+}
+
+/** 第一级卡片：选一段去试听，或重新生成、取消。 */
+export function voiceDesignListQuestion(c: VoiceDesignListInfo): AskItem {
+  const lines = [`角色：${c.name}`, `音色描述：${c.description}`, `试听台词：${c.sampleText}`, '']
+  c.clips.forEach((clip, i) => {
+    lines.push(`- ${voiceDesignSegmentLabel(i + 1)}：${oneDecimal(clip.seconds)} 秒${c.canPlay ? '' : `（${clip.file}）`}`)
+  })
+  if (!c.canPlay) lines.push('', '这台机器没有可用的播放器，无法试听；上面括号里是各段的临时文件，可以自己打开听，选好后在这里选对应的一段。')
+  if (c.replacing) lines.push('', '采用后会替换现有的声音。')
+  const options = c.clips.map((clip, i) => ({
+    label: voiceDesignSegmentLabel(i + 1),
+    description: c.canPlay ? `试听这一段（${oneDecimal(clip.seconds)} 秒）` : '选这一段',
+  }))
+  if (c.canRegenerate) options.push({ label: VOICE_DESIGN_OPT_REGEN, description: '丢掉这几段，用同样的描述再生成一批' })
+  options.push({ label: VOICE_DESIGN_OPT_CANCEL, description: '不设计了，保留现有的声音' })
+  return {
+    id: VOICE_DESIGN_LIST_ID,
+    header: VOICE_DESIGN_HEADER,
+    question: `给「${c.name}」选一段声音`,
+    detail: lines.join('\n'),
+    options,
+  }
+}
+
+/** 第二级卡片：对选中的一段再听、采用或返回。 */
+export function voiceDesignPickQuestion(info: { n: number; seconds: number; file: string; canPlay: boolean; replacing: boolean }): AskItem {
+  const lines = [`${voiceDesignSegmentLabel(info.n)}，${oneDecimal(info.seconds)} 秒。`]
+  if (!info.canPlay) lines.push(`这台机器没有可用的播放器，无法试听；临时文件：${info.file}`)
+  if (info.replacing) lines.push('采用后会替换现有的声音。')
+  return {
+    id: VOICE_DESIGN_PICK_ID,
+    header: VOICE_DESIGN_HEADER,
+    question: `${voiceDesignSegmentLabel(info.n)}怎么样？`,
+    detail: lines.join('\n'),
+    options: [
+      ...(info.canPlay ? [{ label: VOICE_DESIGN_OPT_AGAIN, description: '重新播放这一段' }] : []),
+      { label: VOICE_DESIGN_OPT_USE, description: '用这一段作为角色的声音' },
+      { label: VOICE_DESIGN_OPT_BACK, description: '回到上一张卡片，换一段或重新生成' },
+    ],
+  }
+}
+
+/** 音色设计工具给掌柜的返回值：英文固定标识加简短说明，不带服务端原文与文件路径。 */
+export const VOICE_DESIGN_TEXT = {
+  notTavern: 'error: this workspace is not a tavern yet, voice not designed',
+  notConfigured: 'voice not designed: voice service unavailable (not configured); tell the user to set up the voice service first (docs/voice-setup.md)',
+  userInfo: 'voice not designed: voice service unavailable (the configured address contains a username or password, which is not supported)',
+  unsupported: 'voice not designed: unsupported, this voice service setup cannot do voice design (it needs the mlx service started by the plugin)',
+  unreachable: 'voice not designed: voice service unavailable (not running); ask the user to run /aha 语音 启动 first, then try again',
+  starting: 'voice not designed: voice service unavailable (still starting); ask the user to wait a moment and try again',
+  noUi: 'voice not designed: confirmation unavailable',
+  downloadCancelled: 'voice not designed: download-cancelled, the user cancelled the model download',
+  alreadyDeclined: 'voice not designed: already declined this turn; ask the user what to change first',
+  userCancelled: 'voice not designed: user cancelled',
+  aborted: 'voice not designed: cancelled',
+  userReplied: 'voice not designed: the user replied with text instead of choosing; ask what they want to change',
+  generationFailed: 'voice not designed: generation-failed, no usable sample was generated; the user can try again later',
+  restartFailed: 'service: restart failed; ask the user to run /aha 语音 启动',
+} as const
+
+export function voiceDesignedText(name: string, seconds: number, replaced: boolean): string {
+  return `voice designed and registered for ${name} (${oneDecimal(seconds)}s, replaced: ${replaced})`
+}
+
+/** 采用的那一段没能存下：时长不合要求时带上要求，其他一概只说存不下。 */
+export function voiceDesignSaveFailedText(kind: string, seconds?: number): string {
+  if (kind === 'too-short' || kind === 'too-long') {
+    return `voice not designed: ${kind}, the chosen sample is ${oneDecimal(seconds ?? 0)}s but a voice must be 3 to 15 seconds; ask the user to choose another sample or regenerate`
+  }
+  return `error: voice not designed, the chosen sample could not be saved (${kind}); try again`
+}

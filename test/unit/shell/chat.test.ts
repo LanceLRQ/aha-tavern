@@ -868,6 +868,15 @@ describe('提示词文字', () => {
     expect(hostPickText).not.toContain('照 <pick_state>')
     expect([...hostPickText].length).toBeLessThan(500)
   })
+  it('筹备掌柜：音色设计一条写明参数来源、范围、启动提示与由 user 挑选', () => {
+    expect(hostSetupText).toContain('aha_voice_design')
+    expect(hostSetupText).toContain('voice 栏')
+    expect(hostSetupText).toContain('10 到 300 字')
+    expect(hostSetupText).toContain('10 到 60 字')
+    expect(hostSetupText).toContain('/aha 语音 启动')
+    expect(hostSetupText).toContain('不要替 user 挑')
+    expect(hostSetupText).toContain('10. 做完后提示')
+  })
   it('筹备掌柜：称呼直接用，不解释', () => {
     expect(hostSetupText).toContain('不用向 user 解释')
   })
