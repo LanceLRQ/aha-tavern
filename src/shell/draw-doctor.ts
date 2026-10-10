@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { ComfyError, type ComfyClient } from '../core/comfy'
-import type { ImageServiceResult, ImageServiceSettings } from '../core/services'
+import { hasUserInfo, type ImageServiceResult, type ImageServiceSettings } from '../core/services'
 import { fillWorkflow, loadWorkflow, requirementsOf } from '../core/workflow'
 import { hostOf } from './draw'
 import type { Log } from './runtime'
@@ -89,15 +89,6 @@ function cleanVersion(v: string): string {
   const s = [...v.replace(/[\u0000-\u001f\u007f-\u009f]/g, '')].slice(0, VERSION_MAX).join('').trim()
   // 只认版本号的样子；别的内容（比如网址，卡片里会变成可点击的链接）一律当作版本未知
   return /^v?\d[0-9A-Za-z.+_-]*$/.test(s) ? s : ''
-}
-
-function hasUserInfo(endpoint: string): boolean {
-  try {
-    const u = new URL(endpoint)
-    return u.username !== '' || u.password !== ''
-  } catch {
-    return false
-  }
 }
 
 export async function checkDrawing(deps: DrawDoctorDeps, opts: DrawDoctorOptions): Promise<DrawDoctorReport> {

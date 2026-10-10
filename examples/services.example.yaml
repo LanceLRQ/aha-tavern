@@ -1,6 +1,7 @@
 # 阿哈酒馆的外部服务配置示例。
 # 复制到 <DSH_HOME>/aha-tavern/services.yaml（未设 DSH_HOME 时是 ~/.dsh/aha-tavern/services.yaml）。
-# 文件不存在，或没有 image / endpoint，等同于没有配置生图服务。
+# 分 image（生图）与 voice（语音）两节，各自独立：一节写错不影响另一节。
+# 文件不存在，或某一节缺失 / 没有 endpoint，等同于没有配置那项服务。
 # 每次用到时重新读取，改完不用重启；已经在聊的会话用 /aha 自检 让新配置生效。
 
 image:
@@ -16,3 +17,13 @@ image:
   #   unet: your-model.safetensors
   #   clip: your-text-encoder.safetensors
   #   vae: your-vae.safetensors
+
+voice:
+  endpoint: http://127.0.0.1:18123   # 必填：语音合成服务的地址（OpenAI 兼容接口），没有这一项就是没配置
+  launch: none                       # mlx：允许插件在本机代为启动服务（endpoint 必须是本机地址）；none（默认）：只连接
+  model: 0.6b                        # 0.6b（默认）、1.7b，或完整的模型名
+  # modelsDir: ~/.dsh/aha-tavern/voice  # 运行环境与权重的存放目录；不写则用酒馆数据目录下的 voice，须是绝对路径或 ~ 开头
+  # hfEndpoint: https://hf-mirror.com   # 权重下载源；不写用官方
+  read: lines                        # lines（默认，逐句念）或 all（整段回复一起念）
+  language: chinese                  # 传给服务的语言
+  timeoutSeconds: 120                # 单句合成最多等多久

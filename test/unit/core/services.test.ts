@@ -2,7 +2,16 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { loadImageService, type ImageServiceSettings } from '../../../src/core/services'
+import {
+  VOICE_DESIGN_MODEL,
+  VOICE_MODELS,
+  VOICE_SERVICE_DEFAULTS,
+  hasUserInfo,
+  loadImageService,
+  loadVoiceService,
+  type ImageServiceSettings,
+  type VoiceServiceSettings,
+} from '../../../src/core/services'
 
 let dir: string
 beforeEach(async () => {
@@ -175,5 +184,204 @@ describe('loadImageService：已配置', () => {
   it('问题清单不回显字段值：问题文字里不出现字段值', async () => {
     const { problems } = configured(await load('image:\n  endpoint: http://h\n  style: 5\n  steps: secret-token\n'))
     expect(problems.join('')).not.toContain('secret-token')
+  })
+})
+
+const DEFAULT_DIR = '/data/tavern/voice'
+
+async function loadVoice(content: string | null) {
+  const file = path.join(dir, 'services.yaml')
+  if (content !== null) await fs.writeFile(file, content, 'utf8')
+  return loadVoiceService(file, { defaultModelsDir: DEFAULT_DIR })
+}
+
+const voiceOk = (r: Awaited<ReturnType<typeof loadVoice>>): { settings: VoiceServiceSettings; problems: string[] } => {
+  if (!r.configured) throw new Error('应为已配置')
+  return r
+}
+
+describe('loadVoiceService：未配置', () => {
+  it('文件不存在 / 空文件', async () => {
+    expect(await loadVoice(null)).toEqual({ configured: false, problems: [] })
+    expect(await loadVoice('  \n')).toEqual({ configured: false, problems: [] })
+  })
+  it('没有 voice', async () => {
+    expect(await loadVoice('image:\n  endpoint: http://x\n')).toEqual({ configured: false, problems: [] })
+  })
+  it('没有 endpoint', async () => {
+    expect(await loadVoice('voice:\n  launch: mlx\n')).toEqual({ configured: false, problems: [] })
+  })
+  it('voice 不是映射', async () => {
+    const r = await loadVoice('voice: [a]\n')
+    expect(r.configured).toBe(false)
+    expect(r.problems[0]).toContain('voice')
+  })
+  it('endpoint 不是 http(s) 地址', async () => {
+    const r = await loadVoice('voice:\n  endpoint: ftp://x\n')
+    expect(r.configured).toBe(false)
+    expect(r.problems[0]).toContain('voice.endpoint')
+  })
+  it('YAML 解析失败：两节都未配置并各自带解析失败', async () => {
+    const text = 'voice: [unclosed\n  endpoint: : :\n'
+    const v = await loadVoice(text)
+    const i = await load(text)
+    for (const r of [v, i]) {
+      expect(r.configured).toBe(false)
+      expect(r.problems[0]).toContain('解析失败')
+    }
+  })
+})
+
+describe('两节互不影响', () => {
+  it('voice 写错不影响 image，image 写错不影响 voice', async () => {
+    const text = 'image:\n  endpoint: http://i\n  steps: abc\nvoice:\n  endpoint: http://127.0.0.1:1\n  read: 5\n'
+    const i = configured(await load(text))
+    const v = voiceOk(await loadVoice(text))
+    expect(i.problems).toHaveLength(1)
+    expect(i.problems[0]).toContain('image.steps')
+    expect(v.problems).toHaveLength(1)
+    expect(v.problems[0]).toContain('voice.read')
+  })
+  it('只写了 voice 时 image 未配置，反之亦然', async () => {
+    expect((await load('voice:\n  endpoint: http://x\n')).configured).toBe(false)
+    expect((await loadVoice('image:\n  endpoint: http://x\n')).configured).toBe(false)
+  })
+})
+
+describe('loadVoiceService：已配置', () => {
+  it('只给 endpoint：其余取默认值', async () => {
+    const { settings, problems } = voiceOk(await loadVoice('voice:\n  endpoint: http://127.0.0.1:18123/\n'))
+    expect(problems).toEqual([])
+    expect(settings).toEqual({
+      endpoint: 'http://127.0.0.1:18123',
+      launch: 'none',
+      model: VOICE_MODELS['0.6b'],
+      modelAlias: '0.6b',
+      modelsDir: DEFAULT_DIR,
+      hfEndpoint: undefined,
+      read: 'lines',
+      language: 'chinese',
+      timeoutSeconds: 120,
+      port: 18123,
+      local: true,
+    })
+    expect(VOICE_SERVICE_DEFAULTS).toMatchObject({ launch: 'none', model: '0.6b', read: 'lines', language: 'chinese', timeoutSeconds: 120 })
+    expect(VOICE_DESIGN_MODEL).toBe('mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit')
+  })
+
+  it('全部字段有效时原样采用', async () => {
+    const { settings, problems } = voiceOk(
+      await loadVoice(
+        [
+          'voice:',
+          '  endpoint: http://localhost:9000',
+          '  launch: mlx',
+          '  model: 1.7B',
+          '  modelsDir: /abs/voice',
+          '  hfEndpoint: https://hf-mirror.com/',
+          '  read: all',
+          '  language: english',
+          '  timeoutSeconds: 30',
+        ].join('\n'),
+      ),
+    )
+    expect(problems).toEqual([])
+    expect(settings).toMatchObject({
+      launch: 'mlx',
+      model: VOICE_MODELS['1.7b'],
+      modelAlias: '1.7b',
+      modelsDir: '/abs/voice',
+      hfEndpoint: 'https://hf-mirror.com',
+      read: 'all',
+      language: 'english',
+      timeoutSeconds: 30,
+      port: 9000,
+      local: true,
+    })
+  })
+
+  it('模型名三种写法：简称（不分大小写）、完整名（去空白）、类型不对', async () => {
+    expect(voiceOk(await loadVoice('voice:\n  endpoint: http://h\n  model: 0.6B\n')).settings).toMatchObject({
+      model: VOICE_MODELS['0.6b'],
+      modelAlias: '0.6b',
+    })
+    const full = voiceOk(await loadVoice('voice:\n  endpoint: http://h\n  model: " org/Some-Model "\n'))
+    expect(full.settings.model).toBe('org/Some-Model')
+    expect(full.settings.modelAlias).toBeUndefined()
+    const bad = voiceOk(await loadVoice('voice:\n  endpoint: http://h\n  model: 5\n'))
+    expect(bad.settings.model).toBe(VOICE_MODELS['0.6b'])
+    expect(bad.problems.some((p) => p.includes('voice.model'))).toBe(true)
+  })
+
+  it('字段类型或取值不对：回落默认值并逐条记录', async () => {
+    const { settings, problems } = voiceOk(
+      await loadVoice(
+        [
+          'voice:',
+          '  endpoint: http://h',
+          '  launch: docker',
+          '  read: some',
+          '  language: 5',
+          '  timeoutSeconds: 0',
+          '  hfEndpoint: ftp://secret-mirror',
+          '  modelsDir: relative/dir',
+        ].join('\n'),
+      ),
+    )
+    expect(settings).toMatchObject({
+      launch: 'none',
+      read: 'lines',
+      language: 'chinese',
+      timeoutSeconds: 120,
+      hfEndpoint: undefined,
+      modelsDir: DEFAULT_DIR,
+    })
+    for (const key of ['launch', 'read', 'language', 'timeoutSeconds', 'hfEndpoint', 'modelsDir']) {
+      expect(problems.some((p) => p.includes(`voice.${key}`))).toBe(true)
+    }
+    expect(problems).toHaveLength(6)
+    expect(problems.join('')).not.toContain('secret-mirror')
+    expect(problems.join('')).not.toContain('relative/dir')
+  })
+
+  it('launch: mlx 配远程地址：改为 none 并记问题', async () => {
+    const { settings, problems } = voiceOk(await loadVoice('voice:\n  endpoint: http://10.0.0.5:18123\n  launch: mlx\n'))
+    expect(settings.launch).toBe('none')
+    expect(settings.local).toBe(false)
+    expect(problems.some((p) => p.includes('voice.launch'))).toBe(true)
+  })
+
+  it('本机地址：127.0.0.1、localhost、[::1]', async () => {
+    for (const host of ['127.0.0.1', 'localhost', '[::1]']) {
+      const { settings, problems } = voiceOk(await loadVoice(`voice:\n  endpoint: http://${host}:18123\n  launch: mlx\n`))
+      expect(settings.local).toBe(true)
+      expect(settings.launch).toBe('mlx')
+      expect(problems).toEqual([])
+    }
+  })
+
+  it('端口：没写时按协议默认', async () => {
+    expect(voiceOk(await loadVoice('voice:\n  endpoint: http://h\n')).settings.port).toBe(80)
+    expect(voiceOk(await loadVoice('voice:\n  endpoint: https://h\n')).settings.port).toBe(443)
+  })
+
+  it('modelsDir：默认值来自调用方，写了就用写的，~ 展开', async () => {
+    expect(voiceOk(await loadVoice('voice:\n  endpoint: http://h\n')).settings.modelsDir).toBe(DEFAULT_DIR)
+    const { settings, problems } = voiceOk(await loadVoice('voice:\n  endpoint: http://h\n  modelsDir: ~/aha-voice\n'))
+    expect(settings.modelsDir).toBe(path.join(os.homedir(), 'aha-voice'))
+    expect(problems).toEqual([])
+  })
+
+  it('带用户名密码的 endpoint 仍算已配置', async () => {
+    expect(voiceOk(await loadVoice('voice:\n  endpoint: http://u:p@h:1\n')).settings.endpoint).toBe('http://u:p@h:1')
+  })
+})
+
+describe('hasUserInfo', () => {
+  it('识别地址里的用户名密码', () => {
+    expect(hasUserInfo('http://u:p@h')).toBe(true)
+    expect(hasUserInfo('http://u@h')).toBe(true)
+    expect(hasUserInfo('http://h:80')).toBe(false)
+    expect(hasUserInfo('not a url')).toBe(false)
   })
 })

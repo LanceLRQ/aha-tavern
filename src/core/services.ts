@@ -1,5 +1,5 @@
-// 外部服务配置：从独立的 services.yaml 读出生图服务的设置。
-// 文件不存在、没有 image、没有 endpoint 都算"没配置"；字段类型不对时回落默认值并记入问题清单。
+// 外部服务配置：从独立的 services.yaml 读出生图（image）与语音（voice）两节的设置，两节互不影响。
+// 文件不存在、没有对应一节、没有 endpoint 都算"没配置"；字段类型不对时回落默认值并记入问题清单。
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import YAML from 'yaml'
@@ -44,23 +44,40 @@ const BUILTIN_NAME = /^[A-Za-z0-9][\w.-]*$/
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
 
-/** 读取并校验生图服务配置。问题清单只写字段名，不回显字段值。 */
-export async function loadImageService(file: string): Promise<ImageServiceResult> {
+/** 读文件并解析 YAML；不可用时直接给出"未配置"的结果。 */
+async function readServicesDoc(
+  file: string,
+): Promise<{ ok: true; doc: unknown } | { ok: false; problems: string[] }> {
   let raw: string
   try {
     raw = await fs.readFile(expandHome(file), 'utf8')
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { configured: false, problems: [] }
-    return { configured: false, problems: ['服务配置文件无法读取'] }
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: false, problems: [] }
+    return { ok: false, problems: ['服务配置文件无法读取'] }
   }
-  if (!raw.trim()) return { configured: false, problems: [] }
-
-  let doc: unknown
+  if (!raw.trim()) return { ok: false, problems: [] }
   try {
-    doc = YAML.parse(raw)
+    return { ok: true, doc: YAML.parse(raw) }
   } catch {
-    return { configured: false, problems: ['服务配置文件解析失败，请检查 YAML 语法'] }
+    return { ok: false, problems: ['服务配置文件解析失败，请检查 YAML 语法'] }
   }
+}
+
+/** 地址里是否带了用户名或密码。 */
+export function hasUserInfo(endpoint: string): boolean {
+  try {
+    const u = new URL(endpoint)
+    return u.username !== '' || u.password !== ''
+  } catch {
+    return false
+  }
+}
+
+/** 读取并校验生图服务配置。问题清单只写字段名，不回显字段值。 */
+export async function loadImageService(file: string): Promise<ImageServiceResult> {
+  const read = await readServicesDoc(file)
+  if (!read.ok) return { configured: false, problems: read.problems }
+  const doc = read.doc
   const problems: string[] = []
   if (!isRecord(doc) || doc.image === undefined || doc.image === null) return { configured: false, problems }
   const image = doc.image
@@ -123,4 +140,130 @@ function readModels(v: unknown, problems: string[]): ImageServiceSettings['model
     }
   }
   return out
+}
+
+export interface VoiceServiceSettings {
+  /** 服务地址，已去掉末尾斜杠。 */
+  endpoint: string
+  /** mlx：允许插件代为启动本机服务；none：只连接。 */
+  launch: 'mlx' | 'none'
+  /** 解析后的完整模型名。 */
+  model: string
+  /** 用户写的是 0.6b / 1.7b 简称时保留简称，否则为 undefined。 */
+  modelAlias?: string
+  /** 运行环境与权重的存放目录，绝对路径。 */
+  modelsDir: string
+  /** 权重下载源，已去掉末尾斜杠；不写则用官方。 */
+  hfEndpoint?: string
+  read: 'lines' | 'all'
+  language: string
+  timeoutSeconds: number
+  /** 从 endpoint 解析出的端口；没写端口时按协议取 80 / 443。 */
+  port: number
+  /** endpoint 是否本机地址。 */
+  local: boolean
+}
+
+export type VoiceServiceResult =
+  | { configured: false; problems: string[] }
+  | { configured: true; settings: VoiceServiceSettings; problems: string[] }
+
+export const VOICE_MODELS = {
+  '0.6b': 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit',
+  '1.7b': 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit',
+} as const
+
+/** 音色设计固定使用的模型。 */
+export const VOICE_DESIGN_MODEL = 'mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit'
+
+export const VOICE_SERVICE_DEFAULTS = {
+  launch: 'none',
+  model: '0.6b',
+  read: 'lines',
+  language: 'chinese',
+  timeoutSeconds: 120,
+} as const
+
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+
+/** 读取并校验语音服务配置。问题清单只写字段名，不回显字段值。 */
+export async function loadVoiceService(
+  file: string,
+  opts: { defaultModelsDir: string },
+): Promise<VoiceServiceResult> {
+  const read = await readServicesDoc(file)
+  if (!read.ok) return { configured: false, problems: read.problems }
+  const doc = read.doc
+  const problems: string[] = []
+  if (!isRecord(doc) || doc.voice === undefined || doc.voice === null) return { configured: false, problems }
+  const voice = doc.voice
+  if (!isRecord(voice)) return { configured: false, problems: ['voice 一节的格式不对'] }
+
+  if (voice.endpoint === undefined || voice.endpoint === null || voice.endpoint === '') {
+    return { configured: false, problems }
+  }
+  const endpoint = typeof voice.endpoint === 'string' ? voice.endpoint.trim() : ''
+  let url: URL | undefined
+  if (/^https?:\/\/\S+$/.test(endpoint)) {
+    try {
+      url = new URL(endpoint)
+    } catch {
+      url = undefined
+    }
+  }
+  if (!url) return { configured: false, problems: ['voice.endpoint 必须是 http:// 或 https:// 开头的地址'] }
+
+  const d = VOICE_SERVICE_DEFAULTS
+  const pick = <T>(key: string, ok: (v: unknown) => v is T, fallback: T, hint: string): T => {
+    const v = voice[key]
+    if (v === undefined || v === null) return fallback
+    if (ok(v)) return v
+    problems.push(`voice.${key} ${hint}，已改用默认值`)
+    return fallback
+  }
+  const isText = (v: unknown): v is string => typeof v === 'string' && v.trim() !== ''
+  const isPositiveInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0
+
+  const local = LOCAL_HOSTS.has(url.hostname)
+  let launch = pick('launch', (v): v is 'mlx' | 'none' => v === 'mlx' || v === 'none', d.launch, '应是 mlx 或 none')
+  if (launch === 'mlx' && !local) {
+    problems.push('voice.launch 为 mlx 时 endpoint 必须是本机地址，已改为 none')
+    launch = 'none'
+  }
+
+  const modelText = pick('model', isText, d.model, '应是 0.6b、1.7b 或完整的模型名').trim()
+  const alias = modelText.toLowerCase()
+  const isAlias = alias === '0.6b' || alias === '1.7b'
+
+  let hfEndpoint: string | undefined
+  if (voice.hfEndpoint !== undefined && voice.hfEndpoint !== null) {
+    const h = typeof voice.hfEndpoint === 'string' ? voice.hfEndpoint.trim() : ''
+    if (/^https?:\/\/\S+$/.test(h)) hfEndpoint = h.replace(/\/+$/, '')
+    else problems.push('voice.hfEndpoint 必须是 http:// 或 https:// 开头的地址，已忽略')
+  }
+
+  let modelsDir = expandHome(opts.defaultModelsDir)
+  if (voice.modelsDir !== undefined && voice.modelsDir !== null) {
+    const m = typeof voice.modelsDir === 'string' ? expandHome(voice.modelsDir.trim()) : ''
+    if (path.isAbsolute(m)) modelsDir = m
+    else problems.push('voice.modelsDir 应是绝对路径（可以用 ~ 开头），已改用默认值')
+  }
+
+  return {
+    configured: true,
+    problems,
+    settings: {
+      endpoint: endpoint.replace(/\/+$/, ''),
+      launch,
+      model: isAlias ? VOICE_MODELS[alias as keyof typeof VOICE_MODELS] : modelText,
+      modelAlias: isAlias ? alias : undefined,
+      modelsDir,
+      hfEndpoint,
+      read: pick('read', (v): v is 'lines' | 'all' => v === 'lines' || v === 'all', d.read, '应是 lines 或 all'),
+      language: pick('language', isText, d.language, '应是非空文字'),
+      timeoutSeconds: pick('timeoutSeconds', isPositiveInt, d.timeoutSeconds, '应是正整数'),
+      port: url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80,
+      local,
+    },
+  }
 }
