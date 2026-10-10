@@ -76,6 +76,8 @@ export interface VoiceDoctorDeps {
 export interface VoiceDoctorOptions {
   /** 详细检查：统计目录大小、查服务里已加载的模型。一行小结那条路径不开。 */
   detail?: boolean
+  /** 已经统计过的目录大小；给了就沿用，不再遍历目录。 */
+  knownSizes?: { env: number; hf: number }
   signal?: AbortSignal
 }
 
@@ -96,7 +98,7 @@ export async function checkVoice(deps: VoiceDoctorDeps, opts: VoiceDoctorOptions
   }
   if (stopped()) return report
 
-  const info = await deps.inspect(s, { sizes: detail })
+  const info = await deps.inspect(s, { sizes: detail && !opts.knownSizes })
   if (stopped()) return report
   const snap = deps.launchOf(s.modelsDir)
   const running = snap !== null && !snap.finished
@@ -123,7 +125,7 @@ export async function checkVoice(deps: VoiceDoctorDeps, opts: VoiceDoctorOptions
     report.launch = {
       supported: info.supported, uv: info.uv !== null, envInstalled: info.envInstalled,
       modelDownloaded: info.modelDownloaded, modelsDir: s.modelsDir,
-      ...(detail && info.sizes ? { sizes: info.sizes } : {}),
+      ...(detail && (opts.knownSizes ?? info.sizes) ? { sizes: (opts.knownSizes ?? info.sizes)! } : {}),
     }
   }
 

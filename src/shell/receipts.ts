@@ -605,7 +605,7 @@ function sizeText(bytes: number): string {
 }
 
 export const DOCTOR_VOICE_HINT = '（/aha 自检 语音 看详情）'
-export const DOCTOR_VOICE_HINT_BOTH = '（/aha 自检 生图 或 /aha 自检 语音 看详情）'
+export const DOCTOR_VOICE_HINT_BOTH = '（/aha 自检 生图｜语音 看详情）'
 export const VOICE_DOCTOR_HEADER = '语音自检'
 export const VOICE_DOCTOR_CHECK_ERROR_TEXT = '语音自检出错，详情见日志。'
 /** 卡片选项的说明；选项名在 doctor.ts。 */
@@ -725,7 +725,9 @@ export function voiceDoctorBrief(r: VoiceDoctorReport): VoiceDoctorBrief {
   if (!r.configured) return { status: '未配置', flagged: r.problems.length > 0 }
   const s = r.service
   if (s?.credentials) return { status: '不可用：地址带账号密码', flagged: true }
-  if (s && !s.connected) return { status: s.launching ? '不可用：正在启动' : '未启动', flagged: true }
+  if (s && !s.connected) {
+    return { status: s.launching ? '启动中' : s.lastFailure ? '未启动（上次启动失败）' : '未启动', flagged: true }
+  }
   if (r.player && !r.player.found) return { status: '不可用：没有播放器', flagged: true }
   return { status: '可用', flagged: false }
 }
@@ -735,6 +737,7 @@ export const voiceBriefText = (b: VoiceDoctorBrief): string => `语音 ${b.statu
 
 /** 卡片自检结束的一行回执。 */
 export function voiceDoctorCardReceipt(r: VoiceDoctorReport, trial?: VoiceTrial): Reply {
+  if (trial?.status === 'cancelled') return guide('语音自检：全部通过，试念被打断，没有念完。')
   if (trial?.status === 'ok') return guide(`语音自检：全部通过，试念成功（${trial.sentences} 句，${trial.seconds} 秒）。`)
   if (trial?.status === 'failed') return guide(`语音自检：全部通过，试念失败（${speakFailText(trial.kind)}）。`)
   const n = voiceDoctorIssues(r).length

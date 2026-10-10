@@ -207,6 +207,14 @@ describe('checkVoice：代为启动的条件', () => {
     expect(text).toContain('模型还没下载')
   })
 
+  it('给了已知的目录大小：不再统计，报告沿用它', async () => {
+    const deps = makeDeps()
+    const known = { env: 1, hf: 2 }
+    const r = await checkVoice(deps, { detail: true, knownSizes: known })
+    expect(deps.inspect).toHaveBeenCalledWith(expect.anything(), { sizes: false })
+    expect(r.launch?.sizes).toEqual(known)
+  })
+
   it('一行小结那条路径不统计目录大小、不查已加载的模型', async () => {
     const deps = makeDeps({ inspect: vi.fn(async () => up()) })
     const r = await checkVoice(deps, { detail: false })
@@ -289,12 +297,12 @@ describe('一行小结', () => {
       .toEqual({ status: '不可用：没有播放器', flagged: true })
   })
 
-  it('不可用：地址带账号密码；正在启动', async () => {
+  it('不可用：地址带账号密码；启动中', async () => {
     cfg = { configured: true, settings: settings({ endpoint: 'http://u:p@10.0.0.1:8000' }), problems: [] }
     expect(voiceDoctorBrief(await reportOf()).status).toBe('不可用：地址带账号密码')
     cfg = { configured: true, settings: settings(), problems: [] }
     const starting = await reportOf({ launchOf: vi.fn(() => ({ stage: 'start' as const, startedAt: 1, finished: false })) })
-    expect(voiceDoctorBrief(starting).status).toBe('不可用：正在启动')
+    expect(voiceDoctorBrief(starting)).toEqual({ status: '启动中', flagged: true })
   })
 
   it('"可用"只看已配置、连得上、有播放器：角色没音色、配置有小问题、有朗读错误都不影响', async () => {
@@ -310,8 +318,16 @@ describe('一行小结', () => {
     expect(voiceDoctorBrief(await reportOf())).toEqual({ status: '未配置', flagged: true })
   })
 
+  it('连不上且上次启动失败：未启动（上次启动失败），仍提示看详情', async () => {
+    const failed = { stage: 'start' as const, startedAt: 1, finished: true, failure: '等待服务启动超时' }
+    expect(voiceDoctorBrief(await reportOf({ launchOf: vi.fn(() => failed) })))
+      .toEqual({ status: '未启动（上次启动失败）', flagged: true })
+    // 连上了就不提失败
+    expect(voiceDoctorBrief(await reportOf(upDeps({ launchOf: vi.fn(() => failed) }))).status).toBe('可用')
+  })
+
   it('每种状态都不超过 20 个字', async () => {
-    const lines = ['未配置', '未启动', '可用', '不可用：没有播放器', '不可用：地址带账号密码', '不可用：正在启动']
+    const lines = ['未配置', '未启动', '可用', '不可用：没有播放器', '不可用：地址带账号密码', '启动中', '未启动（上次启动失败）']
     for (const l of lines) expect([...`语音 ${l}`].length).toBeLessThanOrEqual(20)
   })
 })
@@ -332,6 +348,8 @@ describe('doctorLine 里的语音小结', () => {
     expect(only(false, true).endsWith(DOCTOR_VOICE_HINT)).toBe(true)
     expect(only(true, false).endsWith('（/aha 自检 生图 看详情）')).toBe(true)
     expect(only(true, true).endsWith(DOCTOR_VOICE_HINT_BOTH)).toBe(true)
+    expect(DOCTOR_VOICE_HINT_BOTH).toBe('（/aha 自检 生图｜语音 看详情）')
+    expect(DOCTOR_VOICE_HINT).toBe('（/aha 自检 语音 看详情）')
   })
 
   it('没有语音小结时与原来一模一样', () => {
@@ -390,6 +408,11 @@ describe('Markdown 与一行文字', () => {
     expect(voiceDoctorCardReceipt(ok, { status: 'failed', kind: 'timeout' }).text)
       .toBe('语音自检：全部通过，试念失败（合成超时）。')
     expect(voiceDoctorCardReceipt(await reportOf()).text).toBe('语音自检：1 项未通过。')
+  })
+
+  it('试念被打断的回执', async () => {
+    const ok = await reportOf(upDeps())
+    expect(voiceDoctorCardReceipt(ok, { status: 'cancelled' }).text).toBe('语音自检：全部通过，试念被打断，没有念完。')
   })
 
   it('试念结果卡片的正文', () => {
@@ -678,6 +701,23 @@ describe('doctorHandler：语音', () => {
       const r = await doctorHandler(inv('setup', '语音', { signal: ac.signal }))
       expect(r.text).toBe('自检已取消。')
       expect(askFn).toHaveBeenCalledTimes(1)
+    })
+
+    it('试念被别的朗读顶掉（卡片没取消）：回执说明没念完', async () => {
+      mocks.speaker.speakAndWait.mockResolvedValue({ status: 'stopped' })
+      script({ 'voice-doctor': [OPT_TRIAL_SPEAK] })
+      const r = await doctorHandler(inv('setup', '语音'))
+      expect(askFn).toHaveBeenCalledTimes(1)
+      expect(r.text).toBe('语音自检：全部通过，试念被打断，没有念完。')
+    })
+
+    it('目录大小只在第一次检查时统计，重新检查与启动服务之后沿用', async () => {
+      mocks.inspect.mockResolvedValueOnce(info()).mockResolvedValueOnce(info()).mockResolvedValue(up())
+      script({ 'voice-doctor': [OPT_RECHECK, OPT_START_SERVICE, OPT_CLOSE] })
+      await doctorHandler(inv('setup', '语音'))
+      const sizesFlags = mocks.inspect.mock.calls.map((c) => c[2].sizes)
+      expect(sizesFlags).toEqual([true, false, false])
+      expect(cards().every((c) => c.detail.includes('运行环境 512 MB，模型 1.9 GB'))).toBe(true)
     })
 
     it('没连上、launch: mlx、平台支持、有 uv：启动服务 / 重新检查 / 关闭', async () => {

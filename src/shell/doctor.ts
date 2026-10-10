@@ -167,7 +167,15 @@ async function voiceBrief(inv: Invocation): Promise<{ text: string; hint: boolea
 /** 语音卡片流程：显示报告；能念就可试念，能代为启动就可启动，否则可重新检查。 */
 async function voiceCardFlow(inv: Invocation, ask: AskFn): Promise<Reply> {
   const deps = voiceDeps(inv)
-  const check = () => checkVoice(deps, { detail: true, ...(inv.signal ? { signal: inv.signal } : {}) })
+  // 目录大小只在第一次检查时统计，之后沿用，免得反复遍历运行环境目录
+  let sizes: { env: number; hf: number } | undefined
+  const check = async () => {
+    const r = await checkVoice(deps, {
+      detail: true, ...(sizes ? { knownSizes: sizes } : {}), ...(inv.signal ? { signal: inv.signal } : {}),
+    })
+    sizes ??= r.launch?.sizes
+    return r
+  }
   const canLaunch = inv.rt.handlers.voice !== undefined
   let report = await check()
   let note: string | undefined
@@ -192,6 +200,7 @@ async function voiceCardFlow(inv: Invocation, ask: AskFn): Promise<Reply> {
         const result = await trialSpeak(deps, inv.signal)
         if (result.status === 'cancelled') {
           if (inv.signal?.aborted) return cancelledReply()
+          trial = result // 被别的朗读顶掉
           break
         }
         trial = result
