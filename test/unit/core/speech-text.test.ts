@@ -221,4 +221,10 @@ describe('breakPauseSeconds', () => {
     expect(breakPauseSeconds(100000, 9)).toBeLessThanOrEqual(10)
     near(12, 9, 9)
   })
+
+  it('非有限的输入不会得到非有限的停顿', () => {
+    expect(breakPauseSeconds(5, Number.POSITIVE_INFINITY)).toBe(0)
+    expect(breakPauseSeconds(5, Number.NaN)).toBe(0)
+    expect(breakPauseSeconds(Number.POSITIVE_INFINITY, 2.5)).toBe(5)
+  })
 })

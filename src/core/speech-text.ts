@@ -256,11 +256,11 @@ export function planSpeech(reply: string, options: SpeechPlanOptions): SpeechPla
  * n 为 0（只是换段）按 PARAGRAPH_PAUSE_CHARS 个字算。pauseSeconds 不大于下限（含 0）时不走曲线，一律返回它自己。
  */
 export function breakPauseSeconds(skippedChars: number, pauseSeconds: number): number {
-  const p = pauseSeconds
-  if (!(p > MIN_PAUSE_SECONDS)) return Math.max(0, p || 0)
+  const p = Number.isFinite(pauseSeconds) ? pauseSeconds : 0
+  if (!(p > MIN_PAUSE_SECONDS)) return Math.max(0, p)
   const max = Math.min(MAX_VOICE_PAUSE_SECONDS, PAUSE_MAX_FACTOR * p)
   if (p >= max) return p
   const m = skippedChars > 0 ? skippedChars : PARAGRAPH_PAUSE_CHARS
   const k = -Math.log(1 - (p - MIN_PAUSE_SECONDS) / (max - MIN_PAUSE_SECONDS)) / PAUSE_BASE_CHARS
-  return MIN_PAUSE_SECONDS + (max - MIN_PAUSE_SECONDS) * (1 - Math.exp(-k * m))
+  return Math.min(max, MIN_PAUSE_SECONDS + (max - MIN_PAUSE_SECONDS) * (1 - Math.exp(-k * m)))
 }
