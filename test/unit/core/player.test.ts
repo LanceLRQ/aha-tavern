@@ -126,9 +126,40 @@ describe('play', () => {
     at(children, 0).emit('exit', 0, null)
     await p
     expect(at(children, 0).listenerCount('exit')).toBe(0)
-    expect(at(children, 0).listenerCount('error')).toBe(0)
+    // 只剩一个吞错的空监听器
+    expect(at(children, 0).listenerCount('error')).toBe(1)
     ac.abort()
     expect(at(children, 0).killed).toBe(0)
+  })
+
+  it('abort 之后进程再发 error 或 exit 都不抛', async () => {
+    const { spawn, children } = fakeSpawn()
+    const ac = new AbortController()
+    const p = play(player, '/a.wav', { spawn, signal: ac.signal })
+    ac.abort()
+    expect(await kindOf(p)).toBe('cancelled')
+    expect(() => at(children, 0).emit('error', new Error('EPERM'))).not.toThrow()
+    expect(() => at(children, 0).emit('exit', null, 'SIGTERM')).not.toThrow()
+  })
+
+  it('error 之后再发 error 或 exit 不抛，只结算一次', async () => {
+    const { spawn, children } = fakeSpawn()
+    const p = play(player, '/a.wav', { spawn })
+    at(children, 0).emit('error', new Error('first'))
+    expect(await kindOf(p)).toBe('spawn-failed')
+    expect(() => at(children, 0).emit('error', new Error('second'))).not.toThrow()
+    expect(() => at(children, 0).emit('exit', 0, null)).not.toThrow()
+  })
+
+  it('kill 同步抛错时仍以取消结束', async () => {
+    const { spawn, children } = fakeSpawn()
+    const ac = new AbortController()
+    const p = play(player, '/a.wav', { spawn, signal: ac.signal })
+    at(children, 0).kill = () => {
+      throw new Error('EPERM')
+    }
+    ac.abort()
+    expect(await kindOf(p)).toBe('cancelled')
   })
 
   it('被信号杀死（code 为 null）归为播放失败', async () => {

@@ -1,6 +1,7 @@
 // 本机播放与音频转换：找播放器、播一个文件、macOS 上把任意音频转成 wav。
 // 与宿主无关；起进程与探测可执行文件一律用调用方注入的 spawn / which / platform。错误原文只放 detail。
 
+/** 'no-player' 本模块不抛，由调用方在 findPlayer 返回 null 时使用。 */
 export type PlayerErrorKind = 'no-player' | 'spawn-failed' | 'play-failed' | 'cancelled' | 'convert-failed'
 
 const DETAIL_MAX = 2000
@@ -55,6 +56,8 @@ export async function findPlayer(opts: { platform: string; which: WhichFn }): Pr
   return null
 }
 
+const ignore = () => {}
+
 /** 起进程跑到结束：非零退出归 failKind，起不来归 spawn-failed，signal 触发时杀进程并以取消结束。 */
 function runProcess(
   spawn: PlayerSpawn,
@@ -75,6 +78,8 @@ function runProcess(
     const cleanup = () => {
       child.off('exit', onExit)
       child.off('error', onError)
+      // 结算后进程仍可能再发 error（如 kill 失败），留一个空监听器吞掉，免得变成未捕获异常
+      child.on('error', ignore)
       signal?.removeEventListener('abort', onAbort)
     }
     const onExit = (code: number | null, sig: NodeJS.Signals | null) => {
@@ -88,8 +93,12 @@ function runProcess(
     }
     const onAbort = () => {
       cleanup()
-      child.kill()
       reject(new PlayerError('cancelled'))
+      try {
+        child.kill()
+      } catch {
+        // 结束进程失败不影响取消的结果
+      }
     }
     child.on('exit', onExit)
     child.on('error', onError)
