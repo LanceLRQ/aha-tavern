@@ -108,6 +108,8 @@ interface Run {
   ahead: Promise<Ready> | null
   /** 正在播放一句 */
   playing: boolean
+  /** 上一句播完的时刻；还没播过为 null。句间停顿从这里起算 */
+  lastPlayEnd: number | null
   finished: Promise<void>
   /** 这一段的结局；收尾前一直是 stopped（被停下或顶掉就是这个）。 */
   outcome: SpeakOutcome
@@ -126,7 +128,7 @@ export class Speaker {
     if (req.sentences.length === 0) return
     this.begin({
       owner: req.owner, player: req.player, req, queue: req.sentences.map((text, i) => ({ text, gap: req.gaps?.[i] ?? 'none' })), ctl: new AbortController(), files: new Set(),
-      closed: false, client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false,
+      closed: false, client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false, lastPlayEnd: null,
       finished: Promise.resolve(), outcome: { status: 'stopped' },
     })
   }
@@ -161,7 +163,7 @@ export class Speaker {
     if (opts.signal?.aborted) return { status: 'stopped' }
     const run: Run = {
       owner: opts.owner, player: opts.player, req: null, queue: [], ctl: new AbortController(), files: new Set(),
-      closed: false, client: null, ahead: Promise.resolve({ file, gap: 'none' }), playing: false, finished: Promise.resolve(),
+      closed: false, client: null, ahead: Promise.resolve({ file, gap: 'none' }), playing: false, lastPlayEnd: null, finished: Promise.resolve(),
       outcome: { status: 'stopped' },
     }
     this.begin(run)
@@ -248,7 +250,7 @@ export class Speaker {
           await this.waitPrevious(before)
         }
         // 等待期间合成已在领先；stop 或被顶掉时等待立即结束，不再播放
-        const pauseMs = this.pauseMs(run, gap)
+        const pauseMs = this.pauseMs(run, gap) - (run.lastPlayEnd === null ? 0 : this.deps.now() - run.lastPlayEnd)
         if (pauseMs > 0) {
           await this.deps.sleep(pauseMs, run.ctl.signal)
           if (run.ctl.signal.aborted) break
@@ -258,6 +260,7 @@ export class Speaker {
           await this.deps.play(run.player, file, { signal: run.ctl.signal })
         } finally {
           run.playing = false
+          run.lastPlayEnd = this.deps.now()
         }
         // 只删自己合成的临时文件；现成文件归调用方管
         if (run.files.delete(file)) await this.drop(file)

@@ -50,6 +50,7 @@ function harness(opts: { auto?: boolean; honorAbort?: boolean; playIgnoresAbort?
   const disk = new Map<string, Uint8Array>()
   const synths: Synth[] = []
   const plays: Play[] = []
+  const clock = { t: 1000 }
   const sleeps: { ms: number; aborted: boolean; end(): void }[] = []
   const endpoints: string[] = []
   let seq = 0
@@ -91,11 +92,11 @@ function harness(opts: { auto?: boolean; honorAbort?: boolean; playIgnoresAbort?
     tempFile: () => `/tmp/aha-${++seq}.wav`,
     writeFile: async (f, b) => { disk.set(f, b) },
     removeFile: async (f) => { disk.delete(f) },
-    now: () => 1000,
+    now: () => clock.t,
     settleLimitMs: 50,
     log,
   }
-  return { deps, disk, synths, plays, sleeps, endpoints, client, log }
+  return { deps, clock, disk, synths, plays, sleeps, endpoints, client, log }
 }
 
 const req = (sentences: string[], over: Partial<SpeakRequest> = {}): SpeakRequest => ({
@@ -162,6 +163,49 @@ describe('Speaker 句间停顿', () => {
     expect(h.sleeps[0]!.aborted).toBe(true)
     expect(h.plays.map((p) => p.file)).toHaveLength(2) // 旧段第一句 + 新段第一句
     expect(h.synths.map((x) => x.text)).toEqual(['一一一', '二二二', '新新新'])
+  })
+
+  describe('停顿从上一句播完起算', () => {
+    async function run(elapsedMs: number, gaps: ('none' | 'break' | 'inline')[] = ['none', 'break']) {
+      const h = harness({ auto: false, manualSleep: true })
+      const sp = new Speaker(h.deps)
+      sp.speak(gapped(['一一一', '二二二'], gaps))
+      await settle()
+      h.synths[0]!.done()
+      await settle()
+      h.plays[0]!.end() // 此刻记下播完时间
+      await settle()
+      h.clock.t += elapsedMs // 第二句合成花了这么久
+      h.synths[1]!.done()
+      await settle()
+      return { h, sp }
+    }
+    it('合成瞬时完成：等满设定值', async () => {
+      const { h, sp } = await run(0)
+      expect(h.sleeps.map((x) => x.ms)).toEqual([2500])
+      await sp.stop()
+    })
+    it('合成耗时小于停顿：只补差额', async () => {
+      const { h, sp } = await run(1000)
+      expect(h.sleeps.map((x) => x.ms)).toEqual([1500])
+      await sp.stop()
+    })
+    it('inline 同样从播完起算', async () => {
+      const { h, sp } = await run(200, ['none', 'inline'])
+      expect(h.sleeps.map((x) => x.ms)).toEqual([300])
+      await sp.stop()
+    })
+    it('合成耗时不小于停顿：不再 sleep，直接播放', async () => {
+      const { h } = await run(2500)
+      expect(h.sleeps).toHaveLength(0)
+      expect(h.plays).toHaveLength(2)
+    })
+    it('补差额的等待中 stop 仍立即结束', async () => {
+      const { h, sp } = await run(1000)
+      await sp.stop()
+      expect(h.sleeps[0]!.aborted).toBe(true)
+      expect(h.plays).toHaveLength(1)
+    })
   })
 
   it('pauseSeconds 为 0 时 break 不等待，inline 仍等 0.5 秒', async () => {
