@@ -1,7 +1,9 @@
-// `/aha 语音`：启动、停止、查看本机语音服务。启动要等装环境、起进程、预热模型全部完成才回执；
-// 不用 steer，不触发模型。进程管理在 core/voice-server.ts，这里只负责接线、确认卡片与回执。
+// `/aha 语音`：启动、停止、查看本机语音服务。不用 steer，不触发模型。进程管理在 core/voice-server.ts，
+// 这里只负责接线、确认卡片与回执。
+// 宿主在命令运行期间会锁住同一会话的输入框，所以启动不能等到底：确认卡片同步完成，
+// 之后安装 → 启动 → 预热作为后台任务跑，处理函数最多等 START_WAIT_MS，没完成就回一行"正在启动"。
 import { execFile, spawn } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
+import { statSync } from 'node:fs'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { hasUserInfo, VOICE_MODELS, type VoiceServiceSettings } from '../core/services'
@@ -14,9 +16,10 @@ import { redactUrls } from './draw-doctor'
 import {
   VOICE_CARD_BUSY_TEXT, VOICE_CARD_HEADER, VOICE_CARD_QUESTION, VOICE_OPT_CANCEL, VOICE_OPT_GO, VOICE_USAGE_TEXT,
   voiceAlreadyRunningReceipt, voiceBusyReceipt, voiceCancelledReceipt, voiceCardMarkdown, voiceDeclinedReceipt,
-  voiceInstallFailedReceipt, voiceNeedsCardReceipt, voiceNoUvReceipt, voiceNotConfiguredReceipt,
-  voiceSelfLaunchReceipt, voiceStartedReceipt, voiceStartFailedReceipt, voiceStatusNotConfiguredReceipt,
-  voiceStatusReceipt, voiceStopReceipt, voiceUserInfoReceipt, voiceWarmupFailedReceipt, type Reply,
+  voiceFailureReason, voiceInstallFailedReceipt, voiceLastFailedReceipt, voiceNeedsCardReceipt, voiceNoUvReceipt,
+  voiceNotConfiguredReceipt, voiceProgressReceipt, voiceSelfLaunchReceipt, voiceStartedReceipt, voiceStartFailedReceipt,
+  voiceStartingReceipt, voiceStatusNotConfiguredReceipt, voiceStatusReceipt, voiceStopReceipt, voiceUserInfoReceipt,
+  voiceWarmupFailedReceipt, type Reply, type VoiceStage,
 } from './receipts'
 import type { Runtime } from './runtime'
 
@@ -27,32 +30,32 @@ const BUILTIN_VOICE_FILE = 'voice-ref.wav'
 const WARMUP_TEXT = '你好。'
 const WARMUP_TIMEOUT_MS = 30 * 60 * 1000
 const CLEANUP_LIMIT_MS = 5000
+const MODELS_PROBE_MS = 2000
+/** 启动命令最多同步等多久；没完成就转后台。 */
+export const START_WAIT_MS = 8000
 const QUESTION_ID = 'voice-start'
 
 /** 随包参考录音的绝对路径与对应文字；预热与自检的"试念一句"用。 */
 export function builtinVoice(rt: Pick<Runtime, 'builtinAssetsDir'>): { file: string; text: string } {
-  if (!rt.builtinAssetsDir) throw new Error('运行时没有提供随包资源目录')
   return { file: path.join(rt.builtinAssetsDir, BUILTIN_VOICE_FILE), text: BUILTIN_VOICE_TEXT }
 }
 
-/** 语音相关的运行时成员在 createRuntime 里一并提供；测试用的精简运行时可以不带。 */
-function serverDepsOf(rt: Runtime): VoiceServerDeps {
-  if (!rt.voiceServerDeps) throw new Error('运行时没有提供语音服务的进程管理')
-  return rt.voiceServerDeps()
-}
-
 // ---------- 真实的进程管理依赖 ----------
+
+function isFile(file: string): boolean {
+  try {
+    return statSync(file).isFile()
+  } catch {
+    return false
+  }
+}
 
 function whichOnPath(name: string): string | null {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!dir) continue
     const file = path.join(dir, name)
-    try {
-      accessSync(file, constants.X_OK)
-      return file
-    } catch {
-      // 下一个目录
-    }
+    // 可执行位由 spawn 时检验；这里只排除同名目录与不存在的路径
+    if (isFile(file)) return file
   }
   return null
 }
@@ -75,7 +78,7 @@ export function createVoiceServerDeps(): VoiceServerDeps {
     },
     commandOf: (pid) =>
       new Promise((resolve) => {
-        execFile('ps', ['-o', 'command=', '-p', String(pid)], (err, stdout) => {
+        execFile('ps', ['-o', 'command=', '-p', String(pid)], { timeout: 3000 }, (err, stdout) => {
           const text = String(stdout).trim()
           resolve(err || text === '' ? null : text)
         })
@@ -99,7 +102,9 @@ export interface VoiceOps {
   start: typeof server.start
   stop: typeof server.stop
   modelDownloaded: typeof server.modelDownloaded
-  createClient(endpoint: string): Pick<TtsClient, 'synthesize'>
+  createClient(endpoint: string): Pick<TtsClient, 'synthesize' | 'probe'>
+  now(): number
+  sleep(ms: number): Promise<void>
 }
 
 export const realVoiceOps: VoiceOps = {
@@ -109,20 +114,45 @@ export const realVoiceOps: VoiceOps = {
   stop: server.stop,
   modelDownloaded: server.modelDownloaded,
   createClient: (endpoint) => createTtsClient({ endpoint, fetch: globalThis.fetch }),
+  now: Date.now,
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 }
 
-// ---------- 预热的取消登记（按权重目录） ----------
+// ---------- 启动任务的状态（模块级） ----------
+// 筹备与单聊是同一进程里的两个插件实例，共用这份状态；按权重目录索引。
+// 每个目录只保留进行中或最近一次的启动，再次启动时清掉上一次的结果。
 
-const warmups = new Map<string, AbortController>()
+type Outcome = { kind: 'ok' } | { kind: 'cancelled' } | { kind: 'failed'; reason: string }
 
-/** 取消该目录上进行中的预热；没有则什么也不做。 */
-export function abortWarmup(modelsDir: string): void {
-  warmups.get(modelsDir)?.abort()
+interface Launch {
+  phase: VoiceStage
+  startedAt: number
+  ctl: AbortController
+  finished: boolean
+  outcome?: Outcome
+  /** 最终回执；从不拒绝。 */
+  done: Promise<Reply>
+}
+const launches = new Map<string, Launch>()
+
+/** 打断该目录上进行中的启动（取消 install/start，预热也随之取消）；没有则什么也不做。 */
+export function abortLaunch(modelsDir: string): void {
+  const l = launches.get(modelsDir)
+  if (l && !l.finished) l.ctl.abort()
 }
 
-/** 本插件实例启动的服务（用于卸载时收尾）。 */
+/** 清掉启动历史并打断进行中的启动；只给测试用，免得模块级状态在用例之间串味。 */
+export function resetLaunchesForTest(): void {
+  for (const l of launches.values()) if (!l.finished) l.ctl.abort()
+  launches.clear()
+}
+
+/** 本插件实例启动的服务与进行中的启动（用于卸载时收尾）。 */
 export interface VoiceInstanceState {
-  started: VoiceServiceSettings | null
+  /** 本实例启动成功的服务；pid 用来在收尾时核对它还是不是自己的。 */
+  started: { settings: VoiceServiceSettings; pid: number } | null
+  /** 本实例发起、尚未结束的启动。 */
+  launching: VoiceServiceSettings | null
 }
 
 // ---------- 处理函数 ----------
@@ -161,35 +191,101 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     }
   }
 
-  async function warmup(inv: Invocation, s: VoiceServiceSettings): Promise<Reply | null> {
-    const { rt, signal } = inv
-    const ctl = new AbortController()
-    warmups.set(s.modelsDir, ctl)
-    const onOuter = () => ctl.abort()
-    if (signal?.aborted) ctl.abort()
-    else signal?.addEventListener('abort', onOuter, { once: true })
+  /** 用随包录音发一次很短的克隆合成，触发模型下载与加载。返回失败回执，成功为 null。 */
+  async function warmup(rt: Runtime, s: VoiceServiceSettings, launch: Launch): Promise<{ reply: Reply; outcome: Outcome } | null> {
     try {
       const ref = builtinVoice(rt)
       await ops.createClient(s.endpoint).synthesize(
         { kind: 'clone', model: s.model, text: WARMUP_TEXT, refAudio: ref.file, refText: ref.text, language: s.language },
-        { timeoutMs: WARMUP_TIMEOUT_MS, signal: ctl.signal },
+        { timeoutMs: WARMUP_TIMEOUT_MS, signal: launch.ctl.signal },
       )
       return null
     } catch (e) {
       const kind = e instanceof TtsError ? e.kind : 'other'
       const detail = e instanceof TtsError ? e.detail || e.message : (e as Error).message
       rt.log.warn(`语音预热失败（${kind}）：${redactUrls(detail)}`)
-      return kind === 'cancelled' ? voiceCancelledReceipt() : voiceWarmupFailedReceipt(kind)
-    } finally {
-      signal?.removeEventListener('abort', onOuter)
-      if (warmups.get(s.modelsDir) === ctl) warmups.delete(s.modelsDir)
+      // 后台任务不接宿主的取消信号，预热被取消只会来自"停止"命令或卸载
+      if (kind === 'cancelled' || launch.ctl.signal.aborted) return { reply: voiceCancelledReceipt(), outcome: { kind: 'cancelled' } }
+      return {
+        reply: voiceWarmupFailedReceipt(kind, s.modelsDir),
+        outcome: { kind: 'failed', reason: voiceFailureReason('warmup', kind) },
+      }
     }
   }
 
+  /** 后台任务：install → start → 预热。结果写进 launch.outcome，返回最终回执。 */
+  async function runLaunch(
+    rt: Runtime, s: VoiceServiceSettings, launch: Launch, plan: { install: boolean; offline: boolean },
+  ): Promise<Reply> {
+    const deps = rt.voiceServerDeps()
+    const signal = launch.ctl.signal
+    const end = (reply: Reply, outcome: Outcome): Reply => {
+      launch.outcome = outcome
+      return reply
+    }
+    if (plan.install) {
+      launch.phase = 'install'
+      const r = await ops.install(s, deps, {
+        signal,
+        onLog: (line) => rt.log.debug(`语音安装：${redactUrls(line)}`),
+      })
+      if (!r.ok) {
+        rt.log.warn(`语音运行环境安装未完成（${r.kind}）：${redactUrls(r.detail)}`)
+        if (r.kind === 'cancelled') return end(voiceCancelledReceipt(), { kind: 'cancelled' })
+        if (r.kind === 'busy') return end(voiceBusyReceipt(), { kind: 'failed', reason: voiceFailureReason('install', r.kind) })
+        if (r.kind === 'no-uv') return end(voiceNoUvReceipt(), { kind: 'failed', reason: voiceFailureReason('install', r.kind) })
+        return end(voiceInstallFailedReceipt(r.kind), { kind: 'failed', reason: voiceFailureReason('install', r.kind) })
+      }
+    }
+
+    launch.phase = 'start'
+    const started = await ops.start(s, deps, { signal, offline: plan.offline })
+    if (!started.ok) {
+      rt.log.warn(`语音服务启动未完成（${started.kind}）：${redactUrls(started.detail)}`)
+      if (started.kind === 'cancelled') return end(voiceCancelledReceipt(), { kind: 'cancelled' })
+      const failed: Outcome = { kind: 'failed', reason: voiceFailureReason('start', started.kind) }
+      return end(started.kind === 'busy' ? voiceBusyReceipt() : voiceStartFailedReceipt(started.kind), failed)
+    }
+    if (started.alreadyRunning) return end(voiceAlreadyRunningReceipt(true), { kind: 'ok' })
+    // 进程起来就记标记，哪怕预热还没完成
+    state.started = { settings: s, pid: started.pid }
+
+    launch.phase = 'warmup'
+    const failed = await warmup(rt, s, launch)
+    if (failed) return end(failed.reply, failed.outcome)
+    return end(voiceStartedReceipt(modelLabel(s), s.modelsDir), { kind: 'ok' })
+  }
+
+  function beginLaunch(rt: Runtime, s: VoiceServiceSettings, plan: { install: boolean; offline: boolean }): Launch {
+    const launch: Launch = {
+      phase: plan.install ? 'install' : 'start',
+      startedAt: ops.now(),
+      ctl: new AbortController(),
+      finished: false,
+      done: Promise.resolve({ kind: 'success', text: '' }),
+    }
+    launches.set(s.modelsDir, launch)
+    state.launching = s
+    launch.done = runLaunch(rt, s, launch, plan)
+      .catch((e): Reply => {
+        // 后台任务里的异常不能变成未处理的拒绝
+        rt.log.error(`语音服务启动出错：${redactUrls((e as Error).stack ?? String(e))}`)
+        launch.outcome = { kind: 'failed', reason: '内部错误，详情见日志' }
+        return { kind: 'error', text: '语音服务启动出错，详情见日志。' }
+      })
+      .finally(() => {
+        launch.finished = true
+        if (state.launching?.modelsDir === s.modelsDir) state.launching = null
+      })
+    return launch
+  }
+
   async function startFlow(inv: Invocation, s: VoiceServiceSettings): Promise<Reply> {
-    const { rt, signal } = inv
-    const deps = serverDepsOf(rt)
-    const info = await ops.inspect(s, deps)
+    const { rt } = inv
+    const deps = rt.voiceServerDeps()
+    const running = launches.get(s.modelsDir)
+    if (running && !running.finished) return voiceBusyReceipt()
+    const info = await ops.inspect(s, deps, { sizes: false })
     if (info.reachable) return voiceAlreadyRunningReceipt(info.owned !== null)
     if (s.launch !== 'mlx') return voiceSelfLaunchReceipt('launch')
     if (!info.supported) return voiceSelfLaunchReceipt('platform')
@@ -207,7 +303,7 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
       const item: AskItem = {
         id: QUESTION_ID, header: VOICE_CARD_HEADER, question: VOICE_CARD_QUESTION, detail,
         options: [
-          { label: VOICE_OPT_GO, description: '安装并启动，等待时界面照常可用' },
+          { label: VOICE_OPT_GO, description: '安装并启动，可能要几分钟，期间可以用 /aha 语音 状态 查看进度' },
           { label: VOICE_OPT_CANCEL, description: '什么都不做' },
         ],
       }
@@ -216,41 +312,44 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
       if (choice === 'busy') return { kind: 'success', text: VOICE_CARD_BUSY_TEXT }
       if (choice === 'cancelled') return voiceCancelledReceipt()
       if (choice === 'declined') return voiceDeclinedReceipt()
+      // 卡片等待期间可能有别处抢先开始了
+      const raced = launches.get(s.modelsDir)
+      if (raced && !raced.finished) return voiceBusyReceipt()
     }
 
-    if (!info.envInstalled) {
-      const r = await ops.install(s, deps, {
-        ...(signal ? { signal } : {}),
-        onLog: (line) => rt.log.debug(`语音安装：${redactUrls(line)}`),
-      })
-      if (!r.ok) {
-        rt.log.warn(`语音运行环境安装未完成（${r.kind}）：${redactUrls(r.detail)}`)
-        if (r.kind === 'cancelled') return voiceCancelledReceipt()
-        if (r.kind === 'busy') return voiceBusyReceipt()
-        if (r.kind === 'no-uv') return voiceNoUvReceipt()
-        return voiceInstallFailedReceipt(r.kind)
+    // 权重已在本地时让服务离线启动，免得去查连不上的仓库
+    const launch = beginLaunch(rt, s, { install: !info.envInstalled, offline: info.modelDownloaded })
+    const early = await Promise.race([launch.done, ops.sleep(START_WAIT_MS).then(() => null)])
+    return early ?? voiceStartingReceipt(launch.phase)
+  }
+
+  async function statusFlow(inv: Invocation, s: VoiceServiceSettings): Promise<Reply> {
+    const { rt } = inv
+    const last = launches.get(s.modelsDir)
+    if (last && !last.finished) {
+      return voiceProgressReceipt(last.phase, Math.max(0, Math.round((ops.now() - last.startedAt) / 1000)))
+    }
+    const info = await ops.inspect(s, rt.voiceServerDeps(), { sizes: false })
+    if (!info.reachable && last?.outcome?.kind === 'failed') {
+      return voiceLastFailedReceipt(last.outcome.reason, s.modelsDir)
+    }
+    let loaded: boolean | null = null
+    if (info.reachable) {
+      try {
+        loaded = (await ops.createClient(s.endpoint).probe(MODELS_PROBE_MS)).includes(s.model)
+      } catch {
+        loaded = null
       }
     }
-
-    const started = await ops.start(s, deps, signal ? { signal } : {})
-    if (!started.ok) {
-      rt.log.warn(`语音服务启动未完成（${started.kind}）：${redactUrls(started.detail)}`)
-      if (started.kind === 'cancelled') return voiceCancelledReceipt()
-      if (started.kind === 'busy') return voiceBusyReceipt()
-      return voiceStartFailedReceipt(started.kind)
-    }
-    if (started.alreadyRunning) return voiceAlreadyRunningReceipt(true)
-    state.started = s
-
-    const failed = await warmup(inv, s)
-    return failed ?? voiceStartedReceipt(modelLabel(s), s.modelsDir)
+    return voiceStatusReceipt({
+      reachable: info.reachable, ours: info.owned !== null, busy: info.busy, model: modelLabel(s), loaded,
+    })
   }
 
   return async (inv) => {
     const action = parseVoiceArgs(inv.args)
     if (action === 'usage') return { kind: 'success', text: VOICE_USAGE_TEXT }
     const { rt } = inv
-    if (!rt.voiceSettings) throw new Error('运行时没有提供语音服务的配置')
     const cfg = await rt.voiceSettings()
     if (!cfg.configured) {
       return action === 'status' ? voiceStatusNotConfiguredReceipt() : voiceNotConfiguredReceipt()
@@ -258,16 +357,16 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     const s = cfg.settings
     if (hasUserInfo(s.endpoint)) return voiceUserInfoReceipt()
 
-    if (action === 'status') {
-      const info = await ops.inspect(s, serverDepsOf(rt))
-      return voiceStatusReceipt({ reachable: info.reachable, ours: info.owned !== null, busy: info.busy, model: modelLabel(s) })
-    }
+    if (action === 'status') return statusFlow(inv, s)
     if (action === 'stop') {
-      abortWarmup(s.modelsDir)
-      const r = await ops.stop(s, serverDepsOf(rt))
-      if (r.status === 'stopped' && state.started?.modelsDir === s.modelsDir) state.started = null
+      abortLaunch(s.modelsDir)
+      const r = await ops.stop(s, rt.voiceServerDeps())
+      if (r.status === 'stopped' && state.started?.settings.modelsDir === s.modelsDir) state.started = null
       return voiceStopReceipt(r.status)
     }
+    // 再次启动前清掉上次的结果
+    const prev = launches.get(s.modelsDir)
+    if (prev?.finished) launches.delete(s.modelsDir)
     return startFlow(inv, s)
   }
 }
@@ -279,27 +378,44 @@ export interface InstallVoiceOptions {
 }
 
 /**
- * 登记 voice 处理函数，并在插件卸载、宿主退出时停掉本实例启动的服务。
+ * 登记 voice 处理函数，并在插件卸载、宿主退出时收尾：打断本实例进行中的启动，
+ * 并停掉本实例启动的服务（先用 server.pid 核对进程号，不是自己启动的那个就只清标记）。
  * 用 ctx.effect 而不是 ctx.on('dispose')（实测后者不触发）。
  */
 export function installVoice(rt: Runtime, ctx: Context, opts: InstallVoiceOptions = {}): void {
   const ops = opts.ops ?? realVoiceOps
   const limit = opts.cleanupLimitMs ?? CLEANUP_LIMIT_MS
-  const state: VoiceInstanceState = { started: null }
+  const state: VoiceInstanceState = { started: null, launching: null }
   rt.handlers.voice = createVoiceHandler(state, ops)
+
+  async function cleanup(): Promise<void> {
+    const launching = state.launching
+    if (launching) {
+      abortLaunch(launching.modelsDir)
+      // 等任务清理完（install/start 取消时会自己结束子进程）
+      await launches.get(launching.modelsDir)?.done
+    }
+    const started = state.started
+    if (!started) return
+    state.started = null
+    const deps = rt.voiceServerDeps()
+    const info = await ops.inspect(started.settings, deps, { sizes: false })
+    if (info.owned?.pid !== started.pid) {
+      rt.log.debug('卸载收尾：服务已不是本实例启动的那个进程，不停')
+      return
+    }
+    await ops.stop(started.settings, deps)
+  }
+
   const effect = (ctx as unknown as { effect(fn: () => () => unknown): unknown }).effect
   effect.call(ctx, () => async () => {
-    const s = state.started
-    if (!s) return
-    state.started = null
-    abortWarmup(s.modelsDir)
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<'timeout'>((r) => { timer = setTimeout(() => r('timeout'), limit) })
     try {
-      const done = await Promise.race([ops.stop(s, serverDepsOf(rt)), timeout])
-      if (done === 'timeout') rt.log.warn('卸载时停止语音服务超时，交给看门进程回收')
+      const done = await Promise.race([cleanup().then(() => 'done' as const), timeout])
+      if (done === 'timeout') rt.log.warn('卸载时收尾语音服务超时，交给看门进程回收')
     } catch (e) {
-      rt.log.warn(`卸载时停止语音服务失败：${redactUrls((e as Error).message)}`)
+      rt.log.warn(`卸载时收尾语音服务失败：${redactUrls((e as Error).message)}`)
     } finally {
       clearTimeout(timer)
     }

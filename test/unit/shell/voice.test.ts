@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VoiceServiceResult, VoiceServiceSettings } from '../../../src/core/services'
 import { TtsError } from '../../../src/core/tts'
 import type { VoiceServerInfo } from '../../../src/core/voice-server'
@@ -7,8 +7,8 @@ import type { Invocation } from '../../../src/shell/context'
 import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
 import { VOICE_OPT_CANCEL, VOICE_OPT_GO } from '../../../src/shell/receipts'
 import {
-  BUILTIN_VOICE_TEXT, abortWarmup, builtinVoice, createVoiceHandler, installVoice, parseVoiceArgs,
-  type VoiceInstanceState, type VoiceOps,
+  BUILTIN_VOICE_TEXT, START_WAIT_MS, abortLaunch, builtinVoice, createVoiceHandler, installVoice, parseVoiceArgs,
+  resetLaunchesForTest, type VoiceInstanceState, type VoiceOps,
 } from '../../../src/shell/voice'
 
 const MODEL_06 = 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit'
@@ -26,6 +26,8 @@ const info = (over: Partial<VoiceServerInfo> = {}): VoiceServerInfo => ({
 let cfg: VoiceServiceResult
 let ops: { [K in keyof VoiceOps]: ReturnType<typeof vi.fn> }
 let synth: ReturnType<typeof vi.fn>
+let probeModels: ReturnType<typeof vi.fn>
+let clock: { t: number }
 let askFn: ReturnType<typeof vi.fn> | undefined
 let gate: SessionGate
 let state: VoiceInstanceState
@@ -41,23 +43,30 @@ const mkInv = (args: string, signal?: AbortSignal): Invocation => ({
   } as any,
 })
 const run = (args: string, signal?: AbortSignal) => createVoiceHandler(state, ops as unknown as VoiceOps)(mkInv(args, signal)) as Promise<{ kind: string; text: string }>
+afterEach(() => resetLaunchesForTest())
 const pick = (label: string) =>
   askFn!.mockImplementation(async (req: any) => ({ answers: [{ id: req.questions[0].id, selected: [label] }] }))
 
 beforeEach(() => {
   cfg = { configured: true, settings: settings(), problems: [] }
   synth = vi.fn().mockResolvedValue({ bytes: new Uint8Array(), format: 'wav' })
+  probeModels = vi.fn().mockResolvedValue([MODEL_06])
+  clock = { t: 1_000_000 }
+  resetLaunchesForTest()
   ops = {
     inspect: vi.fn().mockResolvedValue(info()),
     install: vi.fn().mockResolvedValue({ ok: true }),
     start: vi.fn().mockResolvedValue({ ok: true, pid: 9, alreadyRunning: false }),
     stop: vi.fn().mockResolvedValue({ status: 'stopped', forced: false }),
     modelDownloaded: vi.fn(),
-    createClient: vi.fn(() => ({ synthesize: synth })),
+    createClient: vi.fn(() => ({ synthesize: synth, probe: probeModels })),
+    now: vi.fn(() => clock.t),
+    // 默认永不返回：启动在 8 秒内完成才有最终回执；要测转后台的用例自己放行
+    sleep: vi.fn(() => new Promise<void>(() => undefined)),
   }
   askFn = vi.fn()
   gate = new SessionGate()
-  state = { started: null }
+  state = { started: null, launching: null }
   Object.values(log).forEach((f) => f.mockClear())
 })
 
@@ -97,10 +106,21 @@ describe('状态', () => {
   it('连得上，插件启动的', async () => {
     ops.inspect.mockResolvedValue(info({ reachable: true, owned: { pid: 1, port: 1, startedAt: 1 } }))
     expect((await run('')).text).toBe('语音服务：已在运行（由插件启动），模型 0.6b。')
+    expect(ops.inspect.mock.calls[0]![2]).toEqual({ sizes: false })
+  })
+  it('连得上但模型尚未加载（含外部服务）', async () => {
+    ops.inspect.mockResolvedValue(info({ reachable: true }))
+    probeModels.mockResolvedValue([])
+    expect((await run('')).text).toBe('语音服务：已在运行（外部启动），模型尚未加载（配置为 0.6b）。')
+  })
+  it('连得上但取不到已加载列表：不写模型', async () => {
+    ops.inspect.mockResolvedValue(info({ reachable: true }))
+    probeModels.mockRejectedValue(new Error('x'))
+    expect((await run('')).text).toBe('语音服务：已在运行（外部启动）。')
   })
   it('连得上，外部启动的', async () => {
     ops.inspect.mockResolvedValue(info({ reachable: true }))
-    expect((await run('')).text).toContain('外部启动')
+    expect((await run('')).text).toBe('语音服务：已在运行（外部启动），模型 0.6b。')
   })
   it('正在启动中', async () => {
     ops.inspect.mockResolvedValue(info({ busy: true }))
@@ -109,6 +129,7 @@ describe('状态', () => {
   it('没配 modelAlias 时写完整模型名', async () => {
     cfg = { configured: true, settings: settings({ modelAlias: undefined, model: 'org/x' }), problems: [] }
     ops.inspect.mockResolvedValue(info({ reachable: true }))
+    probeModels.mockResolvedValue(['org/x'])
     expect((await run('')).text).toContain('org/x')
   })
 })
@@ -252,7 +273,7 @@ describe('启动：确认卡片', () => {
 })
 
 describe('启动：安装、启动与预热', () => {
-  it('先 install 再 start，信号一并传下去', async () => {
+  it('先 install 再 start；后台任务不接宿主信号，传的是自己的可打断信号', async () => {
     ops.inspect.mockResolvedValue(info({ envInstalled: false }))
     pick(VOICE_OPT_GO)
     const ctl = new AbortController()
@@ -261,8 +282,12 @@ describe('启动：安装、启动与预热', () => {
     ops.start.mockImplementation(async () => (order.push('start'), { ok: true, pid: 9, alreadyRunning: false }))
     await run('启动', ctl.signal)
     expect(order).toEqual(['install', 'start'])
-    expect(ops.install.mock.calls[0]![2].signal).toBe(ctl.signal)
-    expect(ops.start.mock.calls[0]![2].signal).toBe(ctl.signal)
+    const isig = ops.install.mock.calls[0]![2].signal as AbortSignal
+    expect(isig).toBeInstanceOf(AbortSignal)
+    expect(isig).not.toBe(ctl.signal)
+    expect(ops.start.mock.calls[0]![2].signal).toBe(isig)
+    ctl.abort()
+    expect(isig.aborted).toBe(false)
   })
   it('预热：随包参考录音、短句、30 分钟上限', async () => {
     await run('启动')
@@ -275,7 +300,7 @@ describe('启动：安装、启动与预热', () => {
   })
   it('启动成功记下本实例启动的标记', async () => {
     await run('启动')
-    expect(state.started?.modelsDir).toBe(DIR)
+    expect(state.started).toEqual({ settings: expect.objectContaining({ modelsDir: DIR }), pid: 9 })
   })
   it('start 返回 alreadyRunning：不记标记，不预热', async () => {
     ops.start.mockResolvedValue({ ok: true, pid: 9, alreadyRunning: true })
@@ -323,7 +348,7 @@ describe('启动：安装、启动与预热', () => {
     synth.mockRejectedValue(new TtsError('bad-response', 'HTTP 500 secret-body http://u:p@h/'))
     const r = await run('启动')
     expect(r.kind).toBe('error')
-    expect(r.text).toBe('语音服务已启动，但模型加载失败：服务返回了无法使用的结果。详情见语音目录下的 server.log。')
+    expect(r.text).toBe(`语音服务已启动，但模型加载失败：服务返回了无法使用的结果。详情见 ${DIR}/server.log。`)
     expect(ops.stop).not.toHaveBeenCalled()
     expect(state.started).not.toBeNull()
     const logged = JSON.stringify(log.warn.mock.calls)
@@ -346,15 +371,138 @@ describe('启动：安装、启动与预热', () => {
     expect(stopR.text).toBe('语音服务已停止。')
     expect((await p).text).toContain('已取消')
   })
-  it('宿主信号中止预热：回执为已取消', async () => {
+  it('宿主信号中止不打断后台任务：预热照常完成', async () => {
     const ctl = new AbortController()
-    synth.mockImplementation((_i: unknown, o: { signal: AbortSignal }) => new Promise((_res, rej) => {
-      o.signal.addEventListener('abort', () => rej(new TtsError('cancelled')))
-    }))
+    let release!: () => void
+    synth.mockImplementation(() => new Promise((res) => { release = () => res({ bytes: new Uint8Array(), format: 'wav' }) }))
     const p = run('启动', ctl.signal)
     await vi.waitFor(() => expect(synth).toHaveBeenCalled())
     ctl.abort()
-    expect((await p).text).toContain('已取消')
+    release()
+    expect((await p).text).toContain('语音服务已启动，模型 0.6b')
+  })
+  it('启动前后用不带大小统计的 inspect', async () => {
+    await run('启动')
+    expect(ops.inspect.mock.calls[0]![2]).toEqual({ sizes: false })
+  })
+  it('模型已在本地：start 带 offline；需要下载：不带', async () => {
+    await run('启动')
+    expect(ops.start.mock.calls[0]![2].offline).toBe(true)
+    ops.inspect.mockResolvedValue(info({ modelDownloaded: false }))
+    pick(VOICE_OPT_GO)
+    resetLaunchesForTest()
+    await run('启动')
+    expect(ops.start.mock.calls[1]![2].offline).toBe(false)
+  })
+})
+
+describe('启动转后台', () => {
+  /** 让 install 停在门口，直到 release()。 */
+  const gated = () => {
+    let release!: (v: { ok: true }) => void
+    ops.install.mockImplementation(() => new Promise((res) => { release = res as typeof release }))
+    return { release: () => release({ ok: true }) }
+  }
+  const slow = () => ops.sleep.mockResolvedValue(undefined)
+  const needInstall = () => {
+    ops.inspect.mockResolvedValue(info({ envInstalled: false }))
+    pick(VOICE_OPT_GO)
+  }
+
+  it('等待上限是 8 秒', async () => {
+    expect(START_WAIT_MS).toBe(8000)
+    await run('启动')
+    expect(ops.sleep).toHaveBeenCalledWith(8000)
+  })
+  it('8 秒内没完成：回一行带阶段的回执，后台继续；完成后状态恢复', async () => {
+    needInstall()
+    slow()
+    const g = gated()
+    const r = await run('启动')
+    expect(r).toEqual({ kind: 'success', text: '语音服务正在启动（安装运行环境），用 /aha 语音 状态 查看进度。' })
+    expect(ops.start).not.toHaveBeenCalled()
+    g.release()
+    await vi.waitFor(() => expect(ops.start).toHaveBeenCalled())
+    await vi.waitFor(() => expect(synth).toHaveBeenCalled())
+  })
+  it('转后台时阶段取当时的阶段（启动服务）', async () => {
+    slow()
+    ops.start.mockReturnValue(new Promise(() => undefined))
+    expect((await run('启动')).text).toContain('（启动服务）')
+  })
+  it('状态：进行中回阶段与已用秒数', async () => {
+    needInstall()
+    slow()
+    gated()
+    await run('启动')
+    clock.t += 42_000
+    expect((await run('状态')).text).toBe('语音服务正在启动：安装运行环境，已用 42 秒。')
+    expect(ops.stop).not.toHaveBeenCalled()
+  })
+  it('状态：预热阶段显示下载并加载模型', async () => {
+    slow()
+    synth.mockReturnValue(new Promise(() => undefined))
+    await run('启动')
+    expect((await run('状态')).text).toContain('下载并加载模型')
+  })
+  it('进行中再敲启动：回正在启动中，不起第二个任务', async () => {
+    needInstall()
+    slow()
+    gated()
+    await run('启动')
+    const r = await run('启动')
+    expect(r.text).toBe('语音服务正在启动中，请稍候。')
+    expect(ops.install).toHaveBeenCalledTimes(1)
+  })
+  it('进程起来就记标记，哪怕预热还没完成', async () => {
+    slow()
+    synth.mockReturnValue(new Promise(() => undefined))
+    await run('启动')
+    expect(state.started?.pid).toBe(9)
+    expect(state.launching).not.toBeNull()
+  })
+  it('失败后：服务不可达时状态给出上次失败原因与日志路径；再次启动清掉', async () => {
+    ops.start.mockResolvedValue({ ok: false, kind: 'timeout', detail: 'x' })
+    await run('启动')
+    expect((await run('状态')).text).toBe(`上次启动失败：等待服务启动超时（日志 ${DIR}/server.log）。`)
+    ops.start.mockResolvedValue({ ok: true, pid: 9, alreadyRunning: false })
+    await run('启动')
+    expect((await run('状态')).text).toBe('语音服务：未启动。')
+  })
+  it('预热失败后服务可达：状态走正常路径，不报上次失败', async () => {
+    synth.mockRejectedValue(new TtsError('timeout'))
+    await run('启动')
+    ops.inspect.mockResolvedValue(info({ reachable: true, owned: { pid: 9, port: 1, startedAt: 1 } }))
+    probeModels.mockResolvedValue([])
+    expect((await run('状态')).text).toBe('语音服务：已在运行（由插件启动），模型尚未加载（配置为 0.6b）。')
+  })
+  it('被停止命令取消的启动不算失败', async () => {
+    slow()
+    synth.mockImplementation((_i: unknown, o: { signal: AbortSignal }) =>
+      new Promise((_r, rej) => o.signal.addEventListener('abort', () => rej(new TtsError('cancelled')))))
+    await run('启动')
+    await run('停止')
+    await vi.waitFor(() => expect(state.launching).toBeNull())
+    expect((await run('状态')).text).toBe('语音服务：未启动。')
+  })
+  it('后台任务抛异常：被接住并记日志，状态给出失败，没有未处理拒绝', async () => {
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    try {
+      ops.start.mockRejectedValue(new Error('boom'))
+      const r = await run('启动')
+      expect(r.kind).toBe('error')
+      expect(r.text).toContain('详情见日志')
+      expect(log.error).toHaveBeenCalled()
+      expect((await run('状态')).text).toContain('上次启动失败')
+      await new Promise((res) => setImmediate(res))
+      expect(unhandled).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandled)
+    }
+  })
+  it('abortLaunch 没有进行中的启动时无事发生', () => {
+    expect(() => abortLaunch('/nowhere')).not.toThrow()
   })
 })
 
@@ -402,6 +550,9 @@ describe('卸载收尾', () => {
     installVoice(rt, ctx, { ops: ops as unknown as VoiceOps, cleanupLimitMs })
     return { rt, cleanup: () => cleanup() }
   }
+  const owned = (pid: number) => info({ owned: { pid, port: 18123, startedAt: 1 } })
+  // inspect 默认返回 owned 为 9：启动前的判断不看 owned，收尾时核对进程号用
+  beforeEach(() => ops.inspect.mockResolvedValue(owned(9)))
 
   it('登记了 voice 处理函数', () => {
     expect(typeof setup().rt.handlers.voice).toBe('function')
@@ -411,22 +562,21 @@ describe('卸载收尾', () => {
     await cleanup()
     expect(ops.stop).not.toHaveBeenCalled()
   })
-  it('本实例启动过：卸载时停掉，且只停一次', async () => {
+  it('本实例启动过且进程号一致：卸载时停掉，且只停一次，不统计大小', async () => {
     const { rt, cleanup } = setup()
-    rt.voiceSettings = async () => cfg
-    const inv = { ...mkInv('启动'), rt: { ...mkInv('').rt, handlers: rt.handlers } } as Invocation
-    await rt.handlers.voice(inv)
+    await rt.handlers.voice(mkInv('启动'))
     expect(ops.stop).not.toHaveBeenCalled()
     await cleanup()
     expect(ops.stop).toHaveBeenCalledTimes(1)
     expect(ops.stop.mock.calls[0]![0].modelsDir).toBe(DIR)
+    expect(ops.inspect.mock.calls.at(-1)![2]).toEqual({ sizes: false })
     await cleanup()
     expect(ops.stop).toHaveBeenCalledTimes(1)
   })
   it('服务不是本实例启动的（alreadyRunning）：卸载不停', async () => {
     const { rt, cleanup } = setup()
     ops.start.mockResolvedValue({ ok: true, pid: 9, alreadyRunning: true })
-    await rt.handlers.voice({ ...mkInv('启动'), rt: { ...mkInv('').rt, handlers: rt.handlers } })
+    await rt.handlers.voice(mkInv('启动'))
     await cleanup()
     expect(ops.stop).not.toHaveBeenCalled()
   })
@@ -438,6 +588,44 @@ describe('卸载收尾', () => {
     expect(ops.stop).not.toHaveBeenCalled()
     await a.cleanup()
     expect(ops.stop).toHaveBeenCalledTimes(1)
+  })
+  it('交错：A 启动、B 停止、B 再启动、A 卸载，A 不会停 B 启动的服务', async () => {
+    const a = setup()
+    const b = setup()
+    await a.rt.handlers.voice(mkInv('启动')) // pid 9
+    await b.rt.handlers.voice(mkInv('停止'))
+    resetLaunchesForTest()
+    ops.start.mockResolvedValue({ ok: true, pid: 10, alreadyRunning: false })
+    await b.rt.handlers.voice(mkInv('启动'))
+    ops.inspect.mockResolvedValue(owned(10))
+    await a.cleanup()
+    expect(ops.stop).toHaveBeenCalledTimes(1) // 只有 B 自己的"停止"那一次
+    await b.cleanup()
+    expect(ops.stop).toHaveBeenCalledTimes(2)
+  })
+  it('进程号对不上：只清标记不停；再收尾也不停', async () => {
+    const { rt, cleanup } = setup()
+    await rt.handlers.voice(mkInv('启动'))
+    ops.inspect.mockResolvedValue(owned(77))
+    await cleanup()
+    ops.inspect.mockResolvedValue(owned(9))
+    await cleanup()
+    expect(ops.stop).not.toHaveBeenCalled()
+  })
+  it('服务已经不在了（owned 为空）：不停', async () => {
+    const { rt, cleanup } = setup()
+    await rt.handlers.voice(mkInv('启动'))
+    ops.inspect.mockResolvedValue(info())
+    await cleanup()
+    expect(ops.stop).not.toHaveBeenCalled()
+  })
+  it('本实例已停止过：卸载不再停', async () => {
+    const { rt, cleanup } = setup()
+    await rt.handlers.voice(mkInv('启动'))
+    await rt.handlers.voice(mkInv('停止'))
+    ops.stop.mockClear()
+    await cleanup()
+    expect(ops.stop).not.toHaveBeenCalled()
   })
   it('停止卡住时按时间上限放行', async () => {
     const { rt, cleanup } = setup(30)
@@ -455,14 +643,31 @@ describe('卸载收尾', () => {
     await expect(cleanup()).resolves.toBeUndefined()
     expect(log.warn).toHaveBeenCalled()
   })
-  it('卸载时先取消进行中的预热', async () => {
+  it('卸载时打断进行中的预热，并停掉已起的服务', async () => {
     const { rt, cleanup } = setup()
-    synth.mockImplementation((_i: unknown, o: { signal: AbortSignal }) =>
-      new Promise((_r, rej) => o.signal.addEventListener('abort', () => rej(new TtsError('cancelled')))))
-    const p = rt.handlers.voice(mkInv('启动'))
+    ops.sleep.mockResolvedValue(undefined)
+    let sig!: AbortSignal
+    synth.mockImplementation((_i: unknown, o: { signal: AbortSignal }) => {
+      sig = o.signal
+      return new Promise((_r, rej) => o.signal.addEventListener('abort', () => rej(new TtsError('cancelled'))))
+    })
+    await rt.handlers.voice(mkInv('启动'))
     await vi.waitFor(() => expect(synth).toHaveBeenCalled())
     await cleanup()
-    expect((await p).text).toContain('已取消')
+    expect(sig.aborted).toBe(true)
+    expect(ops.stop).toHaveBeenCalledTimes(1)
+  })
+  it('卸载时打断进行中的安装：不再启动，也没有可停的服务', async () => {
+    const { rt, cleanup } = setup()
+    ops.inspect.mockResolvedValue(info({ envInstalled: false }))
+    pick(VOICE_OPT_GO)
+    ops.sleep.mockResolvedValue(undefined)
+    ops.install.mockImplementation((_s: unknown, _d: unknown, o: { signal: AbortSignal }) =>
+      new Promise((res) => o.signal.addEventListener('abort', () => res({ ok: false, kind: 'cancelled', detail: '' }))))
+    await rt.handlers.voice(mkInv('启动'))
+    await cleanup()
+    expect(ops.start).not.toHaveBeenCalled()
+    expect(ops.stop).not.toHaveBeenCalled()
   })
 })
 
@@ -470,8 +675,5 @@ describe('builtinVoice', () => {
   it('给出录音路径与对应文字', () => {
     expect(builtinVoice({ builtinAssetsDir: '/x/assets' })).toEqual({ file: '/x/assets/voice-ref.wav', text: BUILTIN_VOICE_TEXT })
     expect(BUILTIN_VOICE_TEXT).toBe('你好，欢迎来到这间酒馆。先坐下歇一会儿吧，想聊点什么都可以。')
-  })
-  it('abortWarmup 没有进行中的预热时无事发生', () => {
-    expect(() => abortWarmup('/nowhere')).not.toThrow()
   })
 })

@@ -18,6 +18,7 @@ import {
 } from '../../../src/shell/remember'
 import type { Runtime } from '../../../src/shell/runtime'
 import { SessionSections } from '../../../src/shell/sections'
+import { voiceRuntimeStubs } from './helpers/runtime'
 
 const builtinDir = path.resolve(__dirname, '../../../themes')
 let theme: Theme
@@ -31,7 +32,7 @@ const services = { agentPresets: { composedPreset: () => preset } }
 const rtOf = (over: Partial<Runtime['config']> = {}): Runtime => ({
   config: { ...DEFAULTS, mode: 'chat', registryPath: path.join(dir, '.reg.yaml'), ...over },
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined, theme: async () => theme, handlers: {},
+  builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined, theme: async () => theme, handlers: {}, ...voiceRuntimeStubs,
 }) as Runtime
 
 beforeEach(async () => {

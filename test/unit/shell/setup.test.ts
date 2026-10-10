@@ -10,6 +10,7 @@ import type { CommandContext, HostAgent, Invocation } from '../../../src/shell/c
 import type { Runtime } from '../../../src/shell/runtime'
 import { initHandler, SetupSections } from '../../../src/shell/setup'
 import type { SetupFacts } from '../../../src/shell/setup-prompt'
+import { voiceRuntimeStubs } from './helpers/runtime'
 
 const builtinDir = path.resolve(__dirname, '../../../themes')
 let theme: Theme
@@ -28,7 +29,7 @@ const rtOf = (): Runtime => ({
   builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '',
   tools: () => undefined,
   theme: async () => theme,
-  handlers: {},
+  handlers: {}, ...voiceRuntimeStubs,
 }) as Runtime
 
 const facts: SetupFacts = {

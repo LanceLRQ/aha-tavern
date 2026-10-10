@@ -6,6 +6,7 @@ import { handleCommand, parseSubcommand, type ParsedSubcommand } from '../../../
 import type { HostAgent, HostServices } from '../../../src/shell/context'
 import type { Runtime } from '../../../src/shell/runtime'
 import { DEFAULTS, type TavernMode } from '../../../src/config'
+import { voiceRuntimeStubs } from './helpers/runtime'
 
 const builtinDir = path.resolve(__dirname, '../../../themes')
 
@@ -16,7 +17,7 @@ function fakeRuntime(mode: TavernMode, theme: Promise<Theme>): Runtime {
     builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '',
     tools: () => undefined,
     theme: () => theme,
-    handlers: {},
+    handlers: {}, ...voiceRuntimeStubs,
   }
 }
 const themeOf = async (name: string): Promise<Theme> => (await loadTheme({ name, builtinDir })).theme

@@ -26,13 +26,13 @@ export interface Runtime {
   readonly builtinThemeDir: string
   readonly builtinWorkflowDir: string
   /** 随包资源目录（assets/）：语音参考录音等。 */
-  readonly builtinAssetsDir?: string
+  readonly builtinAssetsDir: string
   /** 服务配置文件的实际路径（已展开 ~）；每次用到时再读取。 */
   servicesPath(): string
   /** 读语音服务配置（每次用到时再读）；权重目录默认在酒馆数据目录下的 voice。 */
-  voiceSettings?(): Promise<VoiceServiceResult>
+  voiceSettings(): Promise<VoiceServiceResult>
   /** 构造进程管理用的依赖（真实实现）；测试里替换。 */
-  voiceServerDeps?(): VoiceServerDeps
+  voiceServerDeps(): VoiceServerDeps
   /** 宿主工具运行时（顶层 inject 的 tools）；取不到为 undefined。 */
   tools(): HostTools | undefined
   /** 命令处理时 await 同一个 Promise；加载失败时拒绝。 */

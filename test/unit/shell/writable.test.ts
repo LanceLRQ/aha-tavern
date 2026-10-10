@@ -16,6 +16,7 @@ import { collectFacts } from '../../../src/shell/setup'
 import { renderFacts } from '../../../src/shell/setup-prompt'
 import { registerSetupTools } from '../../../src/shell/setup-tools'
 import { isReadonly, openResolved, READONLY_TOOL_MESSAGE, readonlyToolMessage } from '../../../src/shell/writable'
+import { voiceRuntimeStubs } from './helpers/runtime'
 
 const builtinDir = path.resolve(__dirname, '../../../themes')
 let theme: Theme
@@ -33,7 +34,7 @@ const setVersion = (v: number) => fs.writeFile(path.join(dir, 'aha-tavern.yaml')
 const rtOf = (): Runtime => ({
   config: { ...DEFAULTS, mode: 'setup', registryPath: path.join(dir, '.reg.yaml') },
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-  builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined, theme: async () => theme, handlers: {},
+  builtinThemeDir: builtinDir, builtinWorkflowDir: '', servicesPath: () => '', tools: () => undefined, theme: async () => theme, handlers: {}, ...voiceRuntimeStubs,
 }) as Runtime
 const agent: HostAgent = { id: 's1', ctx: {}, session: { header: { cwd: '' } } }
 const agentAt = (): HostAgent => ({ id: 's1', ctx: {}, session: { header: { cwd: dir } } })
@@ -82,6 +83,22 @@ describe('命令入口', () => {
     expect(r).toEqual(readonlyReceipt(theme))
     expect(r.text).toContain('数据比插件新')
     expect((await handleCommand(rt, services, agentAt(), parseSubcommand('自检'), '/aha 自检')).text).toBe('ok')
+  })
+
+  it('只读：语音命令照常执行，其他命令的行为不变', async () => {
+    await setVersion(99)
+    const rt = rtOf()
+    const voice = vi.fn(() => ({ kind: 'success' as const, text: '语音可用' }))
+    const others = { card: vi.fn(), me: vi.fn(), world: vi.fn(), import: vi.fn() }
+    rt.handlers.voice = voice
+    Object.assign(rt.handlers, others)
+    const r = await handleCommand(rt, services, agentAt(), parseSubcommand('语音 状态'), '/aha 语音')
+    expect(r.text).toBe('语音可用')
+    expect(voice).toHaveBeenCalled()
+    for (const word of ['角色', '我', '世界观', '导入']) {
+      expect(await handleCommand(rt, services, agentAt(), parseSubcommand(word), `/aha ${word}`)).toEqual(readonlyReceipt(theme))
+    }
+    for (const h of Object.values(others)) expect(h).not.toHaveBeenCalled()
   })
 
   it('可写时照常执行', async () => {

@@ -495,8 +495,44 @@ const WARMUP_FAIL: Record<string, string> = {
   other: '未知原因',
 }
 
-export function voiceWarmupFailedReceipt(kind: string): Reply {
-  return fail(`语音服务已启动，但模型加载失败：${WARMUP_FAIL[kind] ?? WARMUP_FAIL.other}。详情见语音目录下的 server.log。`)
+export function voiceWarmupFailedReceipt(kind: string, modelsDir: string): Reply {
+  return fail(`语音服务已启动，但模型加载失败：${WARMUP_FAIL[kind] ?? WARMUP_FAIL.other}。详情见 ${modelsDir}/server.log。`)
+}
+
+/** 启动的三个阶段，回执与状态里都用这些名字。 */
+export type VoiceStage = 'install' | 'start' | 'warmup'
+export const VOICE_STAGE_NAME: Record<VoiceStage, string> = {
+  install: '安装运行环境',
+  start: '启动服务',
+  warmup: '下载并加载模型',
+}
+
+/** 启动转入后台后的回执。 */
+export function voiceStartingReceipt(stage: VoiceStage): Reply {
+  return guide(`语音服务正在启动（${VOICE_STAGE_NAME[stage]}），用 /aha 语音 状态 查看进度。`)
+}
+
+export function voiceProgressReceipt(stage: VoiceStage, seconds: number): Reply {
+  return guide(`语音服务正在启动：${VOICE_STAGE_NAME[stage]}，已用 ${seconds} 秒。`)
+}
+
+export function voiceLastFailedReceipt(reason: string, modelsDir: string): Reply {
+  return guide(`上次启动失败：${reason}（日志 ${modelsDir}/server.log）。`)
+}
+
+const INSTALL_REASON: Record<string, string> = {
+  network: '安装运行环境时网络不通', unsupported: '这台机器不是苹果芯片的 Mac', 'no-uv': '没有找到 uv', busy: '已有安装或启动在进行',
+}
+const START_REASON: Record<string, string> = {
+  unsupported: '这台机器不是苹果芯片的 Mac', 'not-installed': '运行环境没装好', occupied: '端口被别的服务占用',
+  timeout: '等待服务启动超时', exited: '服务启动后马上退出', busy: '已有安装或启动在进行',
+}
+
+/** 状态里"上次启动失败"的简短原因。 */
+export function voiceFailureReason(stage: VoiceStage, kind: string): string {
+  if (stage === 'warmup') return `服务已启动，但模型加载失败：${WARMUP_FAIL[kind] ?? WARMUP_FAIL.other}`
+  if (stage === 'install') return INSTALL_REASON[kind] ?? '安装运行环境失败'
+  return START_REASON[kind] ?? '服务启动失败'
 }
 
 export function voiceStopReceipt(status: 'stopped' | 'not-ours' | 'not-running'): Reply {
@@ -514,13 +550,17 @@ export interface VoiceStatusInfo {
   reachable: boolean
   ours: boolean
   busy: boolean
+  /** 配置的模型（简称或名字）。 */
   model: string
+  /** 服务里是否已加载所配模型；查不到为 null。 */
+  loaded: boolean | null
 }
 
 export function voiceStatusReceipt(s: VoiceStatusInfo): Reply {
   if (!s.reachable) return guide(s.busy ? '语音服务：正在启动中。' : '语音服务：未启动。')
   const who = s.ours ? '由插件启动' : '外部启动'
-  return guide(`语音服务：已在运行（${who}），模型 ${s.model}${s.busy ? '，正在启动中' : ''}。`)
+  const model = s.loaded === null ? '' : s.loaded ? `，模型 ${s.model}` : `，模型尚未加载（配置为 ${s.model}）`
+  return guide(`语音服务：已在运行（${who}）${model}${s.busy ? '，正在启动中' : ''}。`)
 }
 
 export function voiceStatusNotConfiguredReceipt(): Reply {
