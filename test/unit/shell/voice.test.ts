@@ -239,6 +239,7 @@ describe('启动：确认卡片', () => {
     const d = askFn!.mock.calls[0]![0].questions[0].detail as string
     expect(d).toContain('运行环境')
     expect(d).not.toContain('模型 0.6b')
+    expect(d).not.toContain('下载源')
   })
   it('选取消：什么都没做', async () => {
     ops.inspect.mockResolvedValue(info({ envInstalled: false, modelDownloaded: false }))
@@ -348,10 +349,12 @@ describe('启动：安装、启动与预热', () => {
     expect(synth).not.toHaveBeenCalled()
   })
   it('预热失败：服务保持启动，回执给归类原因，原文只进日志', async () => {
+    ops.inspect.mockResolvedValue(info({ modelDownloaded: false })) // 联网启动，预热失败不补救
+    pick(VOICE_OPT_GO)
     synth.mockRejectedValue(new TtsError('bad-response', 'HTTP 500 secret-body http://u:p@h/'))
     const r = await run('启动')
     expect(r.kind).toBe('error')
-    expect(r.text).toBe(`语音服务已启动，但模型加载失败：服务返回了无法使用的结果。详情见 ${DIR}/server.log。`)
+    expect(r.text).toBe(`语音服务已启动，但模型加载失败：模型没能加载（可能没下载完整）。详情见 ${DIR}/server.log。`)
     expect(ops.stop).not.toHaveBeenCalled()
     expect(state.started).not.toBeNull()
     const logged = JSON.stringify(log.warn.mock.calls)
@@ -538,6 +541,74 @@ describe('启动转后台', () => {
   })
   it('abortLaunch 没有进行中的启动时无事发生', () => {
     expect(() => abortLaunch('/nowhere')).not.toThrow()
+  })
+})
+
+describe('离线加载失败后联网重试一次', () => {
+  const badLoad = () => new TtsError('bad-response', 'IncompleteSnapshotError')
+
+  it('离线预热失败 → 停掉 → 联网重启 → 再预热成功', async () => {
+    synth.mockRejectedValueOnce(badLoad())
+    const order: string[] = []
+    ops.start.mockImplementation(async (_s: unknown, _d: unknown, o: { offline: boolean }) => {
+      order.push(`start:${o.offline}`)
+      return { ok: true, pid: order.length === 1 ? 9 : 10, alreadyRunning: false }
+    })
+    ops.stop.mockImplementation(async () => (order.push('stop'), { status: 'stopped', forced: false }))
+    const r = await run('启动')
+    expect(r.text).toBe(`语音服务已启动，模型 0.6b，权重目录 ${DIR}。`)
+    expect(order).toEqual(['start:true', 'stop', 'start:false'])
+    expect(synth).toHaveBeenCalledTimes(2)
+    expect(state.started?.pid).toBe(10)
+  })
+  it('联网后仍失败：记为失败，只重试一次', async () => {
+    synth.mockRejectedValue(badLoad())
+    const r = await run('启动')
+    expect(r.kind).toBe('error')
+    expect(r.text).toContain('模型没能加载')
+    expect(ops.start).toHaveBeenCalledTimes(2)
+    expect(ops.stop).toHaveBeenCalledTimes(1)
+    expect(synth).toHaveBeenCalledTimes(2)
+    expect((await run('状态')).text).toContain('上次启动失败')
+  })
+  it('联网重启本身失败：按启动失败记', async () => {
+    synth.mockRejectedValue(badLoad())
+    ops.start
+      .mockResolvedValueOnce({ ok: true, pid: 9, alreadyRunning: false })
+      .mockResolvedValueOnce({ ok: false, kind: 'timeout', detail: '' })
+    const r = await run('启动')
+    expect(r.text).toContain('超时')
+  })
+  it('阶段始终显示下载并加载模型', async () => {
+    ops.sleep.mockResolvedValue(undefined)
+    synth.mockRejectedValueOnce(badLoad())
+    let release!: () => void
+    ops.start.mockResolvedValueOnce({ ok: true, pid: 9, alreadyRunning: false })
+    ops.start.mockImplementationOnce(() => new Promise((res) => { release = () => res({ ok: true, pid: 10, alreadyRunning: false }) }))
+    await run('启动')
+    await vi.waitFor(() => expect(ops.start).toHaveBeenCalledTimes(2))
+    expect((await run('状态')).text).toContain('下载并加载模型')
+    release()
+  })
+  it('被停止命令取消：不补救', async () => {
+    ops.sleep.mockResolvedValue(undefined)
+    synth.mockImplementation((_i: unknown, o: { signal: AbortSignal }) =>
+      new Promise((_r, rej) => o.signal.addEventListener('abort', () => rej(new TtsError('cancelled')))))
+    await run('启动')
+    await vi.waitFor(() => expect(synth).toHaveBeenCalled())
+    await run('停止')
+    await vi.waitFor(() => expect(state.launching).toBeNull())
+    expect(ops.start).toHaveBeenCalledTimes(1)
+    expect(synth).toHaveBeenCalledTimes(1)
+  })
+  it('本来就是联网启动（需要下载）：预热失败不补救', async () => {
+    ops.inspect.mockResolvedValue(info({ modelDownloaded: false }))
+    pick(VOICE_OPT_GO)
+    synth.mockRejectedValue(badLoad())
+    const r = await run('启动')
+    expect(r.kind).toBe('error')
+    expect(ops.start).toHaveBeenCalledTimes(1)
+    expect(ops.stop).not.toHaveBeenCalled()
   })
 })
 

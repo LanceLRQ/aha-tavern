@@ -460,7 +460,8 @@ export function voiceCardMarkdown(c: VoiceCardInfo): string {
   if (c.env) lines.push(`- 运行环境（${VOICE_ENV_SIZE}）`)
   if (c.model) lines.push(`- 模型 ${c.model.name}（${c.model.size}）`)
   lines.push(`- 存放目录：${c.modelsDir}`)
-  lines.push(`- 下载源：${c.hfEndpoint ?? '官方'}`)
+  // 下载源只对模型下载有意义；只装运行环境时走的是 PyPI，不列
+  if (c.model) lines.push(`- 下载源：${c.hfEndpoint ?? '官方'}`)
   lines.push('', VOICE_MEMORY_NOTE)
   return lines.join('\n')
 }
@@ -492,7 +493,7 @@ export function voiceStartFailedReceipt(kind: string): Reply {
 const WARMUP_FAIL: Record<string, string> = {
   unreachable: '服务连不上',
   timeout: '等待超时',
-  'bad-response': '服务返回了无法使用的结果',
+  'bad-response': '模型没能加载（可能没下载完整）',
   other: '未知原因',
 }
 

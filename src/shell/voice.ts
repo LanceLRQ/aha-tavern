@@ -261,18 +261,29 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
 
     launch.phase = 'start'
     const started = await ops.start(s, deps, { signal, offline: plan.offline })
-    if (!started.ok) {
-      rt.log.warn(`语音服务启动未完成（${started.kind}）：${redactUrls(started.detail)}`)
-      if (started.kind === 'cancelled') return end(voiceCancelledReceipt(), { kind: 'cancelled' })
-      const failed: Outcome = { kind: 'failed', reason: voiceFailureReason('start', started.kind) }
-      return end(started.kind === 'busy' ? voiceBusyReceipt() : voiceStartFailedReceipt(started.kind), failed)
+    const startFail = (r: Extract<Awaited<ReturnType<VoiceOps['start']>>, { ok: false }>): Reply => {
+      rt.log.warn(`语音服务启动未完成（${r.kind}）：${redactUrls(r.detail)}`)
+      if (r.kind === 'cancelled') return end(voiceCancelledReceipt(), { kind: 'cancelled' })
+      const failed: Outcome = { kind: 'failed', reason: voiceFailureReason('start', r.kind) }
+      return end(r.kind === 'busy' ? voiceBusyReceipt() : voiceStartFailedReceipt(r.kind), failed)
     }
+    if (!started.ok) return startFail(started)
     if (started.alreadyRunning) return end(voiceAlreadyRunningReceipt(true), { kind: 'ok' })
     // 进程起来就记标记，哪怕预热还没完成
     state.started = { settings: s, pid: started.pid }
 
     launch.phase = 'warmup'
-    const failed = await warmup(rt, s, launch)
+    let failed = await warmup(rt, s, launch)
+    // 离线启动时快照不完整会让加载失败：停掉后联网重启，再预热一次（只补救一次）
+    if (failed?.outcome.kind === 'failed' && plan.offline && !signal.aborted) {
+      rt.log.warn('离线加载模型失败，改为联网重启并重试一次')
+      state.started = null
+      await ops.stop(s, deps)
+      const again = await ops.start(s, deps, { signal, offline: false })
+      if (!again.ok) return startFail(again)
+      state.started = { settings: s, pid: again.pid }
+      failed = await warmup(rt, s, launch)
+    }
     if (failed) return end(failed.reply, failed.outcome)
     return end(voiceStartedReceipt(modelLabel(s), s.modelsDir), { kind: 'ok' })
   }

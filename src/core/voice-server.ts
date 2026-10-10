@@ -204,20 +204,42 @@ async function envInstalled(modelsDir: string): Promise<boolean> {
   }
 }
 
-/** 模型权重是否已下载：hub 下对应目录的 snapshots 里有非空目录。 */
+/** 递归检查快照目录：每个条目都能解析到真实文件（跟随符号链接）；返回是否完好、是否含 .safetensors。 */
+async function scanSnapshot(dir: string): Promise<{ ok: boolean; weights: boolean }> {
+  let weights = false
+  for (const name of await fs.readdir(dir)) {
+    const p = path.join(dir, name)
+    const st = await fs.stat(p) // 断掉的符号链接会在这里抛错
+    if (st.isDirectory()) {
+      const sub = await scanSnapshot(p)
+      if (!sub.ok) return { ok: false, weights: false }
+      weights ||= sub.weights
+    } else if (name.endsWith('.safetensors')) {
+      weights = true
+    }
+  }
+  return { ok: true, weights }
+}
+
+/**
+ * 模型权重是否已完整下载：hub 下对应目录的 snapshots 里有一个非空快照，其中至少有一个 .safetensors，
+ * 所有条目都能解析到真实文件，且 blobs/ 下没有未下完的 *.incomplete。任何读取出错都当作未下载。
+ */
 export async function modelDownloaded(modelsDir: string, modelId: string): Promise<boolean> {
-  const snaps = path.join(hfDir(modelsDir), 'hub', `models--${modelId.replace(/\//g, '--')}`, 'snapshots')
+  const base = path.join(hfDir(modelsDir), 'hub', `models--${modelId.replace(/\//g, '--')}`)
   try {
+    if ((await fs.readdir(path.join(base, 'blobs')).catch(() => [] as string[])).some((n) => n.endsWith('.incomplete'))) {
+      return false
+    }
+    const snaps = path.join(base, 'snapshots')
     for (const name of await fs.readdir(snaps)) {
-      try {
-        const p = path.join(snaps, name)
-        if ((await fs.stat(p)).isDirectory() && (await fs.readdir(p)).length > 0) return true
-      } catch {
-        // 断链或读不了的条目跳过
-      }
+      const p = path.join(snaps, name)
+      if (!(await fs.stat(p)).isDirectory()) continue
+      const r = await scanSnapshot(p)
+      if (r.ok && r.weights) return true
     }
   } catch {
-    // 目录不存在
+    // 目录不存在或读取出错
   }
   return false
 }

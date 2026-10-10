@@ -136,7 +136,10 @@ async function installEnvFiles(version = MLX_AUDIO_VERSION) {
 async function addModel(modelId = MODEL, files = true) {
   const snap = path.join(dir, 'hf', 'hub', `models--${modelId.replace('/', '--')}`, 'snapshots', 'abc123')
   await fs.mkdir(snap, { recursive: true })
-  if (files) await fs.writeFile(path.join(snap, 'config.json'), '{}')
+  if (files) {
+    await fs.writeFile(path.join(snap, 'config.json'), '{}')
+    await fs.writeFile(path.join(snap, 'model.safetensors'), 'w')
+  }
 }
 
 async function writePid(over: Record<string, unknown> = {}) {
@@ -149,12 +152,46 @@ async function writePid(over: Record<string, unknown> = {}) {
 const exists = (p: string) => fs.access(p).then(() => true, () => false)
 
 describe('modelDownloaded', () => {
-  it('没有目录、快照为空目录都算未下载，有文件才算', async () => {
+  const base = () => path.join(dir, 'hf/hub/models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-8bit')
+  const snap = () => path.join(base(), 'snapshots/abc123')
+
+  /** 仿 HF 缓存：blobs 里放真实文件，快照里放指向它的符号链接。 */
+  async function linked(name: string, content = 'x') {
+    await fs.mkdir(path.join(base(), 'blobs'), { recursive: true })
+    await fs.mkdir(snap(), { recursive: true })
+    await fs.writeFile(path.join(base(), 'blobs', `h-${name}`), content)
+    await fs.symlink(`../../blobs/h-${name}`, path.join(snap(), name))
+  }
+
+  it('没有目录、快照为空目录都算未下载', async () => {
     expect(await modelDownloaded(dir, MODEL)).toBe(false)
     await addModel(MODEL, false)
     expect(await modelDownloaded(dir, MODEL)).toBe(false)
-    await fs.writeFile(path.join(dir, 'hf/hub/models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-8bit/snapshots/abc123/a'), 'x')
+  })
+  it('完整：有 safetensors，条目都能解析，没有 .incomplete', async () => {
+    await linked('config.json')
+    await linked('model.safetensors', 'weights')
     expect(await modelDownloaded(dir, MODEL)).toBe(true)
+  })
+  it('safetensors 在子目录里也算', async () => {
+    await fs.mkdir(path.join(snap(), 'sub'), { recursive: true })
+    await fs.writeFile(path.join(snap(), 'sub', 'w.safetensors'), 'x')
+    expect(await modelDownloaded(dir, MODEL)).toBe(true)
+  })
+  it('只有小文件、没有 safetensors：未下载', async () => {
+    await linked('config.json')
+    expect(await modelDownloaded(dir, MODEL)).toBe(false)
+  })
+  it('blobs 里有 .incomplete：未下载', async () => {
+    await linked('config.json')
+    await linked('model.safetensors')
+    await fs.writeFile(path.join(base(), 'blobs', 'abcdef.incomplete'), 'x')
+    expect(await modelDownloaded(dir, MODEL)).toBe(false)
+  })
+  it('快照里有断掉的符号链接：未下载', async () => {
+    await linked('model.safetensors')
+    await fs.symlink('../../blobs/missing', path.join(snap(), 'tokenizer.json'))
+    expect(await modelDownloaded(dir, MODEL)).toBe(false)
   })
 })
 
