@@ -12,7 +12,7 @@ import { readCharacter } from '../core/card'
 import { readChatAutoRead, readRecords, setChatAutoRead } from '../core/chat'
 import { findPlayer, PlayerError, play, type Player, type PlayerSpawn } from '../core/player'
 import { hasUserInfo, type VoiceServiceSettings } from '../core/services'
-import { MIN_PAUSE_SECONDS, breakPauseSeconds, planSpeech, type SpeechGap, type SpeechPlan } from '../core/speech-text'
+import { INLINE_PAUSE_SECONDS, breakPauseSeconds, planSpeech, type PauseRange, type SpeechGap, type SpeechPlan } from '../core/speech-text'
 import { createTtsClient, TtsError, type TtsClient } from '../core/tts'
 import { readVoice } from '../core/voice'
 import { trimWavSilence } from '../core/wav-trim'
@@ -33,7 +33,7 @@ const PROBE_MS = 2000
 const noop = (): void => undefined
 
 /** 同一段连续要念的话里，相邻两句之间停多久（毫秒）。 */
-export const INLINE_PAUSE_MS = MIN_PAUSE_SECONDS * 1000
+export const INLINE_PAUSE_MS = INLINE_PAUSE_SECONDS * 1000
 
 // ---------- 朗读队列 ----------
 
@@ -62,7 +62,7 @@ export interface SpeakRequest {
   skipped?: readonly number[]
   /** 参考录音的绝对路径与录音里说的话。 */
   voice: { audio: string; text: string }
-  settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds' | 'pauseSeconds'> & Partial<Pick<VoiceServiceSettings, 'local'>>
+  settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds' | 'pauseSeconds' | 'pauseMinSeconds' | 'pauseMaxSeconds'> & Partial<Pick<VoiceServiceSettings, 'local'>>
   player: Player
   /** 会话编号：会话销毁、或该会话来了新的用户消息时，据此停下属于它的朗读。 */
   owner: string
@@ -294,7 +294,7 @@ export class Speaker {
   /** 播放这一句之前要等多久（毫秒）。 */
   private pauseMs(run: Run, gap: SpeechGap, skipped: number): number {
     if (gap === 'inline') return INLINE_PAUSE_MS
-    if (gap === 'break') return Math.round(breakPauseSeconds(skipped, run.req?.settings.pauseSeconds ?? 0) * 1000)
+    if (gap === 'break') return Math.round(breakPauseSeconds(skipped, pauseRange(run.req?.settings)) * 1000)
     return 0
   }
 
@@ -339,6 +339,10 @@ export class Speaker {
     this.deps.log.warn(`朗读中断（${kind}）：${redactUrls(detail)}`)
     return kind
   }
+}
+
+function pauseRange(s: SpeakRequest['settings'] | undefined): PauseRange {
+  return { pause: s?.pauseSeconds ?? 0, min: s?.pauseMinSeconds ?? 0, max: s?.pauseMaxSeconds ?? 0 }
 }
 
 /** 播放器不要占用终端的输入输出。 */

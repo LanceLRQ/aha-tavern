@@ -265,13 +265,15 @@ describe('loadVoiceService：timeoutSeconds 封顶', () => {
 
 describe('loadVoiceService：pauseSeconds', () => {
   const pause = async (v: string) => voiceOk(await loadVoice(`voice:\n  endpoint: http://127.0.0.1:1\n  pauseSeconds: ${v}\n`))
-  it('没写用默认 2.5，且不记问题', async () => {
+  it('没写用默认 2，且不记问题', async () => {
     const r = voiceOk(await loadVoice('voice:\n  endpoint: http://127.0.0.1:1\n'))
-    expect(r.settings.pauseSeconds).toBe(2.5)
+    expect(r.settings.pauseSeconds).toBe(2)
+    expect(r.settings.pauseMinSeconds).toBe(1)
+    expect(r.settings.pauseMaxSeconds).toBe(4)
     expect(r.problems).toEqual([])
   })
   it('0 到 10 之间的数字（含小数）采用', async () => {
-    for (const [text, n] of [['0', 0], ['3', 3], ['1.5', 1.5], [String(MAX_VOICE_PAUSE_SECONDS), MAX_VOICE_PAUSE_SECONDS]] as const) {
+    for (const [text, n] of [['0', 0], ['3', 3], ['1.5', 1.5]] as const) {
       const r = await pause(text)
       expect(r.settings.pauseSeconds).toBe(n)
       expect(r.problems).toEqual([])
@@ -280,10 +282,47 @@ describe('loadVoiceService：pauseSeconds', () => {
   it('非数字或越界用默认值并记一条问题，不回显字段值', async () => {
     for (const text of ['abc', '-1', '10.5', '100', '"3"', '.nan']) {
       const r = await pause(text)
-      expect(r.settings.pauseSeconds).toBe(2.5)
+      expect(r.settings.pauseSeconds).toBe(2)
       expect(r.problems).toHaveLength(1)
       expect(r.problems[0]).toContain('voice.pauseSeconds')
     }
+  })
+})
+
+describe('loadVoiceService：pauseMinSeconds / pauseMaxSeconds', () => {
+  const load3 = async (body: string) => voiceOk(await loadVoice(`voice:\n  endpoint: http://127.0.0.1:1\n${body}`))
+  it('合法值采用，不记问题', async () => {
+    const r = await load3('  pauseSeconds: 3\n  pauseMinSeconds: 0.5\n  pauseMaxSeconds: 8\n')
+    expect(r.settings).toMatchObject({ pauseSeconds: 3, pauseMinSeconds: 0.5, pauseMaxSeconds: 8 })
+    expect(r.problems).toEqual([])
+  })
+  it('各自非数字或越界：用各自的默认值并记一条问题', async () => {
+    for (const key of ['pauseMinSeconds', 'pauseMaxSeconds']) {
+      for (const bad of ['abc', '-1', '10.5', '"2"']) {
+        const r = await load3(`  ${key}: ${bad}\n`)
+        expect(r.settings.pauseMinSeconds).toBe(1)
+        expect(r.settings.pauseMaxSeconds).toBe(4)
+        expect(r.problems).toHaveLength(1)
+        expect(r.problems[0]).toContain(`voice.${key}`)
+      }
+    }
+  })
+  it('关系不对：记一条问题，min/max 按 pause 收拢，其余值保留', async () => {
+    const r = await load3('  pauseSeconds: 2\n  pauseMinSeconds: 3\n  pauseMaxSeconds: 1.5\n')
+    expect(r.settings).toMatchObject({ pauseSeconds: 2, pauseMinSeconds: 2, pauseMaxSeconds: 2 })
+    expect(r.problems).toHaveLength(1)
+    expect(r.problems[0]).toContain('voice.pauseMinSeconds / pauseMaxSeconds')
+    expect(r.problems[0]).toContain('已按 pauseSeconds 收拢')
+  })
+  it('只有 min 偏大：只收拢 min', async () => {
+    const r = await load3('  pauseSeconds: 0.5\n')
+    expect(r.settings).toMatchObject({ pauseSeconds: 0.5, pauseMinSeconds: 0.5, pauseMaxSeconds: 4 })
+    expect(r.problems).toHaveLength(1)
+  })
+  it('pauseSeconds 为 0 时不检查关系', async () => {
+    const r = await load3('  pauseSeconds: 0\n  pauseMinSeconds: 3\n  pauseMaxSeconds: 1\n')
+    expect(r.settings).toMatchObject({ pauseSeconds: 0, pauseMinSeconds: 3, pauseMaxSeconds: 1 })
+    expect(r.problems).toEqual([])
   })
 })
 
@@ -301,11 +340,13 @@ describe('loadVoiceService：已配置', () => {
       read: 'lines',
       language: 'chinese',
       timeoutSeconds: 120,
-      pauseSeconds: 2.5,
+      pauseSeconds: 2,
+      pauseMinSeconds: 1,
+      pauseMaxSeconds: 4,
       port: 18123,
       local: true,
     })
-    expect(VOICE_SERVICE_DEFAULTS).toMatchObject({ launch: 'none', model: '0.6b', read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5 })
+    expect(VOICE_SERVICE_DEFAULTS).toMatchObject({ launch: 'none', model: '0.6b', read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2, pauseMinSeconds: 1, pauseMaxSeconds: 4 })
     expect(VOICE_DESIGN_MODEL).toBe('mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit')
   })
 

@@ -23,7 +23,7 @@ const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
 const PLAYER: Player = { command: 'afplay', args: (f) => [f] }
 const SETTINGS: VoiceServiceSettings = {
   endpoint: 'http://127.0.0.1:8000', launch: 'none', model: 'm-1', modelsDir: '/models', read: 'lines',
-  language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5, port: 8000, local: true,
+  language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2, pauseMinSeconds: 1, pauseMaxSeconds: 4, port: 8000, local: true,
 }
 const VOICE = { audio: '/ref/a.wav', text: '参考文字' }
 
@@ -104,7 +104,7 @@ const req = (sentences: string[], over: Partial<SpeakRequest> = {}): SpeakReques
 })
 
 describe('Speaker 句间停顿', () => {
-  const settings = { ...SETTINGS, pauseSeconds: 2.5 }
+  const settings = { ...SETTINGS, pauseSeconds: 2, pauseMinSeconds: 1, pauseMaxSeconds: 4 }
   const gapped = (sentences: string[], gaps: ('none' | 'break' | 'inline')[], over: Partial<SpeakRequest> = {}) =>
     req(sentences, { gaps, skipped: gaps.map((g) => (g === 'break' ? 12 : 0)), settings, ...over })
 
@@ -115,17 +115,17 @@ describe('Speaker 句间停顿', () => {
     await settle()
     expect(h.plays).toHaveLength(1)
     expect(h.sleeps).toHaveLength(1)
-    expect(h.sleeps[0]!.ms).toBe(2500)
+    expect(h.sleeps[0]!.ms).toBe(2000)
     expect(h.plays).toHaveLength(1) // 等待中，第二句没开始
     h.sleeps[0]!.end()
     await settle()
     expect(h.plays).toHaveLength(2)
-    expect(h.sleeps.map((x) => x.ms)).toEqual([2500, 500])
+    expect(h.sleeps.map((x) => x.ms)).toEqual([2000, 500])
     h.sleeps[1]!.end()
     await settle()
     h.sleeps[2]!.end()
     await settle()
-    expect(h.sleeps.map((x) => x.ms)).toEqual([2500, 500, 2500])
+    expect(h.sleeps.map((x) => x.ms)).toEqual([2000, 500, 2000])
     expect(h.plays).toHaveLength(4)
   })
 
@@ -174,19 +174,19 @@ describe('Speaker 句间停顿', () => {
       return h.sleeps.map((x) => x.ms)
     }
     it('字数不同，等待时长不同；12 字等于设定值', async () => {
-      expect(await sleepFor([0, 12])).toEqual([2500])
+      expect(await sleepFor([0, 12])).toEqual([2000])
       const [short] = await sleepFor([0, 3])
       const [long] = await sleepFor([0, 40])
-      expect(short).toBeGreaterThan(1100); expect(short).toBeLessThan(1130)
-      expect(long).toBeGreaterThan(4350); expect(long).toBeLessThan(4380)
+      expect(short).toBe(1289)
+      expect(long).toBe(3223)
     })
     it('只换段（0 字）按 4 字算', async () => {
       const [ms] = await sleepFor([0, 0])
-      expect(ms).toBeGreaterThan(1290); expect(ms).toBeLessThan(1310)
+      expect(ms).toBe(1379)
     })
     it('没给 skipped 按换段处理；扣除已过去的时间后再等', async () => {
       const [ms] = await sleepFor([])
-      expect(ms).toBeGreaterThan(1290); expect(ms).toBeLessThan(1310)
+      expect(ms).toBe(1379)
     })
     it('append 的第一句按换段（4 字）处理', async () => {
       const h = harness({ auto: false, manualSleep: true })
@@ -200,9 +200,21 @@ describe('Speaker 句间停顿', () => {
       h.synths[1]!.done()
       h.plays[0]!.end()
       await settle()
-      expect(h.sleeps[0]!.ms).toBeGreaterThan(1290)
-      expect(h.sleeps[0]!.ms).toBeLessThan(1310)
+      expect(h.sleeps[0]!.ms).toBe(1379)
       await sp.stop()
+    })
+    it('用到三个值：最短/最长停顿改变曲线；inline 不受最短停顿影响', async () => {
+      const mk = (min: number, max: number) => ({ settings: { ...SETTINGS, pauseSeconds: 2, pauseMinSeconds: min, pauseMaxSeconds: max } })
+      expect(await sleepFor([0, 12], mk(0.5, 8))).toEqual([2000])
+      const [lowMax] = await sleepFor([0, 1000], mk(1, 2.5))
+      expect(lowMax).toBe(2500)
+      const [shortMin] = await sleepFor([0, 3], mk(0, 4))
+      expect(shortMin).toBeLessThan(1000)
+      const h = harness()
+      const sp = new Speaker(h.deps)
+      sp.speak(gapped(['一一一', '二二二'], ['none', 'inline'], mk(3, 5)))
+      await settle()
+      expect(h.sleeps.map((x) => x.ms)).toEqual([500])
     })
     it('pauseSeconds 为 0 时仍不停', async () => {
       expect(await sleepFor([0, 30], { settings: { ...SETTINGS, pauseSeconds: 0 } })).toEqual([])
@@ -226,12 +238,12 @@ describe('Speaker 句间停顿', () => {
     }
     it('合成瞬时完成：等满设定值', async () => {
       const { h, sp } = await run(0)
-      expect(h.sleeps.map((x) => x.ms)).toEqual([2500])
+      expect(h.sleeps.map((x) => x.ms)).toEqual([2000])
       await sp.stop()
     })
     it('合成耗时小于停顿：只补差额', async () => {
       const { h, sp } = await run(1000)
-      expect(h.sleeps.map((x) => x.ms)).toEqual([1500])
+      expect(h.sleeps.map((x) => x.ms)).toEqual([1000])
       await sp.stop()
     })
     it('inline 同样从播完起算', async () => {
@@ -240,7 +252,7 @@ describe('Speaker 句间停顿', () => {
       await sp.stop()
     })
     it('合成耗时不小于停顿：不再 sleep，直接播放', async () => {
-      const { h } = await run(2500)
+      const { h } = await run(2000)
       expect(h.sleeps).toHaveLength(0)
       expect(h.plays).toHaveLength(2)
     })
@@ -282,13 +294,13 @@ describe('Speaker 句间停顿', () => {
     h.synths[1]!.done()
     h.plays[0]!.end()
     await settle()
-    expect(h.sleeps.map((x) => x.ms)).toEqual([1301]) // 接在上一段后面：按换段算
+    expect(h.sleeps.map((x) => x.ms)).toEqual([1379]) // 接在上一段后面：按换段算
     h.sleeps[0]!.end()
     await settle()
     h.synths[2]!.done()
     h.plays[1]!.end()
     await settle()
-    expect(h.sleeps.map((x) => x.ms)).toEqual([1301, 500])
+    expect(h.sleeps.map((x) => x.ms)).toEqual([1379, 500])
     await sp.stop()
   })
 
@@ -799,7 +811,7 @@ describe('朗读命令：开始朗读', () => {
     await w.invoke('欢迎光临，请坐吧。今天想喝点什么？（她擦了擦杯子）慢慢选，不着急的。')
     await settle()
     expect(w.h.plays).toHaveLength(3)
-    expect(w.h.sleeps.map((x) => x.ms)).toEqual([500, 1646])
+    expect(w.h.sleeps.map((x) => x.ms)).toEqual([500, 1551])
   })
   it('没有任何角色的话可念：说明', async () => {
     const w = await world()

@@ -34,7 +34,12 @@ export const VOICE_FIELDS: readonly FieldDef[] = [
   },
   { key: 'language', label: '语言', hint: '传给语音服务的语言名，如 chinese。', kind: 'text' },
   { key: 'timeoutSeconds', label: '单句超时（秒）', hint: '单句合成最多等多久。', kind: 'number' },
-  { key: 'pauseSeconds', label: '段间停顿（秒）', hint: '隔着大约 12 个没念出来的字时停多久；字多停得久一些（最多这个值的 2 倍），字少停得短一些；0 表示不停。', kind: 'number', step: '0.5' },
+  {
+    key: 'pauseSeconds', label: '段间停顿（秒）', kind: 'number', step: '0.5',
+    hint: '隔着大约 12 个没念出来的字时停多久；字多停久些、字少停短些，范围由下面两项决定；0 表示不停。',
+  },
+  { key: 'pauseMinSeconds', label: '最短停顿（秒）', hint: '隔着的字很少时停的最短时间；不能大于段间停顿。', kind: 'number', step: '0.5' },
+  { key: 'pauseMaxSeconds', label: '最长停顿（秒）', hint: '隔着的字很多时停的最长时间；不能小于段间停顿。', kind: 'number', step: '0.5' },
 ]
 
 export const IMAGE_FIELDS: readonly FieldDef[] = [

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MIN_PAUSE_SECONDS, PARAGRAPH_PAUSE_CHARS, PAUSE_BASE_CHARS, breakPauseSeconds, planSpeech, speakableText, splitSentences,
+  INLINE_PAUSE_SECONDS, PARAGRAPH_PAUSE_CHARS, PAUSE_BASE_CHARS, breakPauseSeconds, planSpeech, speakableText, splitSentences,
 } from '../../../src/core/speech-text'
 
 describe('speakableText 图片行', () => {
@@ -186,45 +186,60 @@ describe('planSpeech 的跳过字数', () => {
 })
 
 describe('breakPauseSeconds', () => {
-  const near = (m: number, want: number, P = 2.5) => expect(Math.abs(breakPauseSeconds(m, P) - want)).toBeLessThan(0.001)
-  it('P=2.5 的参考点', () => {
-    near(3, 1.11497); near(4, 1.30068); near(6, 1.64590); near(12, 2.5); near(24, 3.61111); near(40, 4.36569)
-    expect(breakPauseSeconds(200, 2.5)).toBeGreaterThan(4.99)
-    expect(breakPauseSeconds(200, 2.5)).toBeLessThanOrEqual(5)
+  const D = { pause: 2, min: 1, max: 4 }
+  const near = (m: number, want: number, r = D) => expect(Math.abs(breakPauseSeconds(m, r) - want)).toBeLessThan(1e-4)
+  it('默认值 2/1/4 下的参考点', () => {
+    near(3, 1.28919); near(4, 1.37926); near(6, 1.55051); near(12, 2); near(24, 2.66667); near(40, 3.22348)
+    expect(breakPauseSeconds(1e6, D)).toBeLessThanOrEqual(4)
+    expect(breakPauseSeconds(1e6, D)).toBeGreaterThan(3.999)
   })
   it('n=0 按 4 个字算', () => {
     expect(PARAGRAPH_PAUSE_CHARS).toBe(4)
-    expect(breakPauseSeconds(0, 2.5)).toBe(breakPauseSeconds(4, 2.5))
+    expect(breakPauseSeconds(0, D)).toBe(breakPauseSeconds(4, D))
     expect(PAUSE_BASE_CHARS).toBe(12)
   })
-  it('单调不减、不低于下限、不超过上限', () => {
+  it('inline 的固定停顿是 0.5 秒，与可配置的最短停顿无关', () => {
+    expect(INLINE_PAUSE_SECONDS).toBe(0.5)
+  })
+  it('n>=1 单调不减，结果在 [min, max] 内', () => {
     let prev = 0
     for (let n = 1; n <= 500; n++) {
-      const v = breakPauseSeconds(n, 2.5)
+      const v = breakPauseSeconds(n, D)
       expect(v).toBeGreaterThanOrEqual(prev - 1e-12)
-      expect(v).toBeGreaterThanOrEqual(MIN_PAUSE_SECONDS)
-      expect(v).toBeLessThanOrEqual(5)
+      expect(v).toBeGreaterThanOrEqual(1)
+      expect(v).toBeLessThanOrEqual(4)
       prev = v
     }
   })
-  it('P=0 不停；P 不大于下限时一律停 P', () => {
-    expect(breakPauseSeconds(30, 0)).toBe(0)
-    expect(breakPauseSeconds(0, 0)).toBe(0)
-    expect(breakPauseSeconds(30, 0.3)).toBe(0.3)
-    expect(breakPauseSeconds(2, MIN_PAUSE_SECONDS)).toBe(MIN_PAUSE_SECONDS)
+  it('pause 为 0 或非有限：0', () => {
+    expect(breakPauseSeconds(30, { pause: 0, min: 1, max: 4 })).toBe(0)
+    expect(breakPauseSeconds(30, { pause: -1, min: 1, max: 4 })).toBe(0)
+    expect(breakPauseSeconds(30, { pause: NaN, min: 1, max: 4 })).toBe(0)
+    expect(breakPauseSeconds(30, { pause: Infinity, min: 1, max: 4 })).toBe(0)
   })
-  it('P=5 时上限为 10；P=10 时恒为 10；P=9 不超过 10', () => {
-    near(12, 5, 5)
-    expect(breakPauseSeconds(100000, 5)).toBeLessThanOrEqual(10)
-    expect(breakPauseSeconds(100000, 5)).toBeGreaterThan(9.99)
-    expect(breakPauseSeconds(0, 10)).toBe(10)
-    expect(breakPauseSeconds(100000, 9)).toBeLessThanOrEqual(10)
-    near(12, 9, 9)
+  it('pause 等于 min 或 max、min 等于 max：返回 pause，不出现 NaN', () => {
+    expect(breakPauseSeconds(30, { pause: 1, min: 1, max: 4 })).toBe(1)
+    expect(breakPauseSeconds(30, { pause: 4, min: 1, max: 4 })).toBe(4)
+    expect(breakPauseSeconds(30, { pause: 2, min: 2, max: 2 })).toBe(2)
+    expect(breakPauseSeconds(0, { pause: 10, min: 0, max: 10 })).toBeLessThanOrEqual(10)
   })
-
-  it('非有限的输入不会得到非有限的停顿', () => {
-    expect(breakPauseSeconds(5, Number.POSITIVE_INFINITY)).toBe(0)
-    expect(breakPauseSeconds(5, Number.NaN)).toBe(0)
-    expect(breakPauseSeconds(Number.POSITIVE_INFINITY, 2.5)).toBe(5)
+  it('min > pause 或 max < pause 时函数自己收拢到 pause', () => {
+    expect(breakPauseSeconds(30, { pause: 2, min: 3, max: 4 })).toBe(2)
+    expect(breakPauseSeconds(30, { pause: 2, min: 1, max: 1.5 })).toBe(2)
+    expect(breakPauseSeconds(30, { pause: 2, min: 5, max: 1 })).toBe(2)
+  })
+  it('min/max 非有限时按 pause 收拢；结果始终有限', () => {
+    for (const r of [{ pause: 2, min: NaN, max: 4 }, { pause: 2, min: 1, max: Infinity }, { pause: 2, min: -Infinity, max: NaN }]) {
+      for (const n of [0, 5, 100, NaN]) {
+        const v = breakPauseSeconds(n, r)
+        expect(Number.isFinite(v)).toBe(true)
+        expect(v).toBeGreaterThanOrEqual(0)
+      }
+    }
+  })
+  it('min 为 0 时短文字可以停得很短，不低于 0', () => {
+    const v = breakPauseSeconds(1, { pause: 2, min: 0, max: 4 })
+    expect(v).toBeGreaterThan(0)
+    expect(v).toBeLessThan(1)
   })
 })

@@ -1,21 +1,17 @@
 // 语音朗读的取字与切句：把角色的一条回复变成要念的句子列表（规格 3.3）。
 // 纯函数，与宿主无关；字数一律按 Unicode 码点计。
 
-import { MAX_VOICE_PAUSE_SECONDS } from './services'
-
 /** 念哪些字：lines 去掉动作描写，all 只去图片行与 Markdown 标记。 */
 export type SpeechReadMode = 'lines' | 'all'
 
 /** 单句字数上限默认值。 */
 export const DEFAULT_MAX_SENTENCE_CHARS = 80
-/** 短停顿下限（秒）：同一段里相邻两句的固定停顿，也是段间停顿的下限。 */
-export const MIN_PAUSE_SECONDS = 0.5
+/** 同一段里相邻两句的固定停顿（秒）；与可配置的段间停顿无关。 */
+export const INLINE_PAUSE_SECONDS = 0.5
 /** 段间停顿的基准字数：被跳过的字数等于它时，停顿正好是设置的 pauseSeconds。 */
 export const PAUSE_BASE_CHARS = 12
 /** 只有段落分界、没有被跳过的文字时，按这么多字算。 */
 export const PARAGRAPH_PAUSE_CHARS = 4
-/** 段间停顿上限是设置值的几倍。 */
-const PAUSE_MAX_FACTOR = 2
 /** 一次朗读字数上限默认值。 */
 export const DEFAULT_MAX_TOTAL_CHARS = 1000
 /** 短句合并阈值：不足该字数的句子并入相邻句。 */
@@ -250,17 +246,30 @@ export function planSpeech(reply: string, options: SpeechPlanOptions): SpeechPla
   return { sentences, gaps, skipped, truncated: false }
 }
 
+/** 段间停顿的三个设置值（秒）。 */
+export interface PauseRange {
+  /** 基准：被跳过的字数为 PAUSE_BASE_CHARS 时的停顿；0 表示不停 */
+  pause: number
+  /** 最短：字很少时向它靠近 */
+  min: number
+  /** 最长：字很多时向它靠近 */
+  max: number
+}
+
+const finiteOr = (v: number, fallback: number): number => (Number.isFinite(v) ? v : fallback)
+
 /**
  * 段间停顿（秒）：随两段话之间被跳过的字数 n 平滑变化。
- * 下限 MIN_PAUSE_SECONDS，上限 min(10, 2 × pauseSeconds)，n 等于 PAUSE_BASE_CHARS 时正好是 pauseSeconds；
- * n 为 0（只是换段）按 PARAGRAPH_PAUSE_CHARS 个字算。pauseSeconds 不大于下限（含 0）时不走曲线，一律返回它自己。
+ * 在 [min, max] 之间走指数曲线，n 等于 PAUSE_BASE_CHARS 时正好是 pause；n 为 0（只是换段）按 PARAGRAPH_PAUSE_CHARS 个字算。
+ * pause 不大于 0 或不是有限数时不停；min/max 不满足 min ≤ pause ≤ max 时按 pause 收拢；曲线退化（两端相等或 pause 在端点）时返回 pause。
  */
-export function breakPauseSeconds(skippedChars: number, pauseSeconds: number): number {
-  const p = Number.isFinite(pauseSeconds) ? pauseSeconds : 0
-  if (!(p > MIN_PAUSE_SECONDS)) return Math.max(0, p)
-  const max = Math.min(MAX_VOICE_PAUSE_SECONDS, PAUSE_MAX_FACTOR * p)
-  if (p >= max) return p
-  const m = skippedChars > 0 ? skippedChars : PARAGRAPH_PAUSE_CHARS
-  const k = -Math.log(1 - (p - MIN_PAUSE_SECONDS) / (max - MIN_PAUSE_SECONDS)) / PAUSE_BASE_CHARS
-  return Math.min(max, MIN_PAUSE_SECONDS + (max - MIN_PAUSE_SECONDS) * (1 - Math.exp(-k * m)))
+export function breakPauseSeconds(skippedChars: number, range: PauseRange): number {
+  const pause = finiteOr(range.pause, 0)
+  if (pause <= 0) return 0
+  const lo = Math.min(finiteOr(range.min, pause), pause)
+  const hi = Math.max(finiteOr(range.max, pause), pause)
+  if (hi <= lo || pause <= lo || pause >= hi) return pause
+  const m = skippedChars > 0 && Number.isFinite(skippedChars) ? skippedChars : PARAGRAPH_PAUSE_CHARS
+  const k = -Math.log(1 - (pause - lo) / (hi - lo)) / PAUSE_BASE_CHARS
+  return Math.max(lo, Math.min(hi, lo + (hi - lo) * (1 - Math.exp(-k * m))))
 }

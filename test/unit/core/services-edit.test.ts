@@ -119,6 +119,18 @@ describe('parseVoiceForm：入参校验', () => {
     }
   })
 
+  it('pauseMinSeconds / pauseMaxSeconds：各自 0 到上限的数字，空串恢复默认，其余拒绝', () => {
+    for (const key of ['pauseMinSeconds', 'pauseMaxSeconds']) {
+      expect(okEdit(parseVoiceForm({ ...base, [key]: '1.5' })).set).toMatchObject({ [key]: 1.5 })
+      expect(okEdit(parseVoiceForm({ ...base, [key]: 0 })).set).toMatchObject({ [key]: 0 })
+      expect(okEdit(parseVoiceForm({ ...base, [key]: MAX_VOICE_PAUSE_SECONDS })).set).toMatchObject({ [key]: MAX_VOICE_PAUSE_SECONDS })
+      expect(okEdit(parseVoiceForm({ ...base, [key]: '' })).remove).toContain(key)
+      for (const bad of [-1, MAX_VOICE_PAUSE_SECONDS + 0.5, 'abc', NaN]) {
+        expect(errorsOf(parseVoiceForm({ ...base, [key]: bad }))).toHaveProperty(key)
+      }
+    }
+  })
+
   it('页面不认识的键被忽略，不会写进文件', () => {
     const edit = okEdit(parseVoiceForm({ ...base, evil: 'x', __proto__: { a: 1 } }))
     expect(Object.keys(edit.set)).toEqual(['endpoint'])
@@ -289,6 +301,57 @@ describe('updateServicesFile：改写服务配置', () => {
   it('节本身不是映射（比如写成了文字）：拒绝改写', async () => {
     await fs.writeFile(file, 'voice: hello\n', 'utf8')
     await expect(updateServicesFile(file, 'voice', { set: { endpoint: 'http://x:1' }, remove: [] })).rejects.toMatchObject({ code: 'format' })
+  })
+
+  describe('关联校验在锁内：最短停顿 ≤ 基准停顿 ≤ 最长停顿', () => {
+    const base = 'voice:\n  endpoint: http://127.0.0.1:1\n'
+    const upd = (set: Record<string, string | number | boolean>, remove: string[] = []) =>
+      updateServicesFile(file, 'voice', { set, remove })
+
+    it('只改 min 使其大于文件里的 pause：拒绝，错误记在 pauseMinSeconds，文件不动', async () => {
+      const text = `${base}  pauseSeconds: 2\n`
+      await fs.writeFile(file, text, 'utf8')
+      await expect(upd({ pauseMinSeconds: 3 })).rejects.toMatchObject({ code: 'invalid', errors: { pauseMinSeconds: expect.any(String) } })
+      expect(await fs.readFile(file, 'utf8')).toBe(text)
+    })
+    it('只改 max 使其小于文件里的 pause：拒绝，错误记在 pauseMaxSeconds', async () => {
+      await fs.writeFile(file, `${base}  pauseSeconds: 3\n`, 'utf8')
+      await expect(upd({ pauseMaxSeconds: 2 })).rejects.toMatchObject({ errors: { pauseMaxSeconds: expect.any(String) } })
+    })
+    it('只改 pause 使其落到文件里 min/max 之外：错误记在 pauseSeconds', async () => {
+      await fs.writeFile(file, `${base}  pauseMinSeconds: 1.5\n  pauseMaxSeconds: 3\n`, 'utf8')
+      await expect(upd({ pauseSeconds: 1 })).rejects.toMatchObject({ errors: { pauseSeconds: expect.any(String) } })
+      await expect(upd({ pauseSeconds: 3.5 })).rejects.toMatchObject({ errors: { pauseSeconds: expect.any(String) } })
+    })
+    it('没写的字段按默认值（2 / 1 / 4）参与检查', async () => {
+      await fs.writeFile(file, base, 'utf8')
+      await expect(upd({ pauseMinSeconds: 2.5 })).rejects.toMatchObject({ errors: { pauseMinSeconds: expect.any(String) } })
+      await expect(upd({ pauseMaxSeconds: 1.5 })).rejects.toMatchObject({ errors: { pauseMaxSeconds: expect.any(String) } })
+      await upd({ pauseMinSeconds: 2, pauseMaxSeconds: 2 })
+    })
+    it('同时改三项为合法组合：通过并写入', async () => {
+      await fs.writeFile(file, `${base}  pauseSeconds: 2\n`, 'utf8')
+      await upd({ pauseSeconds: 5, pauseMinSeconds: 3, pauseMaxSeconds: 8 })
+      const r = await loadVoiceService(file, { defaultModelsDir: '/m' })
+      expect(r.configured && r.settings).toMatchObject({ pauseSeconds: 5, pauseMinSeconds: 3, pauseMaxSeconds: 8 })
+      expect(r.problems).toEqual([])
+    })
+    it('同时改成不合法组合：拒绝', async () => {
+      await fs.writeFile(file, base, 'utf8')
+      await expect(upd({ pauseSeconds: 2, pauseMinSeconds: 5, pauseMaxSeconds: 3 })).rejects.toMatchObject({ code: 'invalid' })
+    })
+    it('pause 改为 0 时不查关系', async () => {
+      await fs.writeFile(file, `${base}  pauseSeconds: 2\n`, 'utf8')
+      await upd({ pauseSeconds: 0, pauseMinSeconds: 5, pauseMaxSeconds: 3 })
+    })
+    it('没碰这三项时不查：文件里原本矛盾也允许保存别的字段', async () => {
+      await fs.writeFile(file, `${base}  pauseSeconds: 2\n  pauseMinSeconds: 9\n`, 'utf8')
+      await upd({ timeoutSeconds: 60 })
+    })
+    it('删除 pause（恢复默认 2）后 min 偏大：拒绝', async () => {
+      await fs.writeFile(file, `${base}  pauseSeconds: 5\n  pauseMinSeconds: 4\n`, 'utf8')
+      await expect(upd({}, ['pauseSeconds'])).rejects.toMatchObject({ errors: { pauseSeconds: expect.any(String) } })
+    })
   })
 
   describe('关联校验在锁内：launch 为 mlx 时地址必须是本机', () => {

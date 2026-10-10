@@ -3,7 +3,9 @@
 import fs from 'node:fs/promises'
 import YAML from 'yaml'
 import { expandHome, modifyFile } from './fsx'
-import { LOCAL_HOSTS, MAX_VOICE_PAUSE_SECONDS, MAX_VOICE_TIMEOUT_SECONDS, MIN_VOICE_PAUSE_SECONDS } from './services'
+import {
+  LOCAL_HOSTS, MAX_VOICE_PAUSE_SECONDS, MAX_VOICE_TIMEOUT_SECONDS, MIN_VOICE_PAUSE_SECONDS, VOICE_SERVICE_DEFAULTS, pauseRelationOk,
+} from './services'
 
 export type ServicesSection = 'voice' | 'image'
 
@@ -156,6 +158,8 @@ function toForm(input: unknown): Form | null {
   return input && typeof input === 'object' && !Array.isArray(input) ? new Form(input as Record<string, unknown>) : null
 }
 
+const PAUSE_KEYS = ['pauseSeconds', 'pauseMinSeconds', 'pauseMaxSeconds'] as const
+
 const NOT_OBJECT: FormResult = { ok: false, errors: { _: '提交的内容格式不对' } }
 
 /** 校验语音表单。没传的字段不动，空串表示恢复默认（删除该字段）。页面不认识的键一律忽略。 */
@@ -180,7 +184,7 @@ export function parseVoiceForm(input: unknown, opts: ParseOptions = {}): FormRes
   form.choice('read', ['lines', 'all'] as const)
   form.text('language', 'language', (v) => (LANGUAGE.test(v) ? null : '只能是英文字母，如 chinese'))
   form.int('timeoutSeconds', 1, MAX_VOICE_TIMEOUT_SECONDS)
-  form.num('pauseSeconds', MIN_VOICE_PAUSE_SECONDS, MAX_VOICE_PAUSE_SECONDS)
+  for (const key of PAUSE_KEYS) form.num(key, MIN_VOICE_PAUSE_SECONDS, MAX_VOICE_PAUSE_SECONDS)
   return form.result()
 }
 
@@ -263,6 +267,7 @@ function checkRelations(doc: YAML.Document, section: ServicesSection, edit: Sect
   }
   if (section !== 'voice') return
   const touched = (k: string) => k in edit.set || edit.remove.includes(k)
+  checkPauseRelation(doc, touched)
   if (!touched('endpoint') && !touched('launch')) return // 现有值本来矛盾而没碰：读取端会降级，允许保存
   if (doc.getIn([section, 'launch']) !== 'mlx') return
   let host: string
@@ -279,9 +284,32 @@ function checkRelations(doc: YAML.Document, section: ServicesSection, edit: Sect
   }
 }
 
+/** 最短停顿 ≤ 基准停顿 ≤ 最长停顿（基准为 0 时不查）。没碰这三项就不查：现有值本来矛盾，读取端会收拢，允许保存别的字段。 */
+function checkPauseRelation(doc: YAML.Document, touched: (k: string) => boolean): void {
+  if (!PAUSE_KEYS.some(touched)) return
+  const d = VOICE_SERVICE_DEFAULTS
+  const num = (key: (typeof PAUSE_KEYS)[number], fallback: number): number => {
+    const v = doc.getIn(['voice', key])
+    return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+  }
+  const pause = num('pauseSeconds', d.pauseSeconds)
+  const min = num('pauseMinSeconds', d.pauseMinSeconds)
+  const max = num('pauseMaxSeconds', d.pauseMaxSeconds)
+  if (pauseRelationOk(pause, min, max)) return
+  // 错误记在这次改动的字段上：违反的是哪一对，就记在那一对里被改动的字段
+  const errors: Record<string, string> = {}
+  const mark = (pair: readonly (typeof PAUSE_KEYS)[number][], msg: string): void => {
+    const hit = pair.filter(touched)
+    for (const k of hit.length > 0 ? hit : pair.filter((k) => touched(k))) errors[k] = msg
+  }
+  if (min > pause) mark(['pauseMinSeconds', 'pauseSeconds'], '最短停顿不能大于基准停顿')
+  if (max < pause) mark(['pauseMaxSeconds', 'pauseSeconds'], '最长停顿不能小于基准停顿')
+  throw new ServicesEditError('invalid', '停顿的大小关系不对：最短 ≤ 基准 ≤ 最长', errors)
+}
+
 // ---------- 读给表单用的原始取值 ----------
 
-const VOICE_KEYS = ['endpoint', 'launch', 'model', 'modelsDir', 'hfEndpoint', 'read', 'language', 'timeoutSeconds', 'pauseSeconds'] as const
+const VOICE_KEYS = ['endpoint', 'launch', 'model', 'modelsDir', 'hfEndpoint', 'read', 'language', 'timeoutSeconds', ...PAUSE_KEYS] as const
 const IMAGE_KEYS = ['endpoint', 'workflow', 'auto', 'style', 'width', 'height', 'steps', 'timeoutSeconds'] as const
 const MODEL_KEYS = ['unet', 'clip', 'vae'] as const
 

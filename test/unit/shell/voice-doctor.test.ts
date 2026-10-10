@@ -46,7 +46,7 @@ const GB = 2 ** 30
 
 const settings = (over: Partial<VoiceServiceSettings> = {}): VoiceServiceSettings => ({
   endpoint: 'http://127.0.0.1:18123/v1?token=abc', launch: 'mlx', model: MODEL_06, modelAlias: '0.6b', modelsDir: DIR,
-  read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5, port: 18123, local: true, ...over,
+  read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2, pauseMinSeconds: 1, pauseMaxSeconds: 4, port: 18123, local: true, ...over,
 })
 const info = (over: Partial<VoiceServerInfo> = {}): VoiceServerInfo => ({
   supported: true, uv: '/usr/bin/uv', envInstalled: true, modelDownloaded: true,
@@ -102,6 +102,13 @@ describe('checkVoice：配置', () => {
     const r = await checkVoice(makeDeps(), { detail: true })
     expect(r.configured).toBe(true)
     expect(r.problems).toEqual(['voice.timeoutSeconds 不是数字，用了默认值'])
+  })
+
+  it('停顿大小关系不对的问题文案原样列出', async () => {
+    const msg = 'voice.pauseMinSeconds / pauseMaxSeconds 与 pauseSeconds 的大小关系不对（应是最短 ≤ 基准 ≤ 最长），已按 pauseSeconds 收拢'
+    cfg = { configured: true, settings: settings(), problems: [msg] }
+    const r = await checkVoice(makeDeps(), { detail: true })
+    expect(r.problems).toEqual([msg])
   })
 
   it('地址带用户名密码：不发任何请求，报告里没有凭据', async () => {

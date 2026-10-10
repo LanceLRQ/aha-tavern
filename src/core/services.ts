@@ -160,6 +160,10 @@ export interface VoiceServiceSettings {
   timeoutSeconds: number
   /** 两段要念的话之间隔着约 12 个没念出来的字时停多久（秒）；实际停顿随字数平滑变化，见 breakPauseSeconds；0 表示不停。 */
   pauseSeconds: number
+  /** 段间停顿的最短值（秒）：被跳过的字很少时的停顿向它靠近。 */
+  pauseMinSeconds: number
+  /** 段间停顿的最长值（秒）：被跳过的字很多时的停顿向它靠近。 */
+  pauseMaxSeconds: number
   /** 从 endpoint 解析出的端口；没写端口时按协议取 80 / 443。 */
   port: number
   /** endpoint 是否本机地址。 */
@@ -184,12 +188,19 @@ export const VOICE_SERVICE_DEFAULTS = {
   read: 'lines',
   language: 'chinese',
   timeoutSeconds: 120,
-  pauseSeconds: 2.5,
+  pauseSeconds: 2,
+  pauseMinSeconds: 1,
+  pauseMaxSeconds: 4,
 } as const
 
-/** 语音 pauseSeconds 的范围（秒）。读取端与设置页表单共用。 */
+/** 语音 pauseSeconds / pauseMinSeconds / pauseMaxSeconds 各自的范围（秒）。读取端与设置页表单共用。 */
 export const MIN_VOICE_PAUSE_SECONDS = 0
 export const MAX_VOICE_PAUSE_SECONDS = 10
+
+/** 三个停顿值的关系是否成立：基准为 0 时不检查，否则要求 min ≤ pause ≤ max。 */
+export function pauseRelationOk(pause: number, min: number, max: number): boolean {
+  return pause <= 0 || (min <= pause && pause <= max)
+}
 
 /** 语音 timeoutSeconds 的上限（秒）：再大没有意义，且乘 1000 后可能超过定时器上限。读取端与设置页表单共用。 */
 export const MAX_VOICE_TIMEOUT_SECONDS = 600
@@ -259,6 +270,18 @@ export async function loadVoiceService(
     else problems.push('voice.modelsDir 应是绝对路径（可以用 ~ 开头），已改用默认值')
   }
 
+  const isPause = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isFinite(v) && v >= MIN_VOICE_PAUSE_SECONDS && v <= MAX_VOICE_PAUSE_SECONDS
+  const pauseHint = `应是 ${MIN_VOICE_PAUSE_SECONDS} 到 ${MAX_VOICE_PAUSE_SECONDS} 的数字`
+  const pauseSeconds = pick('pauseSeconds', isPause, d.pauseSeconds, pauseHint)
+  let pauseMinSeconds = pick('pauseMinSeconds', isPause, d.pauseMinSeconds, pauseHint)
+  let pauseMaxSeconds = pick('pauseMaxSeconds', isPause, d.pauseMaxSeconds, pauseHint)
+  if (!pauseRelationOk(pauseSeconds, pauseMinSeconds, pauseMaxSeconds)) {
+    problems.push('voice.pauseMinSeconds / pauseMaxSeconds 与 pauseSeconds 的大小关系不对（应是最短 ≤ 基准 ≤ 最长），已按 pauseSeconds 收拢')
+    pauseMinSeconds = Math.min(pauseMinSeconds, pauseSeconds)
+    pauseMaxSeconds = Math.max(pauseMaxSeconds, pauseSeconds)
+  }
+
   return {
     configured: true,
     problems,
@@ -275,11 +298,9 @@ export async function loadVoiceService(
         'timeoutSeconds', (v): v is number => isPositiveInt(v) && v <= MAX_VOICE_TIMEOUT_SECONDS, d.timeoutSeconds,
         `应是 1 到 ${MAX_VOICE_TIMEOUT_SECONDS} 的整数`,
       ),
-      pauseSeconds: pick(
-        'pauseSeconds',
-        (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= MIN_VOICE_PAUSE_SECONDS && v <= MAX_VOICE_PAUSE_SECONDS,
-        d.pauseSeconds, `应是 ${MIN_VOICE_PAUSE_SECONDS} 到 ${MAX_VOICE_PAUSE_SECONDS} 的数字`,
-      ),
+      pauseSeconds,
+      pauseMinSeconds,
+      pauseMaxSeconds,
       port: url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80,
       local,
     },

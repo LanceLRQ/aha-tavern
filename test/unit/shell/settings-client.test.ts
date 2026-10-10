@@ -106,10 +106,10 @@ const ok = (value: unknown) => ({ ok: true, value })
 const stateOf = (over: Record<string, any> = {}) => ({
   servicesPath: '/home/x/services.yaml',
   workflows: ['qwen-image-2.1'],
-  voice: { form: { endpoint: 'http://127.0.0.1:18123', launch: 'mlx', model: '', modelsDir: '', hfEndpoint: '', read: '', language: '', timeoutSeconds: '', pauseSeconds: '' } },
+  voice: { form: { endpoint: 'http://127.0.0.1:18123', launch: 'mlx', model: '', modelsDir: '', hfEndpoint: '', read: '', language: '', timeoutSeconds: '', pauseSeconds: '', pauseMinSeconds: '', pauseMaxSeconds: '' } },
   image: { form: { endpoint: '', workflow: '', auto: '', style: '', width: '', height: '', steps: '', timeoutSeconds: '', unet: '', clip: '', vae: '' } },
   defaults: {
-    voice: { launch: 'none', model: '0.6b', modelsDir: '/d/voice', read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5 },
+    voice: { launch: 'none', model: '0.6b', modelsDir: '/d/voice', read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2, pauseMinSeconds: 1, pauseMaxSeconds: 4 },
     image: { workflow: 'qwen-image-2.1', auto: true, style: '画风', width: 832, height: 1216, steps: 12, timeoutSeconds: 180 },
   },
   problems: { file: [], voice: [], image: [] },

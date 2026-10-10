@@ -66,7 +66,7 @@ export interface SettingsState {
   voice: { form: ServicesForm['voice'] }
   image: { form: ServicesForm['image'] }
   defaults: {
-    voice: { launch: string; model: string; modelsDir: string; read: string; language: string; timeoutSeconds: number; pauseSeconds: number }
+    voice: { launch: string; model: string; modelsDir: string; read: string; language: string; timeoutSeconds: number; pauseSeconds: number; pauseMinSeconds: number; pauseMaxSeconds: number }
     image: { workflow: string; auto: boolean; style: string; width: number; height: number; steps: number; timeoutSeconds: number }
   }
   problems: { file: string[]; voice: string[]; image: string[] }
@@ -297,7 +297,7 @@ export function createSettingsApi(rt: Runtime, deps: Partial<SettingsApiDeps> = 
       voice: { form: form.voice },
       image: { form: form.image },
       defaults: {
-        voice: { launch: d.launch, model: d.model, modelsDir: defaultDir(), read: d.read, language: d.language, timeoutSeconds: d.timeoutSeconds, pauseSeconds: d.pauseSeconds },
+        voice: { launch: d.launch, model: d.model, modelsDir: defaultDir(), read: d.read, language: d.language, timeoutSeconds: d.timeoutSeconds, pauseSeconds: d.pauseSeconds, pauseMinSeconds: d.pauseMinSeconds, pauseMaxSeconds: d.pauseMaxSeconds },
         image: { workflow: i.workflow, auto: i.auto, style: i.style, width: i.width, height: i.height, steps: i.steps, timeoutSeconds: i.timeoutSeconds },
       },
       problems: { file: form.problems, voice: voiceCfg.problems, image: imageCfg.problems },
