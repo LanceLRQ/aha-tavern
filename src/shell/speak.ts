@@ -12,7 +12,7 @@ import { readCharacter } from '../core/card'
 import { readChatAutoRead, readRecords, setChatAutoRead } from '../core/chat'
 import { findPlayer, PlayerError, play, type Player, type PlayerSpawn } from '../core/player'
 import { hasUserInfo, type VoiceServiceSettings } from '../core/services'
-import { planSpeech, type SpeechGap, type SpeechPlan } from '../core/speech-text'
+import { MIN_PAUSE_SECONDS, breakPauseSeconds, planSpeech, type SpeechGap, type SpeechPlan } from '../core/speech-text'
 import { createTtsClient, TtsError, type TtsClient } from '../core/tts'
 import { readVoice } from '../core/voice'
 import { trimWavSilence } from '../core/wav-trim'
@@ -33,7 +33,7 @@ const PROBE_MS = 2000
 const noop = (): void => undefined
 
 /** 同一段连续要念的话里，相邻两句之间停多久（毫秒）。 */
-export const INLINE_PAUSE_MS = 500
+export const INLINE_PAUSE_MS = MIN_PAUSE_SECONDS * 1000
 
 // ---------- 朗读队列 ----------
 
@@ -58,6 +58,8 @@ export interface SpeakRequest {
   sentences: readonly string[]
   /** 与 sentences 等长：每句之前的间隔种类；不给就一律不停顿（单句试念等）。 */
   gaps?: readonly SpeechGap[]
+  /** 与 sentences 等长：每句与上一句之间被跳过的字数，决定 break 停多久；不给按 0（只是换段）算。 */
+  skipped?: readonly number[]
   /** 参考录音的绝对路径与录音里说的话。 */
   voice: { audio: string; text: string }
   settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds' | 'pauseSeconds'> & Partial<Pick<VoiceServiceSettings, 'local'>>
@@ -83,12 +85,14 @@ export type SpeakOutcome =
 interface QueueItem {
   text: string
   gap: SpeechGap
+  skipped: number
 }
 
 /** 已合成好、等待播放的一句。 */
 interface Ready {
   file: string
   gap: SpeechGap
+  skipped: number
 }
 
 interface Run {
@@ -127,7 +131,7 @@ export class Speaker {
   speak(req: SpeakRequest): void {
     if (req.sentences.length === 0) return
     this.begin({
-      owner: req.owner, player: req.player, req, queue: req.sentences.map((text, i) => ({ text, gap: req.gaps?.[i] ?? 'none' })), ctl: new AbortController(), files: new Set(),
+      owner: req.owner, player: req.player, req, queue: req.sentences.map((text, i) => ({ text, gap: req.gaps?.[i] ?? 'none', skipped: req.skipped?.[i] ?? 0 })), ctl: new AbortController(), files: new Set(),
       closed: false, client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false, lastPlayEnd: null,
       finished: Promise.resolve(), outcome: { status: 'stopped' },
     })
@@ -163,7 +167,7 @@ export class Speaker {
     if (opts.signal?.aborted) return { status: 'stopped' }
     const run: Run = {
       owner: opts.owner, player: opts.player, req: null, queue: [], ctl: new AbortController(), files: new Set(),
-      closed: false, client: null, ahead: Promise.resolve({ file, gap: 'none' }), playing: false, lastPlayEnd: null, finished: Promise.resolve(),
+      closed: false, client: null, ahead: Promise.resolve({ file, gap: 'none', skipped: 0 }), playing: false, lastPlayEnd: null, finished: Promise.resolve(),
       outcome: { status: 'stopped' },
     }
     this.begin(run)
@@ -196,7 +200,8 @@ export class Speaker {
     const cur = this.current
     if (cur && !cur.closed && cur.owner === req.owner) {
       // 接到上一段末尾：第一句与前面隔着一个段落
-      cur.queue.push(...req.sentences.map((text, i): QueueItem => ({ text, gap: i === 0 ? 'break' : (req.gaps?.[i] ?? 'none') })))
+      cur.queue.push(...req.sentences.map((text, i): QueueItem => (
+        i === 0 ? { text, gap: 'break', skipped: 0 } : { text, gap: req.gaps?.[i] ?? 'none', skipped: req.skipped?.[i] ?? 0 })))
       this.prefetch(cur)
       return
     }
@@ -242,7 +247,7 @@ export class Speaker {
     try {
       this.prefetch(run, true)
       while (run.ahead) {
-        const { file, gap } = await run.ahead
+        const { file, gap, skipped } = await run.ahead
         run.ahead = null
         this.prefetch(run, true)
         if (!waited) {
@@ -250,7 +255,7 @@ export class Speaker {
           await this.waitPrevious(before)
         }
         // 等待期间合成已在领先；stop 或被顶掉时等待立即结束，不再播放
-        const pauseMs = this.pauseMs(run, gap) - (run.lastPlayEnd === null ? 0 : this.deps.now() - run.lastPlayEnd)
+        const pauseMs = this.pauseMs(run, gap, skipped) - (run.lastPlayEnd === null ? 0 : this.deps.now() - run.lastPlayEnd)
         if (pauseMs > 0) {
           await this.deps.sleep(pauseMs, run.ctl.signal)
           if (run.ctl.signal.aborted) break
@@ -287,9 +292,9 @@ export class Speaker {
   }
 
   /** 播放这一句之前要等多久（毫秒）。 */
-  private pauseMs(run: Run, gap: SpeechGap): number {
+  private pauseMs(run: Run, gap: SpeechGap, skipped: number): number {
     if (gap === 'inline') return INLINE_PAUSE_MS
-    if (gap === 'break') return Math.round((run.req?.settings.pauseSeconds ?? 0) * 1000)
+    if (gap === 'break') return Math.round(breakPauseSeconds(skipped, run.req?.settings.pauseSeconds ?? 0) * 1000)
     return 0
   }
 
@@ -302,7 +307,7 @@ export class Speaker {
     run.ahead.catch(noop)
   }
 
-  private async synth(run: Run, { text, gap }: QueueItem): Promise<Ready> {
+  private async synth(run: Run, { text, gap, skipped }: QueueItem): Promise<Ready> {
     const { req, client } = run
     if (!req || !client) throw new TtsError('other', 'synth without request')
     const { voice, settings } = req
@@ -314,7 +319,7 @@ export class Speaker {
     const file = this.deps.tempFile()
     run.files.add(file)
     await this.deps.writeFile(file, trimWavSilence(audio.bytes))
-    return { file, gap }
+    return { file, gap, skipped }
   }
 
   private async drop(file: string): Promise<void> {
@@ -519,7 +524,7 @@ export class AutoReader {
       const plan = planSpeech(text, { mode: ready.settings.read })
       if (plan.sentences.length === 0) return
       const req: SpeakRequest = {
-        sentences: plan.sentences, gaps: plan.gaps, voice: ready.voice, settings: ready.settings, player: ready.player,
+        sentences: plan.sentences, gaps: plan.gaps, skipped: plan.skipped, voice: ready.voice, settings: ready.settings, player: ready.player,
         owner: agent.id,
       }
       if (s.lastKey === key) this.env.speaker.append(req)
@@ -612,7 +617,7 @@ export function speakHandler(env: SpeakEnv, auto: AutoReader): CommandHandler {
       if (!plan) return speakNoReplyReceipt()
     }
     env.speaker.speak({
-      sentences: plan.sentences, gaps: plan.gaps, voice: ready.voice, settings: ready.settings, player: ready.player,
+      sentences: plan.sentences, gaps: plan.gaps, skipped: plan.skipped, voice: ready.voice, settings: ready.settings, player: ready.player,
       owner: agent.id,
     })
     return speakStartedReceipt(plan.sentences.length, plan.truncated)

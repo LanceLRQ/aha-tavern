@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { planSpeech, speakableText, splitSentences } from '../../../src/core/speech-text'
+import {
+  MIN_PAUSE_SECONDS, PARAGRAPH_PAUSE_CHARS, PAUSE_BASE_CHARS, breakPauseSeconds, planSpeech, speakableText, splitSentences,
+} from '../../../src/core/speech-text'
 
 describe('speakableText 图片行', () => {
   it('两种模式都去掉图片行，含尖括号、空格、中文路径', () => {
@@ -10,7 +12,7 @@ describe('speakableText 图片行', () => {
   })
   it('只有图片行时结果为空', () => {
     expect(speakableText('![画面](<a b/c.png>)', 'lines')).toBe('')
-    expect(planSpeech('![画面](<a b/c.png>)', { mode: 'all' })).toEqual({ sentences: [], gaps: [], truncated: false })
+    expect(planSpeech('![画面](<a b/c.png>)', { mode: 'all' })).toEqual({ sentences: [], gaps: [], skipped: [], truncated: false })
   })
 })
 
@@ -103,7 +105,7 @@ describe('splitSentences', () => {
 describe('planSpeech', () => {
   it('lines 模式：去动作、去图片、切句', () => {
     const plan = planSpeech('（笑）欢迎光临，今天想喝点什么？\n![画面](<a b.png>)', { mode: 'lines' })
-    expect(plan).toEqual({ sentences: ['欢迎光临，今天想喝点什么？'], gaps: ['none'], truncated: false })
+    expect(plan).toEqual({ sentences: ['欢迎光临，今天想喝点什么？'], gaps: ['none'], skipped: [0], truncated: false })
   })
   it('总量超限时截到最后一个完整句子', () => {
     const reply = '第一句话有十个字呢。第二句话有十个字呢。第三句话有十个字呢。'
@@ -153,5 +155,70 @@ describe('planSpeech 的间隔种类', () => {
   })
   it('speakableText 的结果不受标记影响', () => {
     expect(speakableText('你好呀（笑）朋友', 'lines')).toBe('你好呀朋友')
+  })
+})
+
+describe('planSpeech 的跳过字数', () => {
+  const skipped = (text: string, mode: 'lines' | 'all' = 'lines') => planSpeech(text, { mode }).skipped
+  it('括号动作：不计括号与标点、空白', () => {
+    expect(skipped('欢迎光临，请坐吧。（她擦了擦杯子， 笑了）今天想喝点什么？')).toEqual([0, 8])
+  })
+  it('星号动作', () => {
+    expect(skipped('欢迎光临，请坐吧。*她擦杯子*今天想喝点什么？')).toEqual([0, 4])
+  })
+  it('一个间隔里有多段被跳过的文字时累加', () => {
+    expect(skipped('欢迎光临，请坐吧。（她笑了）*点头*（转身）今天想喝点什么？')).toEqual([0, 3 + 2 + 2])
+  })
+  it('只换段没有被跳过的文字：0（gap 仍是 break）', () => {
+    const plan = planSpeech('第一句话有十个字呢。\n第二句话有十个字呢。', { mode: 'lines' })
+    expect(plan.gaps).toEqual(['none', 'break'])
+    expect(plan.skipped).toEqual([0, 0])
+  })
+  it('inline 与第一句为 0；all 模式没有被跳过的文字', () => {
+    expect(skipped('欢迎光临，请坐吧。今天想喝点什么？')).toEqual([0, 0])
+    expect(skipped('第一句话有十个字呢。\n\n第二句话有十个字呢。', 'all')).toEqual([0, 0])
+  })
+  it('开头的动作不计入第一句；截断时与 sentences 等长', () => {
+    const plan = planSpeech('（笑）第一句话有十个字呢。（挥手）第二句话有十个字呢。第三句话有十个字呢。', { mode: 'lines', maxTotal: 25 })
+    expect(plan.sentences).toHaveLength(2)
+    expect(plan.skipped).toEqual([0, 2])
+  })
+})
+
+describe('breakPauseSeconds', () => {
+  const near = (m: number, want: number, P = 2.5) => expect(Math.abs(breakPauseSeconds(m, P) - want)).toBeLessThan(0.001)
+  it('P=2.5 的参考点', () => {
+    near(3, 1.11497); near(4, 1.30068); near(6, 1.64590); near(12, 2.5); near(24, 3.61111); near(40, 4.36569)
+    expect(breakPauseSeconds(200, 2.5)).toBeGreaterThan(4.99)
+    expect(breakPauseSeconds(200, 2.5)).toBeLessThanOrEqual(5)
+  })
+  it('n=0 按 4 个字算', () => {
+    expect(PARAGRAPH_PAUSE_CHARS).toBe(4)
+    expect(breakPauseSeconds(0, 2.5)).toBe(breakPauseSeconds(4, 2.5))
+    expect(PAUSE_BASE_CHARS).toBe(12)
+  })
+  it('单调不减、不低于下限、不超过上限', () => {
+    let prev = 0
+    for (let n = 1; n <= 500; n++) {
+      const v = breakPauseSeconds(n, 2.5)
+      expect(v).toBeGreaterThanOrEqual(prev - 1e-12)
+      expect(v).toBeGreaterThanOrEqual(MIN_PAUSE_SECONDS)
+      expect(v).toBeLessThanOrEqual(5)
+      prev = v
+    }
+  })
+  it('P=0 不停；P 不大于下限时一律停 P', () => {
+    expect(breakPauseSeconds(30, 0)).toBe(0)
+    expect(breakPauseSeconds(0, 0)).toBe(0)
+    expect(breakPauseSeconds(30, 0.3)).toBe(0.3)
+    expect(breakPauseSeconds(2, MIN_PAUSE_SECONDS)).toBe(MIN_PAUSE_SECONDS)
+  })
+  it('P=5 时上限为 10；P=10 时恒为 10；P=9 不超过 10', () => {
+    near(12, 5, 5)
+    expect(breakPauseSeconds(100000, 5)).toBeLessThanOrEqual(10)
+    expect(breakPauseSeconds(100000, 5)).toBeGreaterThan(9.99)
+    expect(breakPauseSeconds(0, 10)).toBe(10)
+    expect(breakPauseSeconds(100000, 9)).toBeLessThanOrEqual(10)
+    near(12, 9, 9)
   })
 })

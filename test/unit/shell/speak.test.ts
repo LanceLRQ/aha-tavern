@@ -106,7 +106,7 @@ const req = (sentences: string[], over: Partial<SpeakRequest> = {}): SpeakReques
 describe('Speaker 句间停顿', () => {
   const settings = { ...SETTINGS, pauseSeconds: 2.5 }
   const gapped = (sentences: string[], gaps: ('none' | 'break' | 'inline')[], over: Partial<SpeakRequest> = {}) =>
-    req(sentences, { gaps, settings, ...over })
+    req(sentences, { gaps, skipped: gaps.map((g) => (g === 'break' ? 12 : 0)), settings, ...over })
 
   it('按间隔种类等待：break 等 pauseSeconds，inline 等 0.5 秒，第一句不等；先等再播', async () => {
     const h = harness({ manualSleep: true })
@@ -163,6 +163,50 @@ describe('Speaker 句间停顿', () => {
     expect(h.sleeps[0]!.aborted).toBe(true)
     expect(h.plays.map((p) => p.file)).toHaveLength(2) // 旧段第一句 + 新段第一句
     expect(h.synths.map((x) => x.text)).toEqual(['一一一', '二二二', '新新新'])
+  })
+
+  describe('break 停顿随跳过字数变化', () => {
+    const sleepFor = async (skipped: number[], over: Partial<SpeakRequest> = {}) => {
+      const h = harness()
+      const sp = new Speaker(h.deps)
+      sp.speak(gapped(['一一一', '二二二'], ['none', 'break'], { skipped, ...over }))
+      await settle()
+      return h.sleeps.map((x) => x.ms)
+    }
+    it('字数不同，等待时长不同；12 字等于设定值', async () => {
+      expect(await sleepFor([0, 12])).toEqual([2500])
+      const [short] = await sleepFor([0, 3])
+      const [long] = await sleepFor([0, 40])
+      expect(short).toBeGreaterThan(1100); expect(short).toBeLessThan(1130)
+      expect(long).toBeGreaterThan(4350); expect(long).toBeLessThan(4380)
+    })
+    it('只换段（0 字）按 4 字算', async () => {
+      const [ms] = await sleepFor([0, 0])
+      expect(ms).toBeGreaterThan(1290); expect(ms).toBeLessThan(1310)
+    })
+    it('没给 skipped 按换段处理；扣除已过去的时间后再等', async () => {
+      const [ms] = await sleepFor([])
+      expect(ms).toBeGreaterThan(1290); expect(ms).toBeLessThan(1310)
+    })
+    it('append 的第一句按换段（4 字）处理', async () => {
+      const h = harness({ auto: false, manualSleep: true })
+      const sp = new Speaker(h.deps)
+      sp.speak(gapped(['一一一'], ['none']))
+      await settle()
+      h.synths[0]!.done()
+      await settle()
+      sp.append(gapped(['二二二'], ['none'], { skipped: [99] }))
+      await settle()
+      h.synths[1]!.done()
+      h.plays[0]!.end()
+      await settle()
+      expect(h.sleeps[0]!.ms).toBeGreaterThan(1290)
+      expect(h.sleeps[0]!.ms).toBeLessThan(1310)
+      await sp.stop()
+    })
+    it('pauseSeconds 为 0 时仍不停', async () => {
+      expect(await sleepFor([0, 30], { settings: { ...SETTINGS, pauseSeconds: 0 } })).toEqual([])
+    })
   })
 
   describe('停顿从上一句播完起算', () => {
@@ -238,13 +282,13 @@ describe('Speaker 句间停顿', () => {
     h.synths[1]!.done()
     h.plays[0]!.end()
     await settle()
-    expect(h.sleeps.map((x) => x.ms)).toEqual([2500])
+    expect(h.sleeps.map((x) => x.ms)).toEqual([1301]) // 接在上一段后面：按换段算
     h.sleeps[0]!.end()
     await settle()
     h.synths[2]!.done()
     h.plays[1]!.end()
     await settle()
-    expect(h.sleeps.map((x) => x.ms)).toEqual([2500, 500])
+    expect(h.sleeps.map((x) => x.ms)).toEqual([1301, 500])
     await sp.stop()
   })
 
@@ -750,12 +794,12 @@ describe('朗读命令：开始朗读', () => {
     await settle()
     expect(w.h.synths.map((s) => s.text).join('')).toBe(REPLY)
   })
-  it('台词之间隔着动作描写：两段之间停配置的秒数，同段的两句只停半秒', async () => {
+  it('台词之间隔着动作描写：两段之间按跳过的字数（6 个字）停，同段的两句只停半秒', async () => {
     const w = await world({ auto: true })
     await w.invoke('欢迎光临，请坐吧。今天想喝点什么？（她擦了擦杯子）慢慢选，不着急的。')
     await settle()
     expect(w.h.plays).toHaveLength(3)
-    expect(w.h.sleeps.map((x) => x.ms)).toEqual([500, 2500])
+    expect(w.h.sleeps.map((x) => x.ms)).toEqual([500, 1646])
   })
   it('没有任何角色的话可念：说明', async () => {
     const w = await world()
