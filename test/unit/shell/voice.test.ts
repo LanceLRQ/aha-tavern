@@ -11,7 +11,7 @@ import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
 import { VOICE_OPT_CANCEL, VOICE_OPT_GO } from '../../../src/shell/receipts'
 import {
   BUILTIN_VOICE_TEXT, START_WAIT_MS, abortLaunch, builtinVoice, createVoiceHandler, installVoice, parseVoiceArgs,
-  resetLaunchesForTest, whichOnPath, type VoiceInstanceState, type VoiceOps,
+  launchSnapshot, resetLaunchesForTest, startServiceHeld, whichOnPath, type VoiceInstanceState, type VoiceOps,
 } from '../../../src/shell/voice'
 
 const MODEL_06 = 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit'
@@ -802,5 +802,64 @@ describe('whichOnPath', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe('launchSnapshot', () => {
+  it('没启动过：null', () => {
+    expect(launchSnapshot(DIR)).toBeNull()
+  })
+  it('进行中：阶段与开始时间，未结束', async () => {
+    ops.sleep.mockResolvedValue(undefined)
+    ops.start.mockReturnValue(new Promise(() => undefined))
+    await run('启动')
+    expect(launchSnapshot(DIR)).toEqual({ stage: 'start', startedAt: 1_000_000, finished: false })
+  })
+  it('失败后：已结束，带失败原因', async () => {
+    ops.start.mockResolvedValue({ ok: false, kind: 'timeout', detail: 'x' })
+    await run('启动')
+    expect(launchSnapshot(DIR)).toMatchObject({ finished: true, failure: '等待服务启动超时' })
+  })
+  it('成功后：已结束，没有失败原因', async () => {
+    await run('启动')
+    const snap = launchSnapshot(DIR)
+    expect(snap?.finished).toBe(true)
+    expect(snap?.failure).toBeUndefined()
+  })
+})
+
+describe('startServiceHeld：调用方已持有同会话卡片队列', () => {
+  const needInstall = () => {
+    ops.inspect.mockResolvedValue(info({ envInstalled: false }))
+    pick(VOICE_OPT_GO)
+  }
+  const heldRun = (inv: Invocation) => startServiceHeld(inv)
+
+  it('走同一段启动流程：确认卡片通过后安装并启动', async () => {
+    needInstall()
+    const inv = mkInv('')
+    inv.rt.handlers.voice = createVoiceHandler(state, ops as unknown as VoiceOps)
+    const r = await heldRun(inv)
+    expect(askFn).toHaveBeenCalledTimes(1)
+    expect(ops.install).toHaveBeenCalled()
+    expect(r.text).toContain('语音服务已启动')
+  })
+  it('队列已被调用方占着也不死锁，确认卡片直接发出', async () => {
+    needInstall()
+    const inv = mkInv('')
+    inv.rt.handlers.voice = createVoiceHandler(state, ops as unknown as VoiceOps)
+    const out = await gate.run('s1', () => heldRun(inv), 'command')
+    expect(askFn).toHaveBeenCalledTimes(1)
+    expect(out.text).toContain('语音服务已启动')
+  })
+  it('对照：同样占着队列时，普通的 /aha 语音 启动 回"先处理卡片"', async () => {
+    needInstall()
+    const out = await gate.run('s1', () => run('启动'), 'command')
+    expect(out.text).toContain('先处理它')
+    expect(askFn).not.toHaveBeenCalled()
+  })
+  it('没有登记 voice 处理函数：回执说明，不抛错', async () => {
+    const r = await heldRun(mkInv(''))
+    expect(r.kind).toBe('error')
   })
 })

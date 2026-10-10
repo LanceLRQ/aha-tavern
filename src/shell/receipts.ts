@@ -5,6 +5,7 @@ import type { OutsideReason } from '../core/state'
 import type { Theme } from '../core/theme'
 import type { AskItem } from './confirm'
 import type { DoctorFailKind, DrawDoctorReport } from './draw-doctor'
+import type { VoiceDoctorReport, VoiceTrial } from './voice-doctor'
 
 export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊' }
 
@@ -123,6 +124,10 @@ export interface DoctorInfo {
   drawing?: string
   /** 行末是否提示"看详情"。 */
   drawingHint?: boolean
+  /** 语音一行小结（放在生图小结之后）。 */
+  voice?: string
+  /** 行末是否提示"看语音详情"。 */
+  voiceHint?: boolean
 }
 
 const WEB_LABEL: Record<WebSearchStatus, string> = { available: '可用', unavailable: '不可用', unknown: '未知' }
@@ -134,8 +139,11 @@ export function doctorLine(theme: Theme, info: DoctorInfo): string {
       ? '门外（会话没有工作区）'
       : `门外（这里不是${theme.concept('tavern')}）`
   const draw = info.drawing ? `；${info.drawing}` : ''
-  const hint = info.drawing && info.drawingHint ? DOCTOR_DETAIL_HINT : ''
-  return `当前状态：模式 ${MODE_LABEL[info.mode]}${draw}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}${info.readonly ? '；只读（数据版本较新）' : ''}${hint}`
+  const voice = info.voice ? `；${info.voice}` : ''
+  const drawHint = Boolean(info.drawing && info.drawingHint)
+  const voiceHint = Boolean(info.voice && info.voiceHint)
+  const hint = drawHint && voiceHint ? DOCTOR_VOICE_HINT_BOTH : drawHint ? DOCTOR_DETAIL_HINT : voiceHint ? DOCTOR_VOICE_HINT : ''
+  return `当前状态：模式 ${MODE_LABEL[info.mode]}${draw}${voice}；${place}；主题 ${theme.name}；联网搜索 ${WEB_LABEL[info.webSearch]}${info.readonly ? '；只读（数据版本较新）' : ''}${hint}`
 }
 
 // ---------- 自检的生图一段 ----------
@@ -428,6 +436,10 @@ export function voiceNeedsCardReceipt(): Reply {
   return guide('启动前要先安装运行环境或下载模型，需要你确认，请在界面里操作。')
 }
 
+export function voiceUnavailableReceipt(): Reply {
+  return fail('语音功能没有装载，不能启动服务。')
+}
+
 export function voiceDeclinedReceipt(): Reply {
   return guide('已取消，什么都没有安装。')
 }
@@ -569,10 +581,179 @@ export function voiceStatusNotConfiguredReceipt(): Reply {
   return guide('语音服务：未配置（见 docs/voice-setup.md）。')
 }
 
+// ---------- 自检的语音一段 ----------
+
+const SPEAK_FAIL_TEXT: Record<string, string> = {
+  unreachable: '服务连不上', timeout: '合成超时', cancelled: '已取消', 'bad-response': '服务返回异常',
+  'no-player': '没有找到播放器', 'spawn-failed': '播放器启动失败', 'play-failed': '播放失败',
+  'convert-failed': '音频转换失败', 'trial-timeout': '等了 60 秒还没念完', other: '出错',
+}
+
+/** 朗读失败的归类说明；不认识的种类一律"出错"。 */
+const speakFailText = (kind: string): string => (Object.hasOwn(SPEAK_FAIL_TEXT, kind) ? SPEAK_FAIL_TEXT[kind]! : SPEAK_FAIL_TEXT.other!)
+
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+const clockText = (at: number): string => {
+  const d = new Date(at)
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
+function sizeText(bytes: number): string {
+  if (bytes >= 2 ** 30) return `${(bytes / 2 ** 30).toFixed(1)} GB`
+  if (bytes >= 2 ** 20) return `${Math.round(bytes / 2 ** 20)} MB`
+  return `${Math.round(bytes / 1024)} KB`
+}
+
+export const DOCTOR_VOICE_HINT = '（/aha 自检 语音 看详情）'
+export const DOCTOR_VOICE_HINT_BOTH = '（/aha 自检 生图 或 /aha 自检 语音 看详情）'
+export const VOICE_DOCTOR_HEADER = '语音自检'
+export const VOICE_DOCTOR_CHECK_ERROR_TEXT = '语音自检出错，详情见日志。'
+/** 卡片选项的说明；选项名在 doctor.ts。 */
+export const VOICE_DOCTOR_OPTION_HINTS = {
+  trial: '用当前配置真的念一句，最多等一分钟',
+  start: '走与 /aha 语音 启动 相同的流程，需要安装或下载时会先让你确认',
+  recheck: '改好配置或装好缺的东西后再查一遍',
+  close: '看完了',
+} as const
+
+export function voiceDoctorQuestion(passed: boolean): string {
+  return passed ? '语音服务检查结果：全部通过' : '语音服务检查结果：有未通过的项'
+}
+
+/** 没通过的项的短说法，一项一条；按检查顺序。 */
+export function voiceDoctorIssues(r: VoiceDoctorReport): string[] {
+  if (!r.configured) return ['未配置']
+  const out: string[] = []
+  const s = r.service
+  if (s && !s.connected) {
+    out.push(s.credentials ? '地址里带了用户名和密码' : s.launching ? '正在启动' : `连不上 ${s.host}`)
+  }
+  if (r.player && !r.player.found) out.push('没有播放器')
+  return out
+}
+
+function voiceDoctorItems(r: VoiceDoctorReport): DoctorItem[] {
+  const items: DoctorItem[] = []
+  const problems = (): void => {
+    const { shown, more } = capList(r.problems)
+    for (const p of shown) items.push({ mark: '!', text: clip(p) })
+    if (more) items.push({ mark: '!', text: more })
+  }
+  if (!r.configured) {
+    items.push({ mark: '', text: '语音：未配置。配置方法见 docs/voice-setup.md。' })
+    problems()
+    return items
+  }
+  const s = r.service
+  if (s) {
+    if (s.credentials) items.push({ mark: '✗', text: `语音服务 ${s.host} 地址里不要带用户名和密码` })
+    else if (s.connected) {
+      items.push({ mark: '✓', text: `语音服务 ${s.host} 已连上（${s.ours === 'plugin' ? '由插件启动' : '外部启动'}）` })
+    } else {
+      items.push({ mark: '✗', text: `语音服务 ${s.host} 连不上` })
+      if (s.launching) {
+        const { stage, seconds } = s.launching
+        items.push({
+          mark: '',
+          text: stage !== undefined && seconds !== undefined
+            ? `正在启动：${VOICE_STAGE_NAME[stage]}，已用 ${seconds} 秒`
+            : '正在启动（别处发起的安装或启动）',
+        })
+      }
+      if (s.lastFailure && r.launch) {
+        items.push({ mark: '✗', text: `上次启动失败：${clip(s.lastFailure)}（日志 ${r.launch.modelsDir}/server.log）` })
+      }
+    }
+  }
+  const m = r.model
+  if (m) {
+    if (m.loaded === true) items.push({ mark: '✓', text: `模型 ${clip(m.name)} 已加载` })
+    else if (m.loaded === false) items.push({ mark: '', text: `模型 ${clip(m.name)} 尚未加载（第一次朗读时加载）` })
+    else if (m.loaded === null) items.push({ mark: '?', text: `模型 ${clip(m.name)} 无法确认是否已加载` })
+    else items.push({ mark: '', text: `配置的模型 ${clip(m.name)}` })
+  }
+  const l = r.launch
+  if (l) {
+    items.push(l.supported
+      ? { mark: '✓', text: '这台机器可以代为启动服务' }
+      : { mark: '✗', text: '这台机器不是苹果芯片的 Mac，插件不能代为启动' })
+    items.push(l.uv ? { mark: '✓', text: '已找到 uv' } : { mark: '✗', text: '没有找到 uv' })
+    items.push({ mark: '', text: l.envInstalled ? '运行环境已安装' : '运行环境还没安装' })
+    items.push({ mark: '', text: l.modelDownloaded ? '模型已下载' : '模型还没下载' })
+    items.push({
+      mark: '',
+      text: `权重目录 ${l.modelsDir}${l.sizes ? `（运行环境 ${sizeText(l.sizes.env)}，模型 ${sizeText(l.sizes.hf)}）` : ''}`,
+    })
+  }
+  if (r.player) {
+    items.push(r.player.found
+      ? { mark: '✓', text: `播放器 ${clip(r.player.name ?? '')}` }
+      : { mark: '✗', text: NO_PLAYER_TEXT })
+  }
+  if (r.voice) {
+    items.push(r.voice.present
+      ? { mark: '✓', text: '当前角色有音色' }
+      : { mark: '!', text: '当前角色还没有音色，朗读时没有声音可用' })
+  }
+  if (r.lastError) {
+    items.push({ mark: '!', text: `最近一次朗读出错：${speakFailText(r.lastError.kind)}（${clockText(r.lastError.at)}）` })
+  }
+  problems()
+  return items
+}
+
+/** 没有提问服务时的降级：全部项压成一行，用"；"连接。 */
+export function voiceDoctorOneLine(r: VoiceDoctorReport): string {
+  return voiceDoctorItems(r).map((i) => `${i.mark ? `${i.mark} ` : ''}${i.text}`).join('；')
+}
+
+/** 卡片里的完整报告；note 是上一步（启动服务）的回执文字，放在最前面。 */
+export function voiceDoctorMarkdown(r: VoiceDoctorReport, note?: string): string {
+  const list = voiceDoctorItems(r).map((i) => `- ${i.mark ? `${i.mark} ` : ''}${mdText(i.text)}`).join('\n')
+  return note ? `**启动服务的结果**：${mdText(note)}\n\n${list}` : list
+}
+
+export interface VoiceDoctorBrief {
+  /** 如 `可用`、`未配置`、`未启动`、`不可用：没有播放器`（不含"语音 "前缀）。 */
+  status: string
+  /** 行末是否提示"看详情"。 */
+  flagged: boolean
+}
+
+/** 一行小结：可用 = 已配置、连得上、有播放器；角色有没有音色、配置小问题、朗读错误都不影响。 */
+export function voiceDoctorBrief(r: VoiceDoctorReport): VoiceDoctorBrief {
+  if (!r.configured) return { status: '未配置', flagged: r.problems.length > 0 }
+  const s = r.service
+  if (s?.credentials) return { status: '不可用：地址带账号密码', flagged: true }
+  if (s && !s.connected) return { status: s.launching ? '不可用：正在启动' : '未启动', flagged: true }
+  if (r.player && !r.player.found) return { status: '不可用：没有播放器', flagged: true }
+  return { status: '可用', flagged: false }
+}
+
+/** 放进状态行的片段：`语音 可用`。 */
+export const voiceBriefText = (b: VoiceDoctorBrief): string => `语音 ${b.status}`
+
+/** 卡片自检结束的一行回执。 */
+export function voiceDoctorCardReceipt(r: VoiceDoctorReport, trial?: VoiceTrial): Reply {
+  if (trial?.status === 'ok') return guide(`语音自检：全部通过，试念成功（${trial.sentences} 句，${trial.seconds} 秒）。`)
+  if (trial?.status === 'failed') return guide(`语音自检：全部通过，试念失败（${speakFailText(trial.kind)}）。`)
+  const n = voiceDoctorIssues(r).length
+  return guide(n === 0 ? '语音自检：全部通过。' : `语音自检：${n} 项未通过。`)
+}
+
+/** 试念结果卡片的正文（Markdown）。 */
+export function voiceTrialMarkdown(t: Exclude<VoiceTrial, { status: 'cancelled' }>): string {
+  return t.status === 'ok'
+    ? `- ✓ 试念成功，共 ${t.sentences} 句，用时 ${t.seconds} 秒`
+    : `- ✗ 试念失败（${speakFailText(t.kind)}）`
+}
+
 // ---------- 朗读 ----------
 
 /** 朗读开始不了的原因；检查按这个顺序进行。 */
 export type SpeakBlock = 'not-configured' | 'user-info' | 'unreachable' | 'starting' | 'no-voice' | 'no-player'
+
+const NO_PLAYER_TEXT = '没有找到播放器（macOS 需要 afplay，其他系统需要 ffplay、paplay 或 aplay 之一）'
 
 /** 不能朗读的原因，一句话、不带句号；回执与"自动朗读已打开"的补充说明共用。 */
 export function speakBlockReason(block: SpeakBlock, theme: Theme): string {
@@ -588,7 +769,7 @@ export function speakBlockReason(block: SpeakBlock, theme: Theme): string {
     case 'no-voice':
       return `这个${theme.concept('character')}还没有声音，请到「${MODE_LABEL.setup}」给它配声音`
     case 'no-player':
-      return '没有找到播放器（macOS 需要 afplay，其他系统需要 ffplay、paplay 或 aplay 之一）'
+      return NO_PLAYER_TEXT
   }
 }
 

@@ -895,3 +895,94 @@ describe('自动朗读', () => {
     expect(w.log.warn).toHaveBeenCalled()
   })
 })
+
+describe('Speaker.speakAndWait', () => {
+  it('整段念完：返回 ok，并且清掉最近错误', async () => {
+    const h = harness()
+    const sp = new Speaker(h.deps)
+    expect(await sp.speakAndWait(req(['一一一', '二二二']), { timeoutMs: 1000 })).toEqual({ status: 'ok' })
+    expect(h.plays).toHaveLength(2)
+    expect(sp.lastError()).toBeNull()
+  })
+
+  it('空句子列表：直接 ok，不顶掉正在念的', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['一一一']))
+    expect(await sp.speakAndWait(req([]), { timeoutMs: 1000 })).toEqual({ status: 'ok' })
+    expect(sp.owner()).toBe('s1')
+    await sp.stop()
+  })
+
+  it('合成失败：返回失败的种类，同时记入最近错误', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const waiting = sp.speakAndWait(req(['一一一']), { timeoutMs: 1000 })
+    await settle()
+    h.synths[0]!.fail(new TtsError('unreachable'))
+    expect(await waiting).toEqual({ status: 'failed', kind: 'unreachable' })
+    expect(sp.lastError()).toEqual({ kind: 'unreachable', at: 1000 })
+  })
+
+  it('播放失败：返回播放器的错误种类', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const waiting = sp.speakAndWait(req(['一一一']), { timeoutMs: 1000 })
+    await settle()
+    h.synths[0]!.done()
+    await settle()
+    h.plays[0]!.fail(new PlayerError('play-failed'))
+    expect(await waiting).toEqual({ status: 'failed', kind: 'play-failed' })
+  })
+
+  it('超过时限：停下这一段，返回 timeout，临时文件清干净', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const waiting = sp.speakAndWait(req(['一一一']), { timeoutMs: 20 })
+    await settle()
+    h.synths[0]!.done()
+    await settle()
+    expect(await waiting).toEqual({ status: 'timeout' })
+    expect(h.plays[0]!.aborted).toBe(true)
+    expect(h.disk.size).toBe(0)
+    expect(sp.owner()).toBeNull()
+    expect(sp.lastError()).toBeNull()
+  })
+
+  it('等待中收到取消信号：停下这一段，返回 stopped', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const ac = new AbortController()
+    const waiting = sp.speakAndWait(req(['一一一']), { timeoutMs: 1000, signal: ac.signal })
+    await settle()
+    ac.abort()
+    expect(await waiting).toEqual({ status: 'stopped' })
+    expect(sp.owner()).toBeNull()
+  })
+
+  it('信号一开始就已取消：不开口', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const ac = new AbortController()
+    ac.abort()
+    expect(await sp.speakAndWait(req(['一一一']), { timeoutMs: 1000, signal: ac.signal })).toEqual({ status: 'stopped' })
+    expect(h.synths).toHaveLength(0)
+  })
+
+  it('被别的朗读顶掉：返回 stopped', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    const waiting = sp.speakAndWait(req(['一一一']), { timeoutMs: 1000 })
+    await settle()
+    sp.speak(req(['别的'], { owner: 's2' }))
+    expect(await waiting).toEqual({ status: 'stopped' })
+    await sp.stop()
+  })
+
+  it('speak 的行为不变：返回 undefined，立即返回', () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    expect(sp.speak(req(['一一一']))).toBeUndefined()
+    return sp.stop()
+  })
+})

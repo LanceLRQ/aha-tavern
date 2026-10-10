@@ -63,6 +63,13 @@ export interface SpeakError {
   at: number
 }
 
+/** 一段朗读的结局：念完 / 出错（带种类）/ 被停下或顶掉 / 等待超时。 */
+export type SpeakOutcome =
+  | { status: 'ok' }
+  | { status: 'failed'; kind: string }
+  | { status: 'stopped' }
+  | { status: 'timeout' }
+
 interface Run {
   owner: string
   req: SpeakRequest
@@ -78,6 +85,8 @@ interface Run {
   /** 正在播放一句 */
   playing: boolean
   finished: Promise<void>
+  /** 这一段的结局；收尾前一直是 stopped（被停下或顶掉就是这个）。 */
+  outcome: SpeakOutcome
 }
 
 export class Speaker {
@@ -95,11 +104,40 @@ export class Speaker {
     const run: Run = {
       owner: req.owner, req, queue: [...req.sentences], ctl: new AbortController(), files: new Set(), closed: false,
       client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false, finished: Promise.resolve(),
+      outcome: { status: 'stopped' },
     }
     this.current = run
     prev?.ctl.abort()
     run.finished = this.loop(run, this.lastFinished)
     this.lastFinished = run.finished
+  }
+
+  /**
+   * 同 speak，但等这一段结束再返回：念完、出错、被停下或顶掉、超过 timeoutMs、signal 中止都会返回。
+   * 超时与中止时会停下这一段。
+   */
+  async speakAndWait(req: SpeakRequest, opts: { timeoutMs: number; signal?: AbortSignal }): Promise<SpeakOutcome> {
+    if (req.sentences.length === 0) return { status: 'ok' }
+    if (opts.signal?.aborted) return { status: 'stopped' }
+    this.speak(req)
+    const run = this.current!
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let onAbort: (() => void) | undefined
+    const interrupted = new Promise<'timeout' | 'aborted'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), opts.timeoutMs)
+      onAbort = () => resolve('aborted')
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      const first = await Promise.race([run.finished.then(() => 'done' as const), interrupted])
+      if (first === 'done') return run.outcome
+      run.ctl.abort()
+      await run.finished
+      return first === 'timeout' ? { status: 'timeout' } : { status: 'stopped' }
+    } finally {
+      clearTimeout(timer)
+      if (onAbort) opts.signal?.removeEventListener('abort', onAbort)
+    }
   }
 
   /** 同一来源正在念时追加到队尾，否则等同于 speak。 */
@@ -170,9 +208,12 @@ export class Speaker {
         await this.drop(file)
         this.prefetch(run, true)
       }
-      if (!run.ctl.signal.aborted) this.lastErr = null
+      if (!run.ctl.signal.aborted) {
+        this.lastErr = null
+        run.outcome = { status: 'ok' }
+      }
     } catch (e) {
-      if (!run.ctl.signal.aborted) this.fail(e)
+      if (!run.ctl.signal.aborted) run.outcome = { status: 'failed', kind: this.fail(e) }
     } finally {
       run.closed = true
       if (this.current === run) this.current = null
@@ -217,12 +258,14 @@ export class Speaker {
     }
   }
 
-  private fail(e: unknown): void {
+  /** 记下最近一次失败，返回归类后的种类。 */
+  private fail(e: unknown): string {
     const known = e instanceof TtsError || e instanceof PlayerError
     const kind = known ? e.kind : 'other'
     const detail = known ? e.detail || e.message : e instanceof Error ? e.message : String(e)
     this.lastErr = { kind, at: this.deps.now() }
     this.deps.log.warn(`朗读中断（${kind}）：${redactUrls(detail)}`)
+    return kind
   }
 }
 

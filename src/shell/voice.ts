@@ -11,7 +11,7 @@ import { createTtsClient, TtsError, type TtsClient } from '../core/tts'
 import * as server from '../core/voice-server'
 import type { VoiceServerDeps } from '../core/voice-server'
 import { answerItem, isAbort, type AskItem } from './confirm'
-import type { CommandHandler, Invocation } from './context'
+import type { CommandHandler, CommandReply, Invocation } from './context'
 import { redactUrls } from './draw-doctor'
 import {
   VOICE_CARD_BUSY_TEXT, VOICE_CARD_HEADER, VOICE_CARD_QUESTION, VOICE_OPT_CANCEL, VOICE_OPT_GO, VOICE_USAGE_TEXT,
@@ -19,7 +19,7 @@ import {
   voiceFailureReason, voiceInstallFailedReceipt, voiceLastFailedReceipt, voiceNeedsCardReceipt, voiceNoUvReceipt,
   voiceNotConfiguredReceipt, voiceProgressReceipt, voiceSelfLaunchReceipt, voiceStartedReceipt, voiceStartFailedReceipt,
   voiceStartingReceipt, voiceStatusNotConfiguredReceipt, voiceStatusReceipt, voiceStopReceipt, voiceUserInfoReceipt,
-  voiceWarmupFailedReceipt, type Reply, type VoiceStage,
+  voiceUnavailableReceipt, voiceWarmupFailedReceipt, type Reply, type VoiceStage,
 } from './receipts'
 import type { Runtime } from './runtime'
 
@@ -162,6 +162,36 @@ export function isLaunching(modelsDir: string): boolean {
   return l !== undefined && !l.finished
 }
 
+/** 该权重目录上最近一次启动的概况（进行中或已结束）；没启动过为 null。自检读它。 */
+export interface LaunchSnapshot {
+  stage: VoiceStage
+  startedAt: number
+  finished: boolean
+  /** 已结束且失败时的简短原因。 */
+  failure?: string
+}
+
+export function launchSnapshot(modelsDir: string): LaunchSnapshot | null {
+  const l = launches.get(modelsDir)
+  if (!l) return null
+  return {
+    stage: l.phase, startedAt: l.startedAt, finished: l.finished,
+    ...(l.outcome?.kind === 'failed' ? { failure: l.outcome.reason } : {}),
+  }
+}
+
+/** 调用方已经持有同会话卡片队列的调用（自检卡片里的"启动服务"）；启动流程里的确认卡片不再排队。 */
+const heldInvocations = new WeakSet<Invocation>()
+
+/** 走与 `/aha 语音 启动` 同一段流程；调用方必须已在同会话的卡片队列里，确认卡片直接发出。 */
+export async function startServiceHeld(inv: Invocation): Promise<CommandReply> {
+  const handler = inv.rt.handlers.voice
+  if (!handler) return voiceUnavailableReceipt()
+  const held: Invocation = { ...inv, args: '启动' }
+  heldInvocations.add(held)
+  return handler(held)
+}
+
 /** 清掉启动历史并打断进行中的启动；只给测试用，免得模块级状态在用例之间串味。 */
 export function resetLaunchesForTest(): void {
   for (const l of launches.values()) if (!l.finished) l.ctl.abort()
@@ -201,9 +231,11 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     const ask = rt.cards?.getAsk()
     if (!ask || !rt.cards) return 'no-ui'
     const { gate } = rt.cards
-    if (gate.commandHolds(agent.id)) return 'busy'
+    const held = heldInvocations.has(inv)
+    if (!held && gate.commandHolds(agent.id)) return 'busy'
     try {
-      const answer = await gate.run(agent.id, () => ask({ agent, ...(signal ? { signal } : {}), questions: [item] }), 'command')
+      const send = (): ReturnType<typeof ask> => ask({ agent, ...(signal ? { signal } : {}), questions: [item] })
+      const answer = held ? await send() : await gate.run(agent.id, send, 'command')
       const sel = answerItem(answer, QUESTION_ID)?.selected
       return Array.isArray(sel) && sel[0] === VOICE_OPT_GO ? 'go' : 'declined'
     } catch (e) {

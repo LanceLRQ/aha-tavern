@@ -64,6 +64,13 @@ export function wantsTrial(args: string): boolean {
   return a === '生图' || a.toLowerCase() === 'image'
 }
 
+/** `/aha 自检` 的参数指向哪一段：生图（image）或语音（voice），不分大小写；其余为 null。 */
+export function doctorTarget(args: string): 'image' | 'voice' | null {
+  if (wantsTrial(args)) return 'image'
+  const a = args.trim()
+  return a === '语音' || a.toLowerCase() === 'voice' ? 'voice' : null
+}
+
 function failKindOf(e: unknown): DoctorFailKind {
   if (!(e instanceof ComfyError)) return 'other'
   switch (e.kind) {
