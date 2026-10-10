@@ -19,11 +19,14 @@ image:
   #   vae: your-vae.safetensors
 
 voice:
-  endpoint: http://127.0.0.1:18123   # 必填：语音合成服务的地址（OpenAI 兼容接口），没有这一项就是没配置
+  endpoint: http://127.0.0.1:18123   # 必填：语音合成服务的地址（OpenAI 兼容接口，不用流式），没有这一项就是没配置；不要带用户名密码
   launch: none                       # mlx：允许插件在本机代为启动服务（endpoint 必须是本机地址）；none（默认）：只连接
   model: 0.6b                        # 0.6b（默认）、1.7b，或完整的模型名
-  # modelsDir: ~/.dsh/aha-tavern/voice  # 运行环境与权重的存放目录；不写则用酒馆数据目录下的 voice，须是绝对路径或 ~ 开头
+  # modelsDir: ~/.dsh/aha-tavern/voice  # 运行环境与权重的存放目录；不写则用 <DSH_HOME>/aha-tavern/voice，须是绝对路径或 ~ 开头
   # hfEndpoint: https://hf-mirror.com   # 权重下载源；不写用官方
-  read: lines                        # lines（默认，逐句念）或 all（整段回复一起念）
+  read: lines                        # lines（默认）：只念台词，括号里的动作不念；all：整段都念（都会去掉图片行和 Markdown 标记）
+  pauseSeconds: 2                    # 段间停顿（秒）：隔着大约 12 个没念出来的字时停多久，留时间看那些字；字多停久些，字少停短些；0 表示不停
+  pauseMinSeconds: 1                 # 段间停顿最短多久（秒）
+  pauseMaxSeconds: 4                 # 段间停顿最长多久（秒）；要满足 最短 ≤ pauseSeconds ≤ 最长，都在 0 到 10 之间
   language: chinese                  # 传给服务的语言
-  timeoutSeconds: 120                # 单句合成最多等多久
+  timeoutSeconds: 120                # 单句合成最多等多少秒
