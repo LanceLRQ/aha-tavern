@@ -106,6 +106,7 @@ const SAVE_EDIT_FAIL: Record<'parse' | 'format', string> = {
   format: '服务配置文件的格式不对，请先手工修好再保存。',
 }
 const SAVE_FAIL = '保存失败，详情见日志。'
+const VOICE_RUNNING_NOTE = '语音服务正在运行，改动在重新启动后生效。'
 const NOT_CONFIGURED_TEST = '还没有保存服务地址，先填好地址并保存。'
 
 const replyView = (r: Reply): ActionResult => ({ ok: r.kind === 'success', text: r.text })
@@ -133,13 +134,32 @@ export function createSettingsApi(rt: Runtime, deps: Partial<SettingsApiDeps> = 
     }
   }
 
+  /** 本实例启动的服务正在运行，且保存后的地址、权重目录、模型、下载源与它启动时不同：提醒改动要重新启动才生效。 */
+  async function runningNote(): Promise<string> {
+    try {
+      const voice = rt.voice
+      const now = await rt.voiceSettings()
+      if (!voice || !now.configured) return ''
+      const running = await voice.runningSettings(rt)
+      if (!running) return ''
+      const n = now.settings
+      const changed = running.endpoint !== n.endpoint || running.modelsDir !== n.modelsDir
+        || running.model !== n.model || running.hfEndpoint !== n.hfEndpoint
+      return changed ? VOICE_RUNNING_NOTE : ''
+    } catch (e) {
+      rt.log.warn(`设置页检查运行中的语音服务出错：${redactUrls((e as Error).message)}`)
+      return ''
+    }
+  }
+
   async function save(section: ServicesSection, parse: (opts: { partial: boolean }) => FormResult): Promise<SaveResult> {
     // 页面只提交改动的字段；地址必填与"代为启动要本机地址"在写文件的锁内按合并后的结果校验
     const parsed = parse({ partial: true })
     if (!parsed.ok) return { ok: false, errors: parsed.errors, text: '有填写不对的地方，请改正后再保存。' }
     try {
       await updateServicesFile(rt.servicesPath(), section, parsed.edit)
-      return { ok: true, text: '已保存。' }
+      const note = section === 'voice' ? await runningNote() : ''
+      return { ok: true, text: `已保存。${note}` }
     } catch (e) {
       if (e instanceof ServicesEditError) {
         if (e.code === 'invalid') return { ok: false, errors: e.errors, text: '有填写不对的地方，请改正后再保存。' }
@@ -170,7 +190,7 @@ export function createSettingsApi(rt: Runtime, deps: Partial<SettingsApiDeps> = 
       if (d.phase === 'failed') {
         return {
           ...base, env, state: 'failed', text: voiceLastFailedReceipt(d.reason, s.modelsDir).text,
-          canStart: s.launch === 'mlx', canStop: false,
+          canStart: s.launch === 'mlx', canStop: d.info.owned !== null,
         }
       }
       const text = voiceStatusReceipt({
@@ -178,7 +198,7 @@ export function createSettingsApi(rt: Runtime, deps: Partial<SettingsApiDeps> = 
       }).text
       return {
         ...base, env, text, state: d.reachable ? 'running' : 'stopped', ours: d.ours,
-        canStart: s.launch === 'mlx' && !d.reachable && !d.busy, canStop: d.reachable && d.ours,
+        canStart: s.launch === 'mlx' && !d.reachable && !d.busy, canStop: d.ours,
       }
     } catch (e) {
       rt.log.warn(`设置页读取语音状态出错：${redactUrls((e as Error).message)}`)

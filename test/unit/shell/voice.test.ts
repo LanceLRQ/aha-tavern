@@ -673,6 +673,61 @@ describe('离线加载失败后联网重试一次', () => {
   })
 })
 
+describe('改了端口或权重目录后，旧服务由记着的 settings 与 pid 管', () => {
+  const OLD = settings({ endpoint: 'http://127.0.0.1:18124', port: 18124, modelsDir: '/old/voice' })
+  const oldOwned = (pid: number) => info({ reachable: true, owned: { pid, port: 18124, startedAt: 1 } })
+  const wire = (pid: number) => {
+    state.started = { settings: OLD, pid }
+    ops.inspect.mockImplementation(async (st: VoiceServiceSettings) => (st.modelsDir === '/old/voice' ? oldOwned(pid) : info()))
+  }
+
+  it('启动：先按旧 settings 停掉旧的，再按新配置启动', async () => {
+    wire(7)
+    const order: string[] = []
+    ops.stop.mockImplementation(async (st: VoiceServiceSettings) => (order.push(`stop:${st.modelsDir}`), { status: 'stopped', forced: false }))
+    ops.start.mockImplementation(async (st: VoiceServiceSettings) => (order.push(`start:${st.modelsDir}`), { ok: true, pid: 9, alreadyRunning: false }))
+    const r = await run('启动')
+    expect(order).toEqual(['stop:/old/voice', `start:${DIR}`])
+    expect(r.text).toContain('语音服务已启动')
+    expect(state.started?.pid).toBe(9)
+    expect(state.started?.settings.modelsDir).toBe(DIR)
+  })
+  it('旧标记里的进程号对不上（已不是那个进程）：不停，只清标记', async () => {
+    state.started = { settings: OLD, pid: 7 }
+    ops.inspect.mockImplementation(async (st: VoiceServiceSettings) => (st.modelsDir === '/old/voice' ? oldOwned(8) : info()))
+    await run('启动')
+    expect(ops.stop.mock.calls.map((c) => c[0].modelsDir)).not.toContain('/old/voice')
+    expect(state.started?.pid).toBe(9)
+  })
+  it('标记与当前配置一致：启动流程不额外停', async () => {
+    state.started = { settings: settings(), pid: 7 }
+    ops.inspect.mockResolvedValue(info({ reachable: true, owned: { pid: 7, port: 18123, startedAt: 1 } }))
+    expect((await run('启动')).text).toBe('语音服务已在运行。')
+    expect(ops.stop).not.toHaveBeenCalled()
+  })
+  it('停止：当前配置找不到归属进程时，停掉记着的那个', async () => {
+    wire(7)
+    ops.stop.mockImplementation(async (st: VoiceServiceSettings) =>
+      (st.modelsDir === '/old/voice' ? { status: 'stopped', forced: false } : { status: 'not-running', forced: false }))
+    expect((await run('停止')).text).toBe('语音服务已停止。')
+    expect(ops.stop.mock.calls.map((c) => c[0].modelsDir)).toEqual([DIR, '/old/voice'])
+    expect(state.started).toBeNull()
+  })
+  it('停止：当前配置已停掉了，不动记着的（标记与当前一致时也不重复停）', async () => {
+    state.started = { settings: settings(), pid: 7 }
+    ops.stop.mockResolvedValue({ status: 'not-running', forced: false })
+    expect((await run('停止')).text).toBe('语音服务没有在运行。')
+    expect(ops.stop).toHaveBeenCalledTimes(1)
+  })
+  it('停止：当前配置和记着的都找不到：仍是没有在运行', async () => {
+    state.started = { settings: OLD, pid: 7 }
+    ops.inspect.mockResolvedValue(info())
+    ops.stop.mockResolvedValue({ status: 'not-running', forced: false })
+    expect((await run('停止')).text).toBe('语音服务没有在运行。')
+    expect(state.started).toBeNull()
+  })
+})
+
 describe('停止', () => {
   it.each([
     ['stopped', '语音服务已停止。'],

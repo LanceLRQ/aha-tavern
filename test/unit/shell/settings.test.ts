@@ -191,6 +191,43 @@ describe('saveVoice / saveImage', () => {
     expect(r.errors).toHaveProperty('launch')
   })
 
+  describe('保存时本实例启动的服务正在运行', () => {
+    const NOTE = '语音服务正在运行，改动在重新启动后生效。'
+    const started = (over: Record<string, unknown> = {}) => ({
+      endpoint: 'http://127.0.0.1:18123', launch: 'mlx' as const, model: MODEL_06, modelAlias: '0.6b', modelsDir: '/data/voice',
+      read: 'lines' as const, language: 'chinese', timeoutSeconds: 120, port: 18123, local: true, ...over,
+    })
+    const runningAs = async (over: Record<string, unknown> = {}) => {
+      await setup(VOICE_YAML())
+      state.started = { settings: started(over), pid: 9 }
+      ops.inspect.mockResolvedValue(info({ reachable: true, owned: { pid: 9, port: 18123, startedAt: 1 } }))
+    }
+    it.each([
+      ['endpoint', { endpoint: 'http://127.0.0.1:18124' }],
+      ['modelsDir', { modelsDir: '/data/voice2' }],
+      ['model', { model: '1.7b' }],
+      ['hfEndpoint', { hfEndpoint: 'https://hf-mirror.com' }],
+    ])('改了 %s：保存成功并附一句说明，不自动重启', async (_n, form) => {
+      await runningAs()
+      const r = await api.saveVoice(form)
+      expect(r.ok).toBe(true)
+      expect(r.text).toBe(`已保存。${NOTE}`)
+      expect(ops.stop).not.toHaveBeenCalled()
+      expect(ops.start).not.toHaveBeenCalled()
+    })
+    it('只改了别的字段：不附说明', async () => {
+      await runningAs()
+      expect((await api.saveVoice({ read: 'all' })).text).toBe('已保存。')
+    })
+    it('没有本实例启动的服务、或那个进程已不在：不附说明', async () => {
+      await setup(VOICE_YAML())
+      expect((await api.saveVoice({ endpoint: 'http://127.0.0.1:18124' })).text).toBe('已保存。')
+      state.started = { settings: started(), pid: 9 }
+      ops.inspect.mockResolvedValue(info())
+      expect((await api.saveVoice({ endpoint: 'http://127.0.0.1:18125' })).text).toBe('已保存。')
+    })
+  })
+
   it('文件现有值矛盾但没碰这两个字段：可以保存', async () => {
     await setup('voice:\n  endpoint: http://192.168.1.2:1\n  launch: mlx\n')
     expect((await api.saveVoice({ read: 'all' })).ok).toBe(true)
@@ -259,6 +296,14 @@ describe('voiceStatus', () => {
     s = await api.voiceStatus()
     expect(s.ours).toBe(false)
     expect(s.canStop).toBe(false)
+  })
+
+  it('插件启动但已卡死（连不上）：页面上也能停', async () => {
+    await setup(VOICE_YAML())
+    ops.inspect.mockResolvedValue(info({ reachable: false, owned: { pid: 1, port: 18123, startedAt: 1 } }))
+    const s = await api.voiceStatus()
+    expect(s.state).toBe('stopped')
+    expect(s.canStop).toBe(true)
   })
 
   it('环境和模型是否已装', async () => {
@@ -367,6 +412,10 @@ describe('voiceStart：与 /aha 语音 启动 同一段逻辑', () => {
     const s = await api.voiceStatus()
     expect(s.state).toBe('failed')
     expect(s.text).toContain('端口被别的服务占用')
+    expect(s.canStop).toBe(false)
+    // 上次启动失败但进程还留着（连不上）：同样能停
+    ops.inspect.mockResolvedValue(info({ owned: { pid: 5, port: 18123, startedAt: 1 } }))
+    expect((await api.voiceStatus()).canStop).toBe(true)
   })
 
   it('页面启动与命令共用同一张启动表：命令查状态能看到页面发起的启动', async () => {

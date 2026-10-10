@@ -256,7 +256,13 @@ export interface VoiceController {
   launchAndWait(rt: Runtime, s: VoiceServiceSettings, plan: Extract<StartPlan, { kind: 'go' }>): Promise<Reply>
   statusOf(rt: Runtime, s: VoiceServiceSettings): Promise<VoiceStatusDetail>
   stopService(rt: Runtime, s: VoiceServiceSettings): Promise<StopResult['status']>
+  /** 本实例启动、现在仍在运行的服务当时用的配置；没有、或那个进程已不在则为 null。设置页保存时据此提示。 */
+  runningSettings(rt: Runtime): Promise<VoiceServiceSettings | null>
 }
+
+/** 同一个服务：权重目录（pid 文件所在）与端口都一样。 */
+const sameService = (a: Pick<VoiceServiceSettings, 'modelsDir' | 'port'>, b: Pick<VoiceServiceSettings, 'modelsDir' | 'port'>): boolean =>
+  a.modelsDir === b.modelsDir && a.port === b.port
 
 export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = realVoiceOps): CommandHandler {
   return createVoiceController(state, ops).handler
@@ -403,8 +409,36 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     return launch
   }
 
+  /**
+   * 本实例记着的服务（和进行中的启动）与给定配置不是同一个（用户改了端口或权重目录）：
+   * 按记下的 settings 与 pid 把它停掉，进程号对不上就只清标记。返回是否真的停了什么。
+   */
+  async function stopRecorded(rt: Runtime, s: VoiceServiceSettings): Promise<boolean> {
+    let acted = false
+    const launching = state.launching
+    if (launching && !sameService(launching, s)) {
+      abortLaunch(launching.modelsDir)
+      await launches.get(launching.modelsDir)?.done
+      acted = true
+    }
+    const old = state.started
+    if (!old || sameService(old.settings, s)) return acted
+    state.started = null
+    startOffline.delete(old.settings.modelsDir)
+    const deps = rt.voiceServerDeps()
+    const cur = await ops.inspect(old.settings, deps, { sizes: false })
+    if (cur.owned?.pid !== old.pid) {
+      rt.log.debug('旧配置下记着的服务已不是本实例启动的那个进程，不停')
+      return acted
+    }
+    const r = await ops.stop(old.settings, deps)
+    return acted || r.status === 'stopped'
+  }
+
   async function planStart(rt: Runtime, s: VoiceServiceSettings): Promise<StartPlan> {
     const reply = (r: Reply): StartPlan => ({ kind: 'reply', reply: r })
+    // 改过端口或权重目录后，旧配置下启动的服务没人管了：先停掉它，再按新配置走
+    await stopRecorded(rt, s)
     // 再次启动前清掉上次的结果
     const prev = launches.get(s.modelsDir)
     if (prev?.finished) launches.delete(s.modelsDir)
@@ -498,7 +532,16 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     const r = await ops.stop(s, rt.voiceServerDeps())
     if (r.status === 'stopped' && state.started?.settings.modelsDir === s.modelsDir) state.started = null
     if (r.status === 'stopped') startOffline.delete(s.modelsDir)
+    // 当前配置下找不到归属进程：看看本实例记着的是不是旧配置下启动的那个
+    if (r.status !== 'stopped' && (await stopRecorded(rt, s))) return 'stopped'
     return r.status
+  }
+
+  async function runningSettings(rt: Runtime): Promise<VoiceServiceSettings | null> {
+    const started = state.started
+    if (!started) return null
+    const info = await ops.inspect(started.settings, rt.voiceServerDeps(), { sizes: false })
+    return info.owned?.pid === started.pid ? started.settings : null
   }
 
   const handler: CommandHandler = async (inv) => {
@@ -517,7 +560,7 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     return startFlow(inv, s)
   }
 
-  return { handler, planStart, launchAndWait, statusOf, stopService }
+  return { handler, planStart, launchAndWait, statusOf, stopService, runningSettings }
 }
 
 /**
