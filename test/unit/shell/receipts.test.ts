@@ -87,7 +87,10 @@ describe('回执文字', () => {
 
   it('措辞带分隔符', async () => {
     const t = await load('plain')
-    expect(dispatchReceipt(t, 'unavailable', { label: '/aha 重新生图' }).text).toBe('/aha 重新生图：此功能尚未提供。')
+    const text = dispatchReceipt(t, 'unavailable', { label: '/aha 朗读' }).text
+    expect(text).toContain('/aha 朗读：')
+    expect(text).not.toContain('尚未提供')
+    expect(text).toContain('酒馆:单聊')
     expect(dispatchReceipt(t, 'meaningless', { label: '/aha 记忆' }).text).toContain('/aha 记忆：')
     expect(pendingReceipt('/aha 开场').text).toBe('/aha 开场：尚未接上。')
   })

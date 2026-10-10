@@ -62,6 +62,7 @@ beforeEach(() => {
     start: vi.fn().mockResolvedValue({ ok: true, pid: 9, alreadyRunning: false }),
     stop: vi.fn().mockResolvedValue({ status: 'stopped', forced: false }),
     modelDownloaded: vi.fn(),
+    clearIncomplete: vi.fn().mockResolvedValue(2),
     createClient: vi.fn(() => ({ synthesize: synth, probe: probeModels })),
     now: vi.fn(() => clock.t),
     // 默认永不返回：启动在 8 秒内完成才有最终回执；要测转后台的用例自己放行
@@ -541,6 +542,42 @@ describe('启动转后台', () => {
   })
   it('abortLaunch 没有进行中的启动时无事发生', () => {
     expect(() => abortLaunch('/nowhere')).not.toThrow()
+  })
+})
+
+describe('联网启动成功后清理残留的 .incomplete', () => {
+  const needDownload = () => {
+    ops.inspect.mockResolvedValue(info({ modelDownloaded: false }))
+    pick(VOICE_OPT_GO)
+  }
+  it('联网启动且预热成功：清当前模型目录', async () => {
+    needDownload()
+    const r = await run('启动')
+    expect(r.kind).toBe('success')
+    expect(ops.clearIncomplete).toHaveBeenCalledWith(DIR, MODEL_06)
+    expect(ops.clearIncomplete).toHaveBeenCalledTimes(1)
+  })
+  it('清理抛错：只记日志，启动仍成功', async () => {
+    needDownload()
+    ops.clearIncomplete.mockRejectedValue(new Error('EACCES'))
+    const r = await run('启动')
+    expect(r.kind).toBe('success')
+    expect(log.warn).toHaveBeenCalled()
+  })
+  it('预热失败：不清理', async () => {
+    needDownload()
+    synth.mockRejectedValue(new TtsError('timeout', 'x'))
+    await run('启动')
+    expect(ops.clearIncomplete).not.toHaveBeenCalled()
+  })
+  it('离线启动成功：不清理', async () => {
+    await run('启动')
+    expect(ops.clearIncomplete).not.toHaveBeenCalled()
+  })
+  it('离线失败后联网重启并预热成功：清理', async () => {
+    synth.mockRejectedValueOnce(new TtsError('bad-response', 'IncompleteSnapshotError'))
+    await run('启动')
+    expect(ops.clearIncomplete).toHaveBeenCalledWith(DIR, MODEL_06)
   })
 })
 

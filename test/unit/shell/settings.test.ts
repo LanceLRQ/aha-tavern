@@ -54,6 +54,7 @@ beforeEach(async () => {
     start: vi.fn().mockResolvedValue({ ok: true, pid: 9, alreadyRunning: false }),
     stop: vi.fn().mockResolvedValue({ status: 'stopped', forced: false }),
     modelDownloaded: vi.fn(),
+    clearIncomplete: vi.fn().mockResolvedValue(0),
     createClient: vi.fn(() => ({ synthesize: vi.fn().mockResolvedValue({ bytes: new Uint8Array(), format: 'wav' }), probe: probeModels })),
     now: vi.fn(() => 1_000_000),
     sleep: vi.fn(() => new Promise<void>(() => undefined)),

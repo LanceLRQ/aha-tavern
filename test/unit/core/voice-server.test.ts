@@ -11,6 +11,7 @@ import {
   inspect,
   install,
   modelDownloaded,
+  clearIncompleteBlobs,
   sanitizeProxyEnv,
   start,
   stop,
@@ -192,6 +193,36 @@ describe('modelDownloaded', () => {
     await linked('model.safetensors')
     await fs.symlink('../../blobs/missing', path.join(snap(), 'tokenizer.json'))
     expect(await modelDownloaded(dir, MODEL)).toBe(false)
+  })
+})
+
+describe('clearIncompleteBlobs', () => {
+  const blobs = (id: string) => path.join(dir, 'hf/hub', `models--${id.replace(/\//g, '--')}`, 'blobs')
+
+  it('只删当前模型 blobs 里的 .incomplete，其余文件与别的模型不动', async () => {
+    await fs.mkdir(blobs(MODEL), { recursive: true })
+    await fs.mkdir(blobs('org/other'), { recursive: true })
+    await fs.writeFile(path.join(blobs(MODEL), 'a.incomplete'), 'x')
+    await fs.writeFile(path.join(blobs(MODEL), 'b.incomplete'), 'x')
+    await fs.writeFile(path.join(blobs(MODEL), 'keep'), 'x')
+    await fs.writeFile(path.join(blobs('org/other'), 'o.incomplete'), 'x')
+    expect(await clearIncompleteBlobs(dir, MODEL)).toBe(2)
+    expect(await fs.readdir(blobs(MODEL))).toEqual(['keep'])
+    expect(await fs.readdir(blobs('org/other'))).toEqual(['o.incomplete'])
+  })
+  it('清理后 modelDownloaded 转为 true', async () => {
+    const base = path.join(dir, 'hf/hub/models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-8bit')
+    await fs.mkdir(path.join(base, 'blobs'), { recursive: true })
+    await fs.mkdir(path.join(base, 'snapshots/s'), { recursive: true })
+    await fs.writeFile(path.join(base, 'blobs/h'), 'w')
+    await fs.symlink('../../blobs/h', path.join(base, 'snapshots/s/model.safetensors'))
+    await fs.writeFile(path.join(base, 'blobs/z.incomplete'), 'x')
+    expect(await modelDownloaded(dir, MODEL)).toBe(false)
+    await clearIncompleteBlobs(dir, MODEL)
+    expect(await modelDownloaded(dir, MODEL)).toBe(true)
+  })
+  it('目录不存在：返回 0', async () => {
+    expect(await clearIncompleteBlobs(dir, MODEL)).toBe(0)
   })
 })
 

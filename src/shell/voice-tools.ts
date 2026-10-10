@@ -2,6 +2,7 @@
 // 不带出文件系统的错误原文。
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { listCharacters, matchCharacterName, type CharacterEntry } from '../core/card'
@@ -177,6 +178,11 @@ async function setVoice(
   if (!found.ok) return found.message
   const entry = found.entry
 
+  // 便宜的源文件校验放在确认卡之前：源文件不行就不必让用户先点"覆盖"
+  const st = await fs.stat(source).catch(() => null)
+  if (!st || !st.isFile()) return failureText({ kind: 'source-invalid' })
+  if (st.size > MAX_VOICE_BYTES) return failureText({ kind: 'too-large' })
+
   if ((await readVoice(entry.dir)).ok) {
     const no = await confirmReplace(deps, agent, entry.card.name, signal)
     if (no) return no
@@ -197,7 +203,8 @@ async function setVoice(
   const spoken = await trial(deps, agent, dir, entry.card.id)
   const secs = Math.round(r.seconds * 10) / 10
   return `voice registered for ${flatText(entry.card.name, 'voice')} (${secs}s, replaced: ${r.replaced}); spoken: ${spoken}`
-    + (spoken ? '' : ' (the voice service cannot speak right now; the voice is saved and will be used once it can)')
+    + (spoken ? '' : ' (the voice is saved and ready, it just was not played: the voice service is not running or cannot play right now;'
+      + ' the user can start it with /aha 语音 启动 and then hear the voice)')
 }
 
 interface ToolHost {

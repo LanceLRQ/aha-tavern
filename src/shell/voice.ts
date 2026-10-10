@@ -116,6 +116,7 @@ export interface VoiceOps {
   start: typeof server.start
   stop: typeof server.stop
   modelDownloaded: typeof server.modelDownloaded
+  clearIncomplete: typeof server.clearIncompleteBlobs
   createClient(endpoint: string): Pick<TtsClient, 'synthesize' | 'probe'>
   now(): number
   /** 等待 ms 毫秒；signal 中止时清掉定时器并提前返回。 */
@@ -128,6 +129,7 @@ export const realVoiceOps: VoiceOps = {
   start: server.start,
   stop: server.stop,
   modelDownloaded: server.modelDownloaded,
+  clearIncomplete: server.clearIncompleteBlobs,
   createClient: (endpoint) => createTtsClient({ endpoint, fetch: globalThis.fetch }),
   now: Date.now,
   sleep: realSleep,
@@ -340,6 +342,7 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
     state.started = { settings: s, pid: started.pid }
     startOffline.set(s.modelsDir, plan.offline)
 
+    let online = !plan.offline
     launch.phase = 'warmup'
     let failed = await warmup(rt, s, launch)
     // 离线启动时快照不完整会让加载失败：停掉后联网重启，再预热一次（只补救一次）
@@ -351,9 +354,19 @@ export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps =
       if (!again.ok) return startFail(again)
       state.started = { settings: s, pid: again.pid }
       startOffline.set(s.modelsDir, false)
+      online = true
       failed = await warmup(rt, s, launch)
     }
     if (failed) return end(failed.reply, failed.outcome)
+    // 联网启动且预热成功，说明权重完整：清掉下载中断续传后残留的 .incomplete，否则永远判成未下载
+    if (online) {
+      try {
+        const n = await ops.clearIncomplete(s.modelsDir, s.model)
+        if (n > 0) rt.log.debug(`已清理 ${n} 个残留的未完成下载文件`)
+      } catch (e) {
+        rt.log.warn(`清理残留的未完成下载文件失败：${(e as Error).message}`)
+      }
+    }
     return end(voiceStartedReceipt(modelLabel(s), s.modelsDir), { kind: 'ok' })
   }
 

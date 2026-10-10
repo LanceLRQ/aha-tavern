@@ -168,6 +168,28 @@ describe('覆盖现有音色', () => {
     expect(await fs.readFile(path.join(charDir, VOICE_TEXT_FILE), 'utf8')).toBe('你好呀')
   })
 
+  it('源文件不存在：先校验，直接回 source-invalid，不弹覆盖卡', async () => {
+    const r = await exec(args({ audioPath: path.join(root, 'nope.wav') }))
+    expect(r).toContain('source-invalid')
+    expect(ask).not.toHaveBeenCalled()
+    expect(await fs.readFile(path.join(charDir, VOICE_TEXT_FILE), 'utf8')).toBe('旧的话')
+  })
+
+  it('源路径是目录：先校验，不弹覆盖卡', async () => {
+    const r = await exec(args({ audioPath: root }))
+    expect(r).toContain('source-invalid')
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('源文件超上限：先校验，回 too-large，不弹覆盖卡', async () => {
+    const big = path.join(root, 'huge.wav')
+    await fs.writeFile(big, Buffer.alloc(0))
+    await fs.truncate(big, 21 * 1024 * 1024)
+    const r = await exec(args({ audioPath: big }))
+    expect(r).toContain('too-large')
+    expect(ask).not.toHaveBeenCalled()
+  })
+
   it('取消：不改文件、不试念', async () => {
     ask.mockResolvedValueOnce({ answers: [{ id: 'voice-replace', selected: ['取消'] }] })
     const r = await exec(args())

@@ -244,6 +244,21 @@ export async function modelDownloaded(modelsDir: string, modelId: string): Promi
   return false
 }
 
+/**
+ * 删掉该模型 blobs/ 下残留的 *.incomplete（下载被中断后续传成功时会留下），返回删除个数。
+ * 只动这一个模型的目录；目录不存在返回 0，单个文件删不掉就跳过。调用方应在模型已成功加载之后再调。
+ */
+export async function clearIncompleteBlobs(modelsDir: string, modelId: string): Promise<number> {
+  const blobs = path.join(hfDir(modelsDir), 'hub', `models--${modelId.replace(/\//g, '--')}`, 'blobs')
+  const names = await fs.readdir(blobs).catch(() => [] as string[])
+  let n = 0
+  for (const name of names) {
+    if (!name.endsWith('.incomplete')) continue
+    if (await fs.rm(path.join(blobs, name), { force: true }).then(() => true, () => false)) n++
+  }
+  return n
+}
+
 // ---- 归属与结束进程 ----
 
 /** 判断服务是不是插件启动的；pid 文件已失效（进程死、命令行对不上、内容坏）时顺手删掉。 */

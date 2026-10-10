@@ -56,7 +56,7 @@ function dispatchText(theme: Theme, reason: DispatchReason, info: DispatchReceip
     case 'meaningless':
       return `${label}：在现在的状态下用不上。`
     case 'unavailable':
-      return `${label}：此功能尚未提供。`
+      return `${label}：要在「${MODE_LABEL.chat}」里开场聊天之后才能用。`
   }
 }
 
