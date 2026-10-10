@@ -101,7 +101,7 @@ const VOICE_TEST_FAIL: Record<string, string> = {
   cancelled: '连接测试被取消。',
   other: '连接测试出错，详情见日志。',
 }
-const SAVE_EDIT_FAIL: Record<ServicesEditError['code'], string> = {
+const SAVE_EDIT_FAIL: Record<'parse' | 'format', string> = {
   parse: '服务配置文件解析失败，请先修好文件里的 YAML 语法再保存。',
   format: '服务配置文件的格式不对，请先手工修好再保存。',
 }
@@ -133,16 +133,18 @@ export function createSettingsApi(rt: Runtime, deps: Partial<SettingsApiDeps> = 
     }
   }
 
-  async function save(section: ServicesSection, parse: (opts: { currentEndpoint: string }) => FormResult): Promise<SaveResult> {
-    // 页面只提交改动的字段；没提交地址时，用文件里现有的地址做关联校验
-    const current = (await readServicesForm(rt.servicesPath()))[section].endpoint
-    const parsed = parse({ currentEndpoint: current.trim() })
+  async function save(section: ServicesSection, parse: (opts: { partial: boolean }) => FormResult): Promise<SaveResult> {
+    // 页面只提交改动的字段；地址必填与"代为启动要本机地址"在写文件的锁内按合并后的结果校验
+    const parsed = parse({ partial: true })
     if (!parsed.ok) return { ok: false, errors: parsed.errors, text: '有填写不对的地方，请改正后再保存。' }
     try {
       await updateServicesFile(rt.servicesPath(), section, parsed.edit)
       return { ok: true, text: '已保存。' }
     } catch (e) {
-      if (e instanceof ServicesEditError) return { ok: false, text: SAVE_EDIT_FAIL[e.code] }
+      if (e instanceof ServicesEditError) {
+        if (e.code === 'invalid') return { ok: false, errors: e.errors, text: '有填写不对的地方，请改正后再保存。' }
+        return { ok: false, text: SAVE_EDIT_FAIL[e.code] }
+      }
       rt.log.warn(`设置页保存失败：${redactUrls((e as Error).message)}`)
       return { ok: false, text: SAVE_FAIL }
     }

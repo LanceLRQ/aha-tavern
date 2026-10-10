@@ -16,11 +16,14 @@ export interface SectionEdit {
 export type FormResult = { ok: true; edit: SectionEdit } | { ok: false; errors: Record<string, string> }
 
 export class ServicesEditError extends Error {
-  readonly code: 'parse' | 'format'
-  constructor(code: 'parse' | 'format', message: string) {
+  readonly code: 'parse' | 'format' | 'invalid'
+  /** code 为 invalid 时按字段给出的错误。 */
+  readonly errors: Record<string, string>
+  constructor(code: 'parse' | 'format' | 'invalid', message: string, errors: Record<string, string> = {}) {
     super(message)
     this.name = 'ServicesEditError'
     this.code = code
+    this.errors = errors
   }
 }
 
@@ -109,24 +112,15 @@ function checkEndpoint(v: string): { error: string } | { value: string; url: URL
   return { value: v.replace(/\/+$/, ''), url }
 }
 
-/** 解析选项：currentEndpoint 是文件里现有的地址；表单没带 endpoint（没改）时用它做关联校验，且不重写。 */
+/** 解析选项：partial 表示页面只提交了改动的字段，没带 endpoint 就是没改（必填与关联校验改在写文件的锁内做）。 */
 export interface ParseOptions {
-  currentEndpoint?: string
-}
-
-function currentUrl(opts: ParseOptions): URL | null {
-  try {
-    return opts.currentEndpoint && URL_SHAPE.test(opts.currentEndpoint) ? new URL(opts.currentEndpoint) : null
-  } catch {
-    return null
-  }
+  partial?: boolean
 }
 
 function requireEndpoint(form: Form, opts: ParseOptions): URL | null {
   if (form.input.endpoint === undefined) {
-    const url = currentUrl(opts)
-    if (!url) form.fail('endpoint', '必填')
-    return url
+    if (!opts.partial) form.fail('endpoint', '必填')
+    return null
   }
   const raw = typeof form.input.endpoint === 'string' ? form.input.endpoint.trim() : ''
   if (raw === '') {
@@ -242,12 +236,37 @@ export async function updateServicesFile(file: string, section: ServicesSection,
       }
       doc.setIn([section, ...parts], value)
     }
+    checkRelations(doc, section, edit)
     // 删光了的 models 整段去掉
     const models = doc.getIn([section, 'models'], true)
     if (isMap(models) && models.items.length === 0) doc.deleteIn([section, 'models'])
     // lineWidth: 0 不折行，否则长字符串与长注释会被重排
     return doc.toString({ lineWidth: 0 })
   })
+}
+
+/** 在合并后的结果上做需要两个字段一起看的校验；不通过就抛错，调用方不会写文件。 */
+function checkRelations(doc: YAML.Document, section: ServicesSection, edit: SectionEdit): void {
+  const endpoint = doc.getIn([section, 'endpoint'])
+  if (typeof endpoint !== 'string' || endpoint.trim() === '') {
+    throw new ServicesEditError('invalid', '没有服务地址', { endpoint: '必填' })
+  }
+  if (section !== 'voice') return
+  const touched = (k: string) => k in edit.set || edit.remove.includes(k)
+  if (!touched('endpoint') && !touched('launch')) return // 现有值本来矛盾而没碰：读取端会降级，允许保存
+  if (doc.getIn([section, 'launch']) !== 'mlx') return
+  let host: string
+  try {
+    host = new URL(endpoint.trim()).hostname
+  } catch {
+    return
+  }
+  if (!LOCAL_HOSTS.has(host)) {
+    const field = touched('launch') ? 'launch' : 'endpoint'
+    throw new ServicesEditError('invalid', '代为启动时地址必须是本机地址', {
+      [field]: '代为启动时地址必须是本机地址（127.0.0.1 或 localhost）',
+    })
+  }
 }
 
 // ---------- 读给表单用的原始取值 ----------

@@ -175,6 +175,35 @@ describe('saveVoice / saveImage', () => {
     await expect(fs.access(file)).rejects.toBeTruthy()
   })
 
+  it('只改 endpoint 为非本机地址而文件里 launch 是 mlx：被拦下，按字段报错，文件不动', async () => {
+    await setup(VOICE_YAML())
+    const before = await fs.readFile(file, 'utf8')
+    const r = await api.saveVoice({ endpoint: 'http://192.168.1.2:1' })
+    expect(r.ok).toBe(false)
+    expect(r.errors).toHaveProperty('endpoint')
+    expect(await fs.readFile(file, 'utf8')).toBe(before)
+  })
+
+  it('只改 launch 为 mlx 而文件里地址非本机：被拦下，错误在 launch', async () => {
+    await setup('voice:\n  endpoint: http://192.168.1.2:1\n')
+    const r = await api.saveVoice({ launch: 'mlx' })
+    expect(r.ok).toBe(false)
+    expect(r.errors).toHaveProperty('launch')
+  })
+
+  it('文件现有值矛盾但没碰这两个字段：可以保存', async () => {
+    await setup('voice:\n  endpoint: http://192.168.1.2:1\n  launch: mlx\n')
+    expect((await api.saveVoice({ read: 'all' })).ok).toBe(true)
+  })
+
+  it('只改别的字段而文件 YAML 损坏：说解析失败，不是地址必填', async () => {
+    await setup('voice: [oops\n')
+    const r = await api.saveVoice({ read: 'all' })
+    expect(r.ok).toBe(false)
+    expect(r.text).toContain('解析失败')
+    expect(r.errors).toBeUndefined()
+  })
+
   it('生图：保存并读回，models 展平', async () => {
     const r = await api.saveImage({ endpoint: 'http://h:8188', workflow: 'qwen-image-2.1-gguf', auto: false, unet: 'a.gguf', width: 640 })
     expect(r.ok).toBe(true)

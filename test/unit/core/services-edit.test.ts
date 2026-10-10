@@ -112,23 +112,18 @@ describe('parseVoiceForm：入参校验', () => {
   })
 })
 
-describe('parseVoiceForm：只提交改动过的字段', () => {
-  it('没传 endpoint 但给了当前地址：不写 endpoint，也不报必填', () => {
-    const r = parseVoiceForm({ read: 'all' }, { currentEndpoint: 'http://127.0.0.1:18123' })
-    expect(okEdit(r).set).toEqual({ read: 'all' })
+describe('parseVoiceForm：只提交改动过的字段（partial）', () => {
+  it('partial 时没传 endpoint 不报必填、不重写 endpoint', () => {
+    expect(okEdit(parseVoiceForm({ read: 'all' }, { partial: true })).set).toEqual({ read: 'all' })
   })
-  it('launch 为 mlx 时按当前地址判断是否本机', () => {
-    expect(errorsOf(parseVoiceForm({ launch: 'mlx' }, { currentEndpoint: 'http://192.168.1.2:1' }))).toHaveProperty('launch')
-    expect(okEdit(parseVoiceForm({ launch: 'mlx' }, { currentEndpoint: 'http://localhost:1' })).set.launch).toBe('mlx')
-  })
-  it('没有当前地址、也没传：仍然必填', () => {
-    expect(errorsOf(parseVoiceForm({ read: 'all' }, { currentEndpoint: '' }))).toHaveProperty('endpoint')
+  it('非 partial 仍必填', () => {
+    expect(errorsOf(parseVoiceForm({ read: 'all' }))).toHaveProperty('endpoint')
   })
   it('传了空 endpoint 是错误，不会被当成"没改"', () => {
-    expect(errorsOf(parseVoiceForm({ endpoint: '' }, { currentEndpoint: 'http://127.0.0.1:1' }))).toHaveProperty('endpoint')
+    expect(errorsOf(parseVoiceForm({ endpoint: '' }, { partial: true }))).toHaveProperty('endpoint')
   })
   it('生图同理', () => {
-    expect(okEdit(parseImageForm({ width: 640 }, { currentEndpoint: 'http://h:1' }) as any).set).toEqual({ width: 640 })
+    expect(okEdit(parseImageForm({ width: 640 }, { partial: true }) as any).set).toEqual({ width: 640 })
   })
 })
 
@@ -281,6 +276,69 @@ describe('updateServicesFile：改写服务配置', () => {
   it('节本身不是映射（比如写成了文字）：拒绝改写', async () => {
     await fs.writeFile(file, 'voice: hello\n', 'utf8')
     await expect(updateServicesFile(file, 'voice', { set: { endpoint: 'http://x:1' }, remove: [] })).rejects.toMatchObject({ code: 'format' })
+  })
+
+  describe('关联校验在锁内：launch 为 mlx 时地址必须是本机', () => {
+    const upd = (section: 'voice' | 'image', set: Record<string, string | number | boolean>, remove: string[] = []) =>
+      updateServicesFile(file, section, { set, remove })
+
+    it('文件里 launch 已是 mlx，只改 endpoint 为非本机地址：拒绝，文件不动，错误记在 endpoint', async () => {
+      const text = 'voice:\n  endpoint: http://127.0.0.1:1\n  launch: mlx\n'
+      await fs.writeFile(file, text, 'utf8')
+      await expect(upd('voice', { endpoint: 'http://192.168.1.2:1' })).rejects.toMatchObject({
+        name: 'ServicesEditError', code: 'invalid', errors: { endpoint: expect.any(String) },
+      })
+      expect(await fs.readFile(file, 'utf8')).toBe(text)
+    })
+
+    it('文件里 endpoint 非本机，只改 launch 为 mlx：拒绝，错误记在 launch', async () => {
+      const text = 'voice:\n  endpoint: http://192.168.1.2:1\n  launch: none\n'
+      await fs.writeFile(file, text, 'utf8')
+      await expect(upd('voice', { launch: 'mlx' })).rejects.toMatchObject({ code: 'invalid', errors: { launch: expect.any(String) } })
+      expect(await fs.readFile(file, 'utf8')).toBe(text)
+    })
+
+    it('两者同时改成合法组合：通过', async () => {
+      await fs.writeFile(file, 'voice:\n  endpoint: http://192.168.1.2:1\n  launch: none\n', 'utf8')
+      await upd('voice', { endpoint: 'http://localhost:2', launch: 'mlx' })
+      const r = await loadVoiceService(file, { defaultModelsDir: '/d' })
+      expect(r.configured && r.settings.launch).toBe('mlx')
+    })
+
+    it('把 mlx 改回 none 的同时改成远程地址：通过', async () => {
+      await fs.writeFile(file, 'voice:\n  endpoint: http://127.0.0.1:1\n  launch: mlx\n', 'utf8')
+      await upd('voice', { endpoint: 'http://192.168.1.2:1', launch: 'none' })
+      expect(await fs.readFile(file, 'utf8')).toContain('launch: none')
+    })
+
+    it('删除 launch 字段（回到默认 none）后改远程地址：通过', async () => {
+      await fs.writeFile(file, 'voice:\n  endpoint: http://127.0.0.1:1\n  launch: mlx\n', 'utf8')
+      await upd('voice', { endpoint: 'http://192.168.1.2:1' }, ['launch'])
+      expect(await fs.readFile(file, 'utf8')).not.toContain('launch')
+    })
+
+    it('文件现有值本来矛盾，用户没碰这两个字段：允许保存', async () => {
+      await fs.writeFile(file, 'voice:\n  endpoint: http://192.168.1.2:1\n  launch: mlx\n', 'utf8')
+      await upd('voice', { read: 'all' })
+      expect(await fs.readFile(file, 'utf8')).toContain('read: all')
+    })
+
+    it('生图不受 launch 规则影响', async () => {
+      await upd('image', { endpoint: 'http://192.168.1.2:8188' })
+      expect(await fs.readFile(file, 'utf8')).toContain('192.168.1.2')
+    })
+
+    it('保存后仍没有地址：必填错误，文件不动', async () => {
+      const text = 'voice:\n  launch: none\n'
+      await fs.writeFile(file, text, 'utf8')
+      await expect(upd('voice', { read: 'all' })).rejects.toMatchObject({ code: 'invalid', errors: { endpoint: expect.any(String) } })
+      expect(await fs.readFile(file, 'utf8')).toBe(text)
+    })
+
+    it('YAML 损坏：先报解析失败，不是地址必填', async () => {
+      await fs.writeFile(file, 'voice: [oops\n', 'utf8')
+      await expect(upd('voice', { read: 'all' })).rejects.toMatchObject({ code: 'parse' })
+    })
   })
 
   it('长字符串与长注释保存后不被折行', async () => {
