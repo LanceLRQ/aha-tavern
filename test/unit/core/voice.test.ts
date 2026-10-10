@@ -70,6 +70,12 @@ describe('readVoice', () => {
     })
   })
 
+  it('零字节音频不算有音色', async () => {
+    await fs.writeFile(path.join(dir, VOICE_AUDIO_FILE), '')
+    await fs.writeFile(path.join(dir, VOICE_TEXT_FILE), '你好')
+    expect(await readVoice(dir)).toEqual({ ok: false, missing: 'audio' })
+  })
+
   it('缺音频、缺文字、文字为空白、两个都缺', async () => {
     expect(await readVoice(dir)).toEqual({ ok: false, missing: 'both' })
     await fs.writeFile(path.join(dir, VOICE_TEXT_FILE), '你好')
@@ -214,7 +220,74 @@ describe('registerVoice', () => {
     expect(got).toBe(ac.signal)
   })
 
+  it('没有转换器且扩展名是 .wav（不分大小写）但头部损坏：source-invalid', async () => {
+    const bad = await write('bad.WAV', Buffer.from('RIFF\0\0\0\0WAVE'))
+    expect((await registerVoice({ characterDir: dir, sourcePath: bad, text: '好' })).kind).toBe('source-invalid')
+  })
+
+  it('已取消的信号：转换器失败时把取消原样抛出，不当成 convert-failed', async () => {
+    const src = await write('a.m4a', Buffer.from('fake m4a'))
+    const ac = new AbortController()
+    const err = new Error('aborted')
+    await expect(registerVoice({
+      characterDir: dir, sourcePath: src, text: '好', signal: ac.signal,
+      convert: async () => { ac.abort(); throw err },
+    })).rejects.toBe(err)
+    expect(await fs.readdir(dir)).toEqual([])
+  })
+
+  it('转换器没有产出文件：convert-failed', async () => {
+    const src = await write('a.m4a', Buffer.from('fake m4a'))
+    expect((await registerVoice({ characterDir: dir, sourcePath: src, text: '好', convert: async () => undefined })).kind).toBe('convert-failed')
+  })
+
+  it('同一角色并发登记两次：最终两个文件来自同一次调用', async () => {
+    const a = await write('a.wav', makeWav(4))
+    const b = await write('b.wav', makeWav(8))
+    await Promise.all([
+      registerVoice({ characterDir: dir, sourcePath: a, text: 'A' }),
+      registerVoice({ characterDir: dir, sourcePath: b, text: 'B' }),
+      saveDesignedVoice({ characterDir: dir, wav: makeWav(12), text: 'C' }),
+    ])
+    const text = await fs.readFile(path.join(dir, VOICE_TEXT_FILE), 'utf8')
+    const secs = { A: 4, B: 8, C: 12 }[text as 'A' | 'B' | 'C']
+    expect(wavInfo(await fs.readFile(path.join(dir, VOICE_AUDIO_FILE)))?.seconds).toBe(secs)
+    expect((await fs.readdir(dir)).sort()).toEqual([VOICE_TEXT_FILE, VOICE_AUDIO_FILE])
+  })
+
   describe('写入中途失败', () => {
+    it('恢复也失败：保留旧音频备份，错误信息写明备份文件名', async () => {
+      const old = await write('old.wav', makeWav(5))
+      await registerVoice({ characterDir: dir, sourcePath: old, text: '旧' })
+      const next = await write('new.wav', makeWav(7))
+      // 第二次改名（文字）与恢复改名（备份 -> 音频）都失败
+      const rename = vi.fn(async (from: string, to: string) => {
+        if (to.endsWith(VOICE_TEXT_FILE) || from.includes('.bak')) throw new Error('disk gone')
+        await fs.rename(from, to)
+      })
+      const err = await registerVoice({ characterDir: dir, sourcePath: next, text: '新', rename }).catch((e: Error) => e)
+      expect(err).toBeInstanceOf(Error)
+      const bak = (await fs.readdir(dir)).find((n) => n.includes('.bak'))
+      expect(bak).toBeDefined()
+      expect((err as Error).message).toContain(bak!)
+      expect((await fs.readFile(path.join(dir, bak!))).equals(makeWav(5))).toBe(true)
+      expect((await fs.readFile(path.join(dir, VOICE_TEXT_FILE), 'utf8'))).toBe('旧')
+      expect((await fs.readdir(dir)).filter((n) => n.endsWith('.tmp') && !n.includes('.bak'))).toEqual([])
+    })
+
+    it('恢复成功时备份被清理', async () => {
+      const old = await write('old.wav', makeWav(5))
+      await registerVoice({ characterDir: dir, sourcePath: old, text: '旧' })
+      const next = await write('new.wav', makeWav(7))
+      const rename = async (from: string, to: string) => {
+        if (to.endsWith(VOICE_TEXT_FILE)) throw new Error('boom')
+        await fs.rename(from, to)
+      }
+      await expect(registerVoice({ characterDir: dir, sourcePath: next, text: '新', rename })).rejects.toThrow('boom')
+      expect((await fs.readFile(path.join(dir, VOICE_AUDIO_FILE))).equals(makeWav(5))).toBe(true)
+      expect((await fs.readdir(dir)).sort()).toEqual([VOICE_TEXT_FILE, VOICE_AUDIO_FILE])
+    })
+
     it('已有音色：第二个文件改名失败，原有两个文件不变，不留临时文件', async () => {
       const old = await write('old.wav', makeWav(5))
       await registerVoice({ characterDir: dir, sourcePath: old, text: '旧' })

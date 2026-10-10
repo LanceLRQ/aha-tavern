@@ -216,6 +216,12 @@ export interface SummaryInfo {
   aborted?: string
 }
 
+const SKIP_REASON_TEXT: Record<SkippedFile['reason'], string> = {
+  'too-large': '文件太大',
+  failed: '复制失败',
+  'voice-unpaired': '音色文件不成对，未带上',
+}
+
 const SYSTEM_CODES: Record<string, string> = {
   ENAMETOOLONG: '文件名太长', EACCES: '没有权限', EPERM: '没有权限', ENOSPC: '磁盘已满',
 }
@@ -257,7 +263,7 @@ export function summarize(theme: Theme, outcomes: readonly Outcome[], info: Summ
   list('因提问被中断而取消了', group('skipped').filter((o) => o.cancelled))
   list('没成功', group('failed'), (o) => `${label(o)}（${clip(o.error ?? '其他原因', 80)}）`)
   const lost = outcomes.flatMap((o) =>
-    (o.skippedFiles ?? []).map((f) => `${label(o)}的 ${shownName(f.name)}（${f.reason === 'too-large' ? '文件太大' : '复制失败'}）`))
+    (o.skippedFiles ?? []).map((f) => `${label(o)}的 ${shownName(f.name)}（${SKIP_REASON_TEXT[f.reason]}）`))
   if (lost.length) lines.push(`没带上的附带文件：${lost.join('、')}`)
   if (info.brokenCount > 0) {
     const sym = info.brokenSymlinks ? `（其中 ${info.brokenSymlinks} 个是符号链接，不读取）` : ''

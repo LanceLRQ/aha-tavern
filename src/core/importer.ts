@@ -200,6 +200,7 @@ async function discardStaged(staged: readonly Staged[]): Promise<void> {
   await Promise.all(staged.map((s) => fs.rm(s.tmp, { force: true })))
 }
 
+// 已知的边缘情况：逐个改名，音色的两个文件理论上可能一个成功、一个失败而拆散成对；失败的文件会记入 skipped，不回滚。
 async function commitStaged(staged: readonly Staged[], dstDir: string, skipped: SkippedFile[]): Promise<void> {
   for (const s of staged) {
     try {

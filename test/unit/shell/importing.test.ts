@@ -166,6 +166,8 @@ describe('summarize', () => {
   it('附带文件没带上要说明；全跳过为 success', () => {
     const r = summarize(theme, [o({ result: 'imported', skippedFiles: [{ name: 'v.wav', reason: 'too-large' }] })], { sourceName: '甲', brokenCount: 0 })
     expect(r.text).toContain('v.wav（文件太大）')
+    const v = summarize(theme, [o({ result: 'imported', skippedFiles: [{ name: 'voice_ref.wav', reason: 'voice-unpaired' }] })], { sourceName: '甲', brokenCount: 0 })
+    expect(v.text).toContain('voice_ref.wav（音色文件不成对，未带上）')
     expect(summarize(theme, [o({ result: 'skipped' })], { sourceName: '甲', brokenCount: 0 }).kind).toBe('success')
   })
   it('称呼经主题', () => {
