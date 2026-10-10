@@ -11,6 +11,7 @@ import {
   inspect,
   install,
   modelDownloaded,
+  sanitizeProxyEnv,
   start,
   stop,
   type VoiceServerDeps,
@@ -615,5 +616,68 @@ describe('dirSize', () => {
       return fs.lstat(p)
     }) as unknown as typeof fs.lstat
     expect(await dirSize(dir, lstat)).toBe(2)
+  })
+})
+
+describe('sanitizeProxyEnv', () => {
+  it('去掉 NO_PROXY / no_proxy 里带方括号的条目，其余保留', () => {
+    const r = sanitizeProxyEnv({ NO_PROXY: 'localhost, 127.0.0.1 ,::1,[::1]', no_proxy: 'a.com,[::1],b.com', KEEP: 'x' })
+    expect(r.NO_PROXY).toBe('localhost,127.0.0.1,::1')
+    expect(r.no_proxy).toBe('a.com,b.com')
+    expect(r.KEEP).toBe('x')
+  })
+  it('只有方括号条目：删掉该变量', () => {
+    const r = sanitizeProxyEnv({ NO_PROXY: '[::1]', no_proxy: '[::1], ]x[' })
+    expect('NO_PROXY' in r).toBe(false)
+    expect('no_proxy' in r).toBe(false)
+  })
+  it('没有该变量：原样；不改入参', () => {
+    const src = { A: '1', NO_PROXY: '[::1],x' }
+    expect(sanitizeProxyEnv({ A: '1' })).toEqual({ A: '1' })
+    sanitizeProxyEnv(src)
+    expect(src.NO_PROXY).toBe('[::1],x')
+  })
+})
+
+describe('子进程环境', () => {
+  it('start 与 install 都过滤 NO_PROXY', async () => {
+    await installEnvFiles()
+    const h = harness({ probe: (n) => n >= 1 })
+    h.deps.env = { PATH: '/usr/bin', NO_PROXY: 'localhost,[::1]', no_proxy: '[::1]' }
+    await start(settings, h.deps)
+    const e1 = h.spawned[0]!.opts.env as Record<string, string>
+    expect(e1.NO_PROXY).toBe('localhost')
+    expect('no_proxy' in e1).toBe(false)
+
+    const h2 = harness({
+      behave: (c) => setImmediate(() => { c.emit('exit', 0, null); c.emit('close', 0, null) }),
+    })
+    h2.deps.env = { NO_PROXY: 'localhost,[::1]' }
+    await install(settings, h2.deps)
+    for (const sp of h2.spawned) expect((sp.opts.env as Record<string, string>).NO_PROXY).toBe('localhost')
+  })
+})
+
+describe('start 的 offline 选项', () => {
+  it('为真时加 HF_HUB_OFFLINE=1，否则不加', async () => {
+    await installEnvFiles()
+    const h = harness({ probe: (n) => n >= 1 })
+    await start(settings, h.deps, { offline: true })
+    expect((h.spawned[0]!.opts.env as Record<string, string>).HF_HUB_OFFLINE).toBe('1')
+    await stop(settings, h.deps)
+    const h2 = harness({ probe: (n) => n >= 1 })
+    await start(settings, h2.deps, { offline: false })
+    expect('HF_HUB_OFFLINE' in (h2.spawned[0]!.opts.env as Record<string, string>)).toBe(false)
+  })
+})
+
+describe('inspect 跳过大小统计', () => {
+  it('sizes: false 时 sizes 为 undefined，其余照常', async () => {
+    await fs.mkdir(path.join(dir, 'env'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'env', 'a'), 'x'.repeat(10))
+    const r = await inspect(settings, harness().deps, { sizes: false })
+    expect(r.sizes).toBeUndefined()
+    expect(r.uv).toBe('/usr/local/bin/uv')
+    expect((await inspect(settings, harness().deps)).sizes).toEqual({ env: 10, hf: 0 })
   })
 })

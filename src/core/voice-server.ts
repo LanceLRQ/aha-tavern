@@ -63,8 +63,8 @@ export interface VoiceServerInfo {
   uv: string | null
   envInstalled: boolean
   modelDownloaded: boolean
-  /** 两个目录各自已占的字节数。 */
-  sizes: { env: number; hf: number }
+  /** 两个目录各自已占的字节数；inspect 以 sizes: false 调用时为 undefined。 */
+  sizes?: { env: number; hf: number }
   owned: { pid: number; port: number; startedAt: number } | null
   reachable: boolean
   /** 本目录上有安装或启动正在进行。 */
@@ -271,15 +271,37 @@ async function probeOk(settings: VoiceServiceSettings, deps: VoiceServerDeps, ms
 
 // ---- 对外接口 ----
 
-export async function inspect(settings: VoiceServiceSettings, deps: VoiceServerDeps): Promise<VoiceServerInfo> {
+/**
+ * 去掉 NO_PROXY / no_proxy 里带方括号的条目（如宿主代理插件写入的 `[::1]`）：
+ * 子进程里的 huggingface_hub 解析不了，会报 Invalid port。其余条目保留，处理后为空则删掉该变量。
+ */
+export function sanitizeProxyEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const out = { ...env }
+  for (const key of ['NO_PROXY', 'no_proxy']) {
+    const v = out[key]
+    if (v === undefined) continue
+    const kept = v.split(',').map((x) => x.trim()).filter((x) => x !== '' && !/[[\]]/.test(x))
+    if (kept.length > 0) out[key] = kept.join(',')
+    else delete out[key]
+  }
+  return out
+}
+
+/** opts.sizes 为 false 时不统计目录大小（遍历目录较慢，只有需要展示大小时才开）。 */
+export async function inspect(
+  settings: VoiceServiceSettings,
+  deps: VoiceServerDeps,
+  opts: { sizes?: boolean } = {},
+): Promise<VoiceServerInfo> {
+  const wantSizes = opts.sizes !== false
   const dir = settings.modelsDir
   const busy = active.has(dir)
   const [uv, installed, downloaded, envSize, hfSize, owned, reachable] = await Promise.all([
     deps.which('uv'),
     envInstalled(dir),
     modelDownloaded(dir, settings.model),
-    dirSize(envDir(dir)),
-    dirSize(hfDir(dir)),
+    wantSizes ? dirSize(envDir(dir)) : Promise.resolve(0),
+    wantSizes ? dirSize(hfDir(dir)) : Promise.resolve(0),
     findOwned(settings, deps),
     probeOk(settings, deps, PROBE_MS),
   ])
@@ -288,7 +310,7 @@ export async function inspect(settings: VoiceServiceSettings, deps: VoiceServerD
     uv,
     envInstalled: installed,
     modelDownloaded: downloaded,
-    sizes: { env: envSize, hf: hfSize },
+    ...(wantSizes ? { sizes: { env: envSize, hf: hfSize } } : {}),
     owned: owned && { pid: owned.pid, port: owned.port, startedAt: owned.startedAt },
     reachable,
     busy,
@@ -323,7 +345,7 @@ function runStep(
     let finished = false
     let child: ReturnType<typeof nodeSpawn>
     try {
-      child = deps.spawn(cmd, args, { env: deps.env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+      child = deps.spawn(cmd, args, { env: sanitizeProxyEnv(deps.env) as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'] })
     } catch (e) {
       resolve({
         code: null,
@@ -415,7 +437,7 @@ export async function install(
 export async function start(
   settings: VoiceServiceSettings,
   deps: VoiceServerDeps,
-  opts: { signal?: AbortSignal; timeoutMs?: number } = {},
+  opts: { signal?: AbortSignal; timeoutMs?: number; offline?: boolean } = {},
 ): Promise<StartResult> {
   const dir = settings.modelsDir
   const entry = begin(dir, opts.signal)
@@ -440,8 +462,10 @@ export async function start(
     let pid: number | undefined
     let spawnError = ''
     try {
-      const env: Record<string, string | undefined> = { ...deps.env, HF_HOME: hfDir(dir), PYTHONUNBUFFERED: '1' }
+      const env: Record<string, string | undefined> = { ...sanitizeProxyEnv(deps.env), HF_HOME: hfDir(dir), PYTHONUNBUFFERED: '1' }
       if (settings.hfEndpoint) env.HF_ENDPOINT = settings.hfEndpoint
+      // 权重已在本地时不去查仓库信息：连不上官方源的机器上会卡很久
+      if (opts.offline) env.HF_HUB_OFFLINE = '1'
       const child = deps.spawn(
         pythonPath(dir),
         ['-c', WATCHDOG_SCRIPT, String(deps.parentPid), '--host', '127.0.0.1', '--port', String(settings.port)],
