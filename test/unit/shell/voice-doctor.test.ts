@@ -711,13 +711,31 @@ describe('doctorHandler：语音', () => {
       expect(r.text).toBe('语音自检：全部通过，试念被打断，没有念完。')
     })
 
-    it('目录大小只在第一次检查时统计，重新检查与启动服务之后沿用', async () => {
+    it('目录大小在重新检查时沿用；启动服务（可能装了环境）之后重新统计', async () => {
       mocks.inspect.mockResolvedValueOnce(info()).mockResolvedValueOnce(info()).mockResolvedValue(up())
       script({ 'voice-doctor': [OPT_RECHECK, OPT_START_SERVICE, OPT_CLOSE] })
       await doctorHandler(inv('setup', '语音'))
       const sizesFlags = mocks.inspect.mock.calls.map((c) => c[2].sizes)
-      expect(sizesFlags).toEqual([true, false, false])
+      expect(sizesFlags).toEqual([true, false, true])
       expect(cards().every((c) => c.detail.includes('运行环境 512 MB，模型 1.9 GB'))).toBe(true)
+    })
+
+    it('安装前统计到 0（环境还没装）：不缓存，启动后的那次卡片显示新的大小', async () => {
+      const empty = info({ envInstalled: false, sizes: { env: 0, hf: 0 } })
+      mocks.inspect.mockResolvedValueOnce(empty).mockResolvedValue(up({ sizes: { env: 433 * 1024 * 1024, hf: 0 } }))
+      script({ 'voice-doctor': [OPT_START_SERVICE, OPT_CLOSE] })
+      await doctorHandler(inv('setup', '语音'))
+      expect(mocks.inspect.mock.calls.map((c) => c[2].sizes)).toEqual([true, true])
+      expect(cards()[1].detail).toContain('运行环境 433 MB')
+      expect(cards()[1].detail).not.toContain('运行环境 0 KB')
+    })
+
+    it('统计为 0 时重新检查也重新统计', async () => {
+      const empty = info({ envInstalled: false, sizes: { env: 0, hf: 0 } })
+      mocks.inspect.mockResolvedValue(empty)
+      script({ 'voice-doctor': [OPT_RECHECK, OPT_CLOSE] })
+      await doctorHandler(inv('setup', '语音'))
+      expect(mocks.inspect.mock.calls.map((c) => c[2].sizes)).toEqual([true, true])
     })
 
     it('没连上、launch: mlx、平台支持、有 uv：启动服务 / 重新检查 / 关闭', async () => {

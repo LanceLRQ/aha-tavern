@@ -890,12 +890,17 @@ export interface VoiceDesignListInfo {
 
 /** 第一级卡片：选一段去试听，或重新生成、取消。 */
 export function voiceDesignListQuestion(c: VoiceDesignListInfo): AskItem {
-  const lines = [`角色：${c.name}`, `音色描述：${c.description}`, `试听台词：${c.sampleText}`, '']
+  // 界面只对 detail 做 Markdown 排版，单个换行会折成一段：用列表项；已有音色的提醒并进第一行，不多占一行
+  const lines = [
+    `- 角色：${c.name}${c.replacing ? '（采用后会替换现有的声音）' : ''}`,
+    `- 音色描述：${c.description}`,
+    `- 试听台词：${c.sampleText}`,
+    '',
+  ]
   c.clips.forEach((clip, i) => {
     lines.push(`- ${voiceDesignSegmentLabel(i + 1)}：${oneDecimal(clip.seconds)} 秒${c.canPlay ? '' : `（${clip.file}）`}`)
   })
   if (!c.canPlay) lines.push('', '这台机器没有可用的播放器，无法试听；上面括号里是各段的临时文件，可以自己打开听，选好后在这里选对应的一段。')
-  if (c.replacing) lines.push('', '采用后会替换现有的声音。')
   const options = c.clips.map((clip, i) => ({
     label: voiceDesignSegmentLabel(i + 1),
     description: c.canPlay ? `试听这一段（${oneDecimal(clip.seconds)} 秒）` : '选这一段',
@@ -913,9 +918,8 @@ export function voiceDesignListQuestion(c: VoiceDesignListInfo): AskItem {
 
 /** 第二级卡片：对选中的一段再听、采用或返回。 */
 export function voiceDesignPickQuestion(info: { n: number; seconds: number; file: string; canPlay: boolean; replacing: boolean }): AskItem {
-  const lines = [`${voiceDesignSegmentLabel(info.n)}，${oneDecimal(info.seconds)} 秒。`]
-  if (!info.canPlay) lines.push(`这台机器没有可用的播放器，无法试听；临时文件：${info.file}`)
-  if (info.replacing) lines.push('采用后会替换现有的声音。')
+  const lines = [`${voiceDesignSegmentLabel(info.n)}，${oneDecimal(info.seconds)} 秒。${info.replacing ? '采用后会替换现有的声音。' : ''}`]
+  if (!info.canPlay) lines.push('', `这台机器没有可用的播放器，无法试听；临时文件：${info.file}`)
   return {
     id: VOICE_DESIGN_PICK_ID,
     header: VOICE_DESIGN_HEADER,

@@ -167,13 +167,15 @@ async function voiceBrief(inv: Invocation): Promise<{ text: string; hint: boolea
 /** 语音卡片流程：显示报告；能念就可试念，能代为启动就可启动，否则可重新检查。 */
 async function voiceCardFlow(inv: Invocation, ask: AskFn): Promise<Reply> {
   const deps = voiceDeps(inv)
-  // 目录大小只在第一次检查时统计，之后沿用，免得反复遍历运行环境目录
+  // 目录大小统计到有内容后沿用，免得反复遍历运行环境目录；统计为 0（环境还没装）不缓存，
+  // 启动服务（会装环境、下模型）之后也重新统计
   let sizes: { env: number; hf: number } | undefined
   const check = async () => {
     const r = await checkVoice(deps, {
       detail: true, ...(sizes ? { knownSizes: sizes } : {}), ...(inv.signal ? { signal: inv.signal } : {}),
     })
-    sizes ??= r.launch?.sizes
+    const got = r.launch?.sizes
+    if (!sizes && got && got.env + got.hf > 0) sizes = got
     return r
   }
   const canLaunch = inv.rt.handlers.voice !== undefined
@@ -213,6 +215,7 @@ async function voiceCardFlow(inv: Invocation, ask: AskFn): Promise<Reply> {
       if (choice === OPT_START_SERVICE && startable) {
         // 自检卡片流程已持有这个会话的卡片队列，启动流程里的确认卡片直接发出
         note = (await startServiceHeld(inv)).text || undefined
+        sizes = undefined
         report = await check()
         continue
       }

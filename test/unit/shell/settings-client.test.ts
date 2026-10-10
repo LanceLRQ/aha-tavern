@@ -290,6 +290,49 @@ describe('浏览器端加载与页面', () => {
     expect(remote.voiceStatus.mock.calls.length).toBeGreaterThan(before)
   })
 
+  it('页面发起的启动完成后：轮询到终态就清掉"正在启动"提示并显示终态说明', async () => {
+    const { mini } = await loadClient()
+    const voiceStatus = vi.fn()
+      .mockResolvedValueOnce(ok({ state: 'starting', text: '语音服务正在启动：安装运行环境，已用 1 秒。', stage: 'install', seconds: 1, canStart: false, canStop: true }))
+      .mockResolvedValue(ok({ state: 'running', text: '语音服务：已在运行（由插件启动），模型 0.6b。', ours: true, canStart: false, canStop: true }))
+    const remote = {
+      getState: vi.fn(async () => ok(stateOf())),
+      voiceStart: vi.fn(async () => ok({ result: 'starting', ok: true, text: 'NOTE-STARTING' })),
+      voiceStatus,
+    }
+    await clientModule.apply(fakeClientCtx(remote))
+    const root = mini.React.createElement(registered[0]!.component, { view: 'page' })
+    let tree = await mini.render(root)
+    button(tree, '启动服务').props.onClick()
+    tree = await mini.render(root)
+    expect(textOf(tree)).toContain('NOTE-STARTING')
+    ;[...timers.values()][0]!()
+    tree = await mini.render(root)
+    expect(textOf(tree)).not.toContain('NOTE-STARTING')
+    expect(textOf(tree)).toContain('语音服务：已在运行')
+  })
+
+  it('页面发起的启动失败后同样清掉提示，显示失败说明', async () => {
+    const { mini } = await loadClient()
+    const voiceStatus = vi.fn()
+      .mockResolvedValueOnce(ok({ state: 'starting', text: '启动中…', stage: 'start', seconds: 1, canStart: false, canStop: true }))
+      .mockResolvedValue(ok({ state: 'failed', text: '上次启动失败：端口被别的服务占用', canStart: true, canStop: false }))
+    const remote = {
+      getState: vi.fn(async () => ok(stateOf())),
+      voiceStart: vi.fn(async () => ok({ result: 'starting', ok: true, text: 'NOTE-STARTING' })),
+      voiceStatus,
+    }
+    await clientModule.apply(fakeClientCtx(remote))
+    const root = mini.React.createElement(registered[0]!.component, { view: 'page' })
+    let tree = await mini.render(root)
+    button(tree, '启动服务').props.onClick()
+    tree = await mini.render(root)
+    ;[...timers.values()][0]!()
+    tree = await mini.render(root)
+    expect(textOf(tree)).not.toContain('NOTE-STARTING')
+    expect(textOf(tree)).toContain('上次启动失败：端口被别的服务占用')
+  })
+
   it('修改后保存：只把改动的字段交给插件端；校验错误显示在字段下', async () => {
     const { mini } = await loadClient()
     const saveVoice = vi.fn(async () => ok({ ok: false, text: '有填写不对的地方，请改正后再保存。', errors: { modelsDir: '应是绝对路径' } }))

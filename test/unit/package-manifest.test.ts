@@ -19,7 +19,10 @@ describe('设置页的包清单约定', () => {
     const patch = YAML.parse(read('cordis.patch.yml')) as { insert: { id: string; name: string; config?: any }[] }[]
     const rows = patch[0]!.insert
     const settings = rows.find((r) => r.name === pkg.name)
-    expect(settings).toMatchObject({ id: 'settings', config: { mode: 'settings' } })
+    expect(settings).toMatchObject({ id: 'aha-tavern-settings', config: { mode: 'settings' } })
+    // 根层行的 id 与宿主自己的行同在一张表里：撞名会让宿主的服务消失（实测 settings 撞过）
+    for (const r of rows) expect(r.id, `根层行 id ${r.id}`).toMatch(/^(aha-tavern|preset-tavern-)/)
+    expect(rows.map((r) => r.id)).not.toContain('settings')
     expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining(['preset-tavern-setup', 'preset-tavern-chat']))
     const presets = rows.filter((r) => r.id.startsWith('preset-'))
     expect(presets.map((p) => p.config.id).sort()).toEqual(['tavern-chat', 'tavern-setup'])

@@ -165,7 +165,7 @@ function VoiceSection(props: SectionProps) {
   const { remote, state } = props
   const s = useSection(props, 'voice', (f) => remote.saveVoice(f), () => remote.testVoice())
   const [status, setStatus] = useState<VoiceStatusView>(state.voiceStatus)
-  const [note, setNote] = useState<{ text: string; ok: boolean } | null>(null)
+  const [note, setNote] = useState<{ text: string; ok: boolean; pending?: boolean } | null>(null)
   const [confirm, setConfirm] = useState<NonNullable<StartResultView['confirm']> | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
 
@@ -178,6 +178,9 @@ function VoiceSection(props: SectionProps) {
   }
   // 保存配置后整页状态会重读，跟着更新；启动中每 2 秒查一次进度
   useEffect(() => { setStatus(state.voiceStatus) }, [JSON.stringify(state.voiceStatus)])
+  useEffect(() => {
+    if (status.state !== 'starting') setNote((n) => (n?.pending ? null : n))
+  }, [status.state])
   useEffect(() => {
     if (status.state !== 'starting') return undefined
     const timer = setInterval(() => { void refresh() }, POLL_MS)
@@ -193,7 +196,8 @@ function VoiceSection(props: SectionProps) {
         setConfirm(r.confirm)
       } else {
         setConfirm(null)
-        setNote({ text: r.text, ok: r.ok })
+        // 转入后台的"正在启动"提示：状态走到终态后清掉
+        setNote({ text: r.text, ok: r.ok, ...(r.result === 'starting' ? { pending: true } : {}) })
       }
       await refresh()
     } catch (e) {

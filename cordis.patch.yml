@@ -6,9 +6,10 @@
 #
 # 第一行是设置页：挂在根层的一行，包名即说明符（宿主只在这样的行上加载浏览器端），
 # mode: settings 的实例不注册命令与工具，只给"插件"页里的设置页提供数据与启停。
+# id 带插件前缀：根层行与宿主自己的行同在一张表里，撞名（如 settings）会让宿主的服务消失。
 # 设置页只有用 dsh plugin add 安装时才会出现在"插件"页里；用 --patch 调试时看不到它。
 - insert:
-    - id: settings
+    - id: aha-tavern-settings
       name: aha-tavern
       config:
         mode: settings
