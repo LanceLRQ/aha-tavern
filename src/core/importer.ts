@@ -11,6 +11,7 @@ import { AhaError } from './errors'
 import { atomicWrite, pathExists, safeDirName } from './fsx'
 import { newCharacterId } from './ids'
 import { assertWritable, openTavern, type TavernInfo } from './tavern'
+import { VOICE_AUDIO_FILE, VOICE_TEXT_FILE } from './voice'
 
 /** 单个附带文件的大小上限。 */
 export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
@@ -117,7 +118,8 @@ export type ImportConflict =
 
 export interface SkippedFile {
   name: string
-  reason: 'too-large' | 'failed'
+  /** voice-unpaired：音色的两个文件没能成对复制，剩下的那个也不带。 */
+  reason: 'too-large' | 'failed' | 'voice-unpaired'
   /** 失败时的系统错误码（如 ENOSPC），不带路径。 */
   code?: string
 }
@@ -178,6 +180,13 @@ async function stageAttachments(
       await fs.rm(tmp, { force: true })
       skipped.push({ name: e.name, reason: 'failed', ...codeOf(err) })
     }
+  }
+  // 音色是成对的文件：只剩一个就都不带
+  const voice = staged.filter((s) => s.name === VOICE_AUDIO_FILE || s.name === VOICE_TEXT_FILE)
+  if (voice.length === 1) {
+    await discardStaged(voice)
+    staged.splice(staged.indexOf(voice[0]!), 1)
+    skipped.push({ name: voice[0]!.name, reason: 'voice-unpaired' })
   }
   return { staged, skipped }
 }

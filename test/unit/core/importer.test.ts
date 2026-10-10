@@ -56,6 +56,7 @@ describe('importCharacter', () => {
     const d = a.dir
     await fs.writeFile(path.join(d, 'reference.png'), 'PNG')
     await fs.writeFile(path.join(d, 'voice_ref.wav'), 'WAV')
+    await fs.writeFile(path.join(d, 'voice_ref.txt'), '台词')
     await fs.writeFile(path.join(d, 'memory.md'), '# 记忆\n私密')
     await fs.writeFile(path.join(d, '.hidden'), 'x')
     await fs.mkdir(path.join(d, 'sub'))
@@ -63,7 +64,7 @@ describe('importCharacter', () => {
     const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
     expect(r.status).toBe('imported')
     const out = path.join(dst, 'characters', '白狐')
-    expect((await fs.readdir(out)).sort()).toEqual(['character.yaml', 'reference.png', 'voice_ref.wav'])
+    expect((await fs.readdir(out)).sort()).toEqual(['character.yaml', 'reference.png', 'voice_ref.txt', 'voice_ref.wav'])
     expect(await fs.readFile(path.join(out, 'reference.png'), 'utf8')).toBe('PNG')
     const got = await readCharacter(dst, a.card.id)
     expect(got?.ok && got.card.name).toBe('白狐')
@@ -97,6 +98,38 @@ describe('importCharacter', () => {
     await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
     const got = await readCharacter(dst, a.card.id)
     expect(got?.ok && (got.card.origin as { tavern: string } | undefined)?.tavern).toBe('t_src')
+  })
+
+  it('音色两个文件齐全：一起带走', async () => {
+    const a = await mk('白狐')
+    await fs.writeFile(path.join(a.dir, 'voice_ref.wav'), 'WAV')
+    await fs.writeFile(path.join(a.dir, 'voice_ref.txt'), '你好')
+    const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    expect(r.status === 'imported' && r.skippedFiles).toEqual([])
+    const out = path.join(dst, 'characters', '白狐')
+    expect(await fs.readFile(path.join(out, 'voice_ref.txt'), 'utf8')).toBe('你好')
+    expect(await fs.readFile(path.join(out, 'voice_ref.wav'), 'utf8')).toBe('WAV')
+  })
+
+  it.each(['voice_ref.wav', 'voice_ref.txt'])('音色只有 %s：两个都不带，并在结果里说明', async (only) => {
+    const a = await mk('白狐')
+    await fs.writeFile(path.join(a.dir, only), 'x')
+    await fs.writeFile(path.join(a.dir, 'reference.png'), 'PNG')
+    const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    expect(r.status === 'imported' && r.skippedFiles).toEqual([{ name: only, reason: 'voice-unpaired' }])
+    expect((await fs.readdir(path.join(dst, 'characters', '白狐'))).sort()).toEqual(['character.yaml', 'reference.png'])
+  })
+
+  it('音色的一个文件因过大被跳过：另一个也不带', async () => {
+    const a = await mk('白狐')
+    await fs.writeFile(path.join(a.dir, 'voice_ref.wav'), 'x'.repeat(100))
+    await fs.writeFile(path.join(a.dir, 'voice_ref.txt'), '你好')
+    const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW, maxFileBytes: 50 })
+    expect(r.status === 'imported' && r.skippedFiles).toEqual([
+      { name: 'voice_ref.wav', reason: 'too-large' },
+      { name: 'voice_ref.txt', reason: 'voice-unpaired' },
+    ])
+    expect(await fs.readdir(path.join(dst, 'characters', '白狐'))).toEqual(['character.yaml'])
   })
 
   it('超过大小上限的附带文件跳过并报告', async () => {
