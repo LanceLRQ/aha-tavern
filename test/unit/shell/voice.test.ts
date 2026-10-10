@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VoiceServiceResult, VoiceServiceSettings } from '../../../src/core/services'
 import { TtsError } from '../../../src/core/tts'
@@ -8,7 +11,7 @@ import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
 import { VOICE_OPT_CANCEL, VOICE_OPT_GO } from '../../../src/shell/receipts'
 import {
   BUILTIN_VOICE_TEXT, START_WAIT_MS, abortLaunch, builtinVoice, createVoiceHandler, installVoice, parseVoiceArgs,
-  resetLaunchesForTest, type VoiceInstanceState, type VoiceOps,
+  resetLaunchesForTest, whichOnPath, type VoiceInstanceState, type VoiceOps,
 } from '../../../src/shell/voice'
 
 const MODEL_06 = 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit'
@@ -412,7 +415,7 @@ describe('启动转后台', () => {
   it('等待上限是 8 秒', async () => {
     expect(START_WAIT_MS).toBe(8000)
     await run('启动')
-    expect(ops.sleep).toHaveBeenCalledWith(8000)
+    expect(ops.sleep).toHaveBeenCalledWith(8000, expect.any(AbortSignal))
   })
   it('8 秒内没完成：回一行带阶段的回执，后台继续；完成后状态恢复', async () => {
     needInstall()
@@ -500,6 +503,38 @@ describe('启动转后台', () => {
     } finally {
       process.off('unhandledRejection', unhandled)
     }
+  })
+  it('任务先结束时清掉 8 秒等待的定时器（信号被中止）', async () => {
+    await run('启动')
+    expect((ops.sleep.mock.calls[0]![1] as AbortSignal).aborted).toBe(true)
+  })
+  it('两个实例同时启动（inspect 挂起）：只起一个后台任务，第二个回正在启动中', async () => {
+    ops.sleep.mockResolvedValue(undefined)
+    synth.mockImplementation((_i: unknown, o: { signal: AbortSignal }) =>
+      new Promise((_r, rej) => o.signal.addEventListener('abort', () => rej(new TtsError('cancelled')))))
+    const gates: Array<() => void> = []
+    ops.inspect.mockImplementation(() => new Promise((res) => gates.push(() => res(info()))))
+    const stateB: VoiceInstanceState = { started: null, launching: null }
+    const a = createVoiceHandler(state, ops as unknown as VoiceOps)(mkInv('启动')) as Promise<{ text: string }>
+    const b = createVoiceHandler(stateB, ops as unknown as VoiceOps)(mkInv('启动')) as Promise<{ text: string }>
+    await vi.waitFor(() => expect(gates.length).toBe(2))
+    gates[0]!()
+    expect((await a).text).toContain('正在启动')
+    gates[1]!()
+    expect((await b).text).toBe('语音服务正在启动中，请稍候。')
+    expect(ops.start).toHaveBeenCalledTimes(1)
+    expect(state.launching).not.toBeNull()
+    expect(stateB.launching).toBeNull()
+    // Map 里仍是第一个任务：停止能打断它的预热
+    ops.inspect.mockResolvedValue(info())
+    await run('停止')
+    await vi.waitFor(() => expect(state.launching).toBeNull())
+  })
+  it('日志本身抛错也不会让后台任务的结果拒绝', async () => {
+    ops.start.mockRejectedValue(new Error('boom'))
+    log.error.mockImplementationOnce(() => { throw new Error('log broken') })
+    const r = await run('启动')
+    expect(r.kind).toBe('error')
   })
   it('abortLaunch 没有进行中的启动时无事发生', () => {
     expect(() => abortLaunch('/nowhere')).not.toThrow()
@@ -675,5 +710,26 @@ describe('builtinVoice', () => {
   it('给出录音路径与对应文字', () => {
     expect(builtinVoice({ builtinAssetsDir: '/x/assets' })).toEqual({ file: '/x/assets/voice-ref.wav', text: BUILTIN_VOICE_TEXT })
     expect(BUILTIN_VOICE_TEXT).toBe('你好，欢迎来到这间酒馆。先坐下歇一会儿吧，想聊点什么都可以。')
+  })
+})
+
+describe('whichOnPath', () => {
+  it('跳过没有执行权限的文件与同名目录，返回可执行文件', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aha-which-'))
+    try {
+      const noExec = path.join(root, 'a'); fs.mkdirSync(noExec)
+      const d1 = path.join(root, 'd1'); fs.mkdirSync(d1)
+      fs.writeFileSync(path.join(d1, 'uv'), '#!/bin/sh\n', { mode: 0o644 })
+      const d2 = path.join(root, 'd2'); fs.mkdirSync(path.join(d2, 'uv'), { recursive: true })
+      const d3 = path.join(root, 'd3'); fs.mkdirSync(d3)
+      fs.writeFileSync(path.join(d3, 'uv'), '#!/bin/sh\n', { mode: 0o755 })
+      const sep = path.delimiter
+      expect(whichOnPath('uv', [d1].join(sep))).toBeNull()
+      expect(whichOnPath('uv', [d2].join(sep))).toBeNull()
+      expect(whichOnPath('uv', [root, d1, d2, d3].join(sep))).toBe(path.join(d3, 'uv'))
+      expect(whichOnPath('nope', d3)).toBeNull()
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })

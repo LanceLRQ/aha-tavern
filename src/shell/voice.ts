@@ -3,7 +3,7 @@
 // 宿主在命令运行期间会锁住同一会话的输入框，所以启动不能等到底：确认卡片同步完成，
 // 之后安装 → 启动 → 预热作为后台任务跑，处理函数最多等 START_WAIT_MS，没完成就回一行"正在启动"。
 import { execFile, spawn } from 'node:child_process'
-import { statSync } from 'node:fs'
+import { accessSync, constants, statSync } from 'node:fs'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { hasUserInfo, VOICE_MODELS, type VoiceServiceSettings } from '../core/services'
@@ -29,7 +29,8 @@ const BUILTIN_VOICE_FILE = 'voice-ref.wav'
 /** 预热用的短句。 */
 const WARMUP_TEXT = '你好。'
 const WARMUP_TIMEOUT_MS = 30 * 60 * 1000
-const CLEANUP_LIMIT_MS = 5000
+// 宿主在卸载约 5 秒后会强退，收尾（打断任务 + 停服务）总共不超过 4.5 秒，超时就不再等
+const CLEANUP_LIMIT_MS = 4500
 const MODELS_PROBE_MS = 2000
 /** 启动命令最多同步等多久；没完成就转后台。 */
 export const START_WAIT_MS = 8000
@@ -50,15 +51,28 @@ function isFile(file: string): boolean {
   }
 }
 
-function whichOnPath(name: string): string | null {
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+/** 在 PATH 里找既是普通文件又有可执行权限的同名文件（排除同名目录与没有 x 权限的文件）。 */
+export function whichOnPath(name: string, pathEnv: string = process.env.PATH ?? ''): string | null {
+  for (const dir of pathEnv.split(path.delimiter)) {
     if (!dir) continue
     const file = path.join(dir, name)
-    // 可执行位由 spawn 时检验；这里只排除同名目录与不存在的路径
-    if (isFile(file)) return file
+    if (!isFile(file)) continue
+    try {
+      accessSync(file, constants.X_OK)
+      return file
+    } catch {
+      // 没有执行权限，找下一个
+    }
   }
   return null
 }
+
+/** 可取消的等待：signal 中止时立即清掉定时器并返回。 */
+const realSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+  })
 
 export function createVoiceServerDeps(): VoiceServerDeps {
   return {
@@ -104,7 +118,8 @@ export interface VoiceOps {
   modelDownloaded: typeof server.modelDownloaded
   createClient(endpoint: string): Pick<TtsClient, 'synthesize' | 'probe'>
   now(): number
-  sleep(ms: number): Promise<void>
+  /** 等待 ms 毫秒；signal 中止时清掉定时器并提前返回。 */
+  sleep(ms: number, signal?: AbortSignal): Promise<void>
 }
 
 export const realVoiceOps: VoiceOps = {
@@ -115,7 +130,7 @@ export const realVoiceOps: VoiceOps = {
   modelDownloaded: server.modelDownloaded,
   createClient: (endpoint) => createTtsClient({ endpoint, fetch: globalThis.fetch }),
   now: Date.now,
-  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  sleep: realSleep,
 }
 
 // ---------- 启动任务的状态（模块级） ----------
@@ -268,8 +283,12 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     state.launching = s
     launch.done = runLaunch(rt, s, launch, plan)
       .catch((e): Reply => {
-        // 后台任务里的异常不能变成未处理的拒绝
-        rt.log.error(`语音服务启动出错：${redactUrls((e as Error).stack ?? String(e))}`)
+        // 后台任务里的异常不能变成未处理的拒绝；日志本身出错也不能让 done 拒绝
+        try {
+          rt.log.error(`语音服务启动出错：${redactUrls((e as Error).stack ?? String(e))}`)
+        } catch {
+          // 忽略
+        }
         launch.outcome = { kind: 'failed', reason: '内部错误，详情见日志' }
         return { kind: 'error', text: '语音服务启动出错，详情见日志。' }
       })
@@ -312,15 +331,20 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
       if (choice === 'busy') return { kind: 'success', text: VOICE_CARD_BUSY_TEXT }
       if (choice === 'cancelled') return voiceCancelledReceipt()
       if (choice === 'declined') return voiceDeclinedReceipt()
-      // 卡片等待期间可能有别处抢先开始了
-      const raced = launches.get(s.modelsDir)
-      if (raced && !raced.finished) return voiceBusyReceipt()
     }
 
+    // 占位必须与 beginLaunch 之间没有 await：inspect 与卡片都可能挂起，别的实例可能已经抢先开始
+    const raced = launches.get(s.modelsDir)
+    if (raced && !raced.finished) return voiceBusyReceipt()
     // 权重已在本地时让服务离线启动，免得去查连不上的仓库
     const launch = beginLaunch(rt, s, { install: !info.envInstalled, offline: info.modelDownloaded })
-    const early = await Promise.race([launch.done, ops.sleep(START_WAIT_MS).then(() => null)])
-    return early ?? voiceStartingReceipt(launch.phase)
+    const waitCtl = new AbortController()
+    try {
+      const early = await Promise.race([launch.done, ops.sleep(START_WAIT_MS, waitCtl.signal).then(() => null)])
+      return early ?? voiceStartingReceipt(launch.phase)
+    } finally {
+      waitCtl.abort() // 任务先结束时清掉等待的定时器
+    }
   }
 
   async function statusFlow(inv: Invocation, s: VoiceServiceSettings): Promise<Reply> {
