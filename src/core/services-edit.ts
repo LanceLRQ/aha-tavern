@@ -3,7 +3,7 @@
 import fs from 'node:fs/promises'
 import YAML from 'yaml'
 import { expandHome, modifyFile } from './fsx'
-import { LOCAL_HOSTS, MAX_VOICE_TIMEOUT_SECONDS } from './services'
+import { LOCAL_HOSTS, MAX_VOICE_PAUSE_SECONDS, MAX_VOICE_TIMEOUT_SECONDS, MIN_VOICE_PAUSE_SECONDS } from './services'
 
 export type ServicesSection = 'voice' | 'image'
 
@@ -84,6 +84,15 @@ class Form {
     if (v === '') return void this.remove.push(key)
     const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN
     if (!Number.isInteger(n) || n < min || n > max) return this.fail(key, `应是 ${min} 到 ${max} 之间的整数`)
+    this.set[key] = n
+  }
+  /** 非负小数（如 2.5）；不接受负号、指数写法、NaN。 */
+  num(key: string, min: number, max: number): void {
+    const v = this.raw(key)
+    if (v === undefined) return
+    if (v === '') return void this.remove.push(key)
+    const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d+(\.\d+)?$/.test(v) ? Number(v) : NaN
+    if (!Number.isFinite(n) || n < min || n > max) return this.fail(key, `应是 ${min} 到 ${max} 之间的数字`)
     this.set[key] = n
   }
   bool(key: string): void {
@@ -171,6 +180,7 @@ export function parseVoiceForm(input: unknown, opts: ParseOptions = {}): FormRes
   form.choice('read', ['lines', 'all'] as const)
   form.text('language', 'language', (v) => (LANGUAGE.test(v) ? null : '只能是英文字母，如 chinese'))
   form.int('timeoutSeconds', 1, MAX_VOICE_TIMEOUT_SECONDS)
+  form.num('pauseSeconds', MIN_VOICE_PAUSE_SECONDS, MAX_VOICE_PAUSE_SECONDS)
   return form.result()
 }
 
@@ -271,7 +281,7 @@ function checkRelations(doc: YAML.Document, section: ServicesSection, edit: Sect
 
 // ---------- 读给表单用的原始取值 ----------
 
-const VOICE_KEYS = ['endpoint', 'launch', 'model', 'modelsDir', 'hfEndpoint', 'read', 'language', 'timeoutSeconds'] as const
+const VOICE_KEYS = ['endpoint', 'launch', 'model', 'modelsDir', 'hfEndpoint', 'read', 'language', 'timeoutSeconds', 'pauseSeconds'] as const
 const IMAGE_KEYS = ['endpoint', 'workflow', 'auto', 'style', 'width', 'height', 'steps', 'timeoutSeconds'] as const
 const MODEL_KEYS = ['unet', 'clip', 'vae'] as const
 

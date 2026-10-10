@@ -46,7 +46,7 @@ const GB = 2 ** 30
 
 const settings = (over: Partial<VoiceServiceSettings> = {}): VoiceServiceSettings => ({
   endpoint: 'http://127.0.0.1:18123/v1?token=abc', launch: 'mlx', model: MODEL_06, modelAlias: '0.6b', modelsDir: DIR,
-  read: 'lines', language: 'chinese', timeoutSeconds: 120, port: 18123, local: true, ...over,
+  read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5, port: 18123, local: true, ...over,
 })
 const info = (over: Partial<VoiceServerInfo> = {}): VoiceServerInfo => ({
   supported: true, uv: '/usr/bin/uv', envInstalled: true, modelDownloaded: true,

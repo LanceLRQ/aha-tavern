@@ -12,9 +12,10 @@ import { readCharacter } from '../core/card'
 import { readChatAutoRead, readRecords, setChatAutoRead } from '../core/chat'
 import { findPlayer, PlayerError, play, type Player, type PlayerSpawn } from '../core/player'
 import { hasUserInfo, type VoiceServiceSettings } from '../core/services'
-import { planSpeech, type SpeechPlan } from '../core/speech-text'
+import { planSpeech, type SpeechGap, type SpeechPlan } from '../core/speech-text'
 import { createTtsClient, TtsError, type TtsClient } from '../core/tts'
 import { readVoice } from '../core/voice'
+import { trimWavSilence } from '../core/wav-trim'
 import type { CommandHandler, HostAgent, HostServices } from './context'
 import { redactUrls } from './draw-doctor'
 import {
@@ -31,6 +32,9 @@ const PROBE_MS = 2000
 
 const noop = (): void => undefined
 
+/** 同一段连续要念的话里，相邻两句之间停多久（毫秒）。 */
+export const INLINE_PAUSE_MS = 500
+
 // ---------- 朗读队列 ----------
 
 export interface SpeakerDeps {
@@ -42,6 +46,8 @@ export interface SpeakerDeps {
   writeFile(file: string, bytes: Uint8Array): Promise<void>
   /** 删除；文件不存在不算错。 */
   removeFile(file: string): Promise<void>
+  /** 等 ms 毫秒；signal 中止时立即结束（不抛错，调用方自己检查 signal）。 */
+  sleep(ms: number, signal: AbortSignal): Promise<void>
   now(): number
   /** 换段时最多等上一段收尾多久（毫秒），默认 2000。 */
   settleLimitMs?: number
@@ -50,9 +56,11 @@ export interface SpeakerDeps {
 
 export interface SpeakRequest {
   sentences: readonly string[]
+  /** 与 sentences 等长：每句之前的间隔种类；不给就一律不停顿（单句试念等）。 */
+  gaps?: readonly SpeechGap[]
   /** 参考录音的绝对路径与录音里说的话。 */
   voice: { audio: string; text: string }
-  settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds'> & Partial<Pick<VoiceServiceSettings, 'local'>>
+  settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds' | 'pauseSeconds'> & Partial<Pick<VoiceServiceSettings, 'local'>>
   player: Player
   /** 会话编号：会话销毁、或该会话来了新的用户消息时，据此停下属于它的朗读。 */
   owner: string
@@ -72,13 +80,24 @@ export type SpeakOutcome =
   | { status: 'stopped' }
   | { status: 'timeout' }
 
+interface QueueItem {
+  text: string
+  gap: SpeechGap
+}
+
+/** 已合成好、等待播放的一句。 */
+interface Ready {
+  file: string
+  gap: SpeechGap
+}
+
 interface Run {
   owner: string
   /** 播放用的播放器 */
   player: Player
   /** 合成请求；只播放现成文件的那一段为 null */
   req: SpeakRequest | null
-  queue: string[]
+  queue: QueueItem[]
   ctl: AbortController
   /** 已写出、尚未删除的临时文件 */
   files: Set<string>
@@ -86,7 +105,7 @@ interface Run {
   closed: boolean
   client: Pick<TtsClient, 'synthesize'> | null
   /** 已发起、尚未取用的下一句合成（最多领先播放一句） */
-  ahead: Promise<string> | null
+  ahead: Promise<Ready> | null
   /** 正在播放一句 */
   playing: boolean
   finished: Promise<void>
@@ -106,7 +125,7 @@ export class Speaker {
   speak(req: SpeakRequest): void {
     if (req.sentences.length === 0) return
     this.begin({
-      owner: req.owner, player: req.player, req, queue: [...req.sentences], ctl: new AbortController(), files: new Set(),
+      owner: req.owner, player: req.player, req, queue: req.sentences.map((text, i) => ({ text, gap: req.gaps?.[i] ?? 'none' })), ctl: new AbortController(), files: new Set(),
       closed: false, client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false,
       finished: Promise.resolve(), outcome: { status: 'stopped' },
     })
@@ -142,7 +161,7 @@ export class Speaker {
     if (opts.signal?.aborted) return { status: 'stopped' }
     const run: Run = {
       owner: opts.owner, player: opts.player, req: null, queue: [], ctl: new AbortController(), files: new Set(),
-      closed: false, client: null, ahead: Promise.resolve(file), playing: false, finished: Promise.resolve(),
+      closed: false, client: null, ahead: Promise.resolve({ file, gap: 'none' }), playing: false, finished: Promise.resolve(),
       outcome: { status: 'stopped' },
     }
     this.begin(run)
@@ -174,7 +193,8 @@ export class Speaker {
     if (req.sentences.length === 0) return
     const cur = this.current
     if (cur && !cur.closed && cur.owner === req.owner) {
-      cur.queue.push(...req.sentences)
+      // 接到上一段末尾：第一句与前面隔着一个段落
+      cur.queue.push(...req.sentences.map((text, i): QueueItem => ({ text, gap: i === 0 ? 'break' : (req.gaps?.[i] ?? 'none') })))
       this.prefetch(cur)
       return
     }
@@ -220,12 +240,18 @@ export class Speaker {
     try {
       this.prefetch(run, true)
       while (run.ahead) {
-        const file = await run.ahead
+        const { file, gap } = await run.ahead
         run.ahead = null
         this.prefetch(run, true)
         if (!waited) {
           waited = true
           await this.waitPrevious(before)
+        }
+        // 等待期间合成已在领先；stop 或被顶掉时等待立即结束，不再播放
+        const pauseMs = this.pauseMs(run, gap)
+        if (pauseMs > 0) {
+          await this.deps.sleep(pauseMs, run.ctl.signal)
+          if (run.ctl.signal.aborted) break
         }
         run.playing = true
         try {
@@ -257,16 +283,23 @@ export class Speaker {
     }
   }
 
+  /** 播放这一句之前要等多久（毫秒）。 */
+  private pauseMs(run: Run, gap: SpeechGap): number {
+    if (gap === 'inline') return INLINE_PAUSE_MS
+    if (gap === 'break') return Math.round((run.req?.settings.pauseSeconds ?? 0) * 1000)
+    return 0
+  }
+
   /** 队列里还有句子、且没有领先的合成时，发起下一句；force 为假时只在正在播放时发起。 */
   private prefetch(run: Run, force = false): void {
     if (run.ahead !== null || (!force && !run.playing)) return
-    const text = run.queue.shift()
-    if (text === undefined) return
-    run.ahead = this.synth(run, text)
+    const item = run.queue.shift()
+    if (item === undefined) return
+    run.ahead = this.synth(run, item)
     run.ahead.catch(noop)
   }
 
-  private async synth(run: Run, text: string): Promise<string> {
+  private async synth(run: Run, { text, gap }: QueueItem): Promise<Ready> {
     const { req, client } = run
     if (!req || !client) throw new TtsError('other', 'synth without request')
     const { voice, settings } = req
@@ -277,8 +310,8 @@ export class Speaker {
     if (run.ctl.signal.aborted) throw new TtsError('cancelled')
     const file = this.deps.tempFile()
     run.files.add(file)
-    await this.deps.writeFile(file, audio.bytes)
-    return file
+    await this.deps.writeFile(file, trimWavSilence(audio.bytes))
+    return { file, gap }
   }
 
   private async drop(file: string): Promise<void> {
@@ -303,6 +336,20 @@ export class Speaker {
 /** 播放器不要占用终端的输入输出。 */
 export const quietSpawn: PlayerSpawn = (command, args) => spawn(command, args, { stdio: 'ignore' })
 
+/** 等 ms 毫秒；signal 中止时立即结束。 */
+function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve()
+    const done = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done, { once: true })
+  })
+}
+
 export function realSpeakerDeps(log: Pick<Log, 'debug' | 'warn'>): SpeakerDeps {
   return {
     createClient: (endpoint) => createTtsClient({ endpoint, fetch: globalThis.fetch }),
@@ -310,6 +357,7 @@ export function realSpeakerDeps(log: Pick<Log, 'debug' | 'warn'>): SpeakerDeps {
     tempFile: () => path.join(os.tmpdir(), `aha-speak-${randomBytes(8).toString('hex')}.wav`),
     writeFile: (file, bytes) => fs.writeFile(file, bytes, { flag: 'wx', mode: 0o600 }),
     removeFile: (file) => fs.rm(file, { force: true }),
+    sleep: abortableSleep,
     now: Date.now,
     log,
   }
@@ -468,7 +516,8 @@ export class AutoReader {
       const plan = planSpeech(text, { mode: ready.settings.read })
       if (plan.sentences.length === 0) return
       const req: SpeakRequest = {
-        sentences: plan.sentences, voice: ready.voice, settings: ready.settings, player: ready.player, owner: agent.id,
+        sentences: plan.sentences, gaps: plan.gaps, voice: ready.voice, settings: ready.settings, player: ready.player,
+        owner: agent.id,
       }
       if (s.lastKey === key) this.env.speaker.append(req)
       else this.env.speaker.speak(req)
@@ -560,7 +609,8 @@ export function speakHandler(env: SpeakEnv, auto: AutoReader): CommandHandler {
       if (!plan) return speakNoReplyReceipt()
     }
     env.speaker.speak({
-      sentences: plan.sentences, voice: ready.voice, settings: ready.settings, player: ready.player, owner: agent.id,
+      sentences: plan.sentences, gaps: plan.gaps, voice: ready.voice, settings: ready.settings, player: ready.player,
+      owner: agent.id,
     })
     return speakStartedReceipt(plan.sentences.length, plan.truncated)
   }

@@ -158,6 +158,8 @@ export interface VoiceServiceSettings {
   read: 'lines' | 'all'
   language: string
   timeoutSeconds: number
+  /** 两段要念的话之间隔着没念出来的文字时停多久（秒）；0 表示不停。 */
+  pauseSeconds: number
   /** 从 endpoint 解析出的端口；没写端口时按协议取 80 / 443。 */
   port: number
   /** endpoint 是否本机地址。 */
@@ -182,7 +184,12 @@ export const VOICE_SERVICE_DEFAULTS = {
   read: 'lines',
   language: 'chinese',
   timeoutSeconds: 120,
+  pauseSeconds: 2.5,
 } as const
+
+/** 语音 pauseSeconds 的范围（秒）。读取端与设置页表单共用。 */
+export const MIN_VOICE_PAUSE_SECONDS = 0
+export const MAX_VOICE_PAUSE_SECONDS = 10
 
 /** 语音 timeoutSeconds 的上限（秒）：再大没有意义，且乘 1000 后可能超过定时器上限。读取端与设置页表单共用。 */
 export const MAX_VOICE_TIMEOUT_SECONDS = 600
@@ -267,6 +274,11 @@ export async function loadVoiceService(
       timeoutSeconds: pick(
         'timeoutSeconds', (v): v is number => isPositiveInt(v) && v <= MAX_VOICE_TIMEOUT_SECONDS, d.timeoutSeconds,
         `应是 1 到 ${MAX_VOICE_TIMEOUT_SECONDS} 的整数`,
+      ),
+      pauseSeconds: pick(
+        'pauseSeconds',
+        (v): v is number => typeof v === 'number' && Number.isFinite(v) && v >= MIN_VOICE_PAUSE_SECONDS && v <= MAX_VOICE_PAUSE_SECONDS,
+        d.pauseSeconds, `应是 ${MIN_VOICE_PAUSE_SECONDS} 到 ${MAX_VOICE_PAUSE_SECONDS} 的数字`,
       ),
       port: url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80,
       local,

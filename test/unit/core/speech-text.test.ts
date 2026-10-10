@@ -10,7 +10,7 @@ describe('speakableText 图片行', () => {
   })
   it('只有图片行时结果为空', () => {
     expect(speakableText('![画面](<a b/c.png>)', 'lines')).toBe('')
-    expect(planSpeech('![画面](<a b/c.png>)', { mode: 'all' })).toEqual({ sentences: [], truncated: false })
+    expect(planSpeech('![画面](<a b/c.png>)', { mode: 'all' })).toEqual({ sentences: [], gaps: [], truncated: false })
   })
 })
 
@@ -103,7 +103,7 @@ describe('splitSentences', () => {
 describe('planSpeech', () => {
   it('lines 模式：去动作、去图片、切句', () => {
     const plan = planSpeech('（笑）欢迎光临，今天想喝点什么？\n![画面](<a b.png>)', { mode: 'lines' })
-    expect(plan).toEqual({ sentences: ['欢迎光临，今天想喝点什么？'], truncated: false })
+    expect(plan).toEqual({ sentences: ['欢迎光临，今天想喝点什么？'], gaps: ['none'], truncated: false })
   })
   it('总量超限时截到最后一个完整句子', () => {
     const reply = '第一句话有十个字呢。第二句话有十个字呢。第三句话有十个字呢。'
@@ -115,5 +115,43 @@ describe('planSpeech', () => {
     const plan = planSpeech('第一句话有十个字呢。', { mode: 'all', maxTotal: 10 })
     expect(plan.truncated).toBe(false)
     expect(plan.sentences).toHaveLength(1)
+  })
+})
+
+describe('planSpeech 的间隔种类', () => {
+  it('第一句没有间隔；台词（动作）台词得到 break', () => {
+    const plan = planSpeech('“欢迎光临，请坐吧。”（她擦了擦杯子）“今天想喝点什么？”', { mode: 'lines' })
+    expect(plan.sentences).toHaveLength(2)
+    expect(plan.gaps).toEqual(['none', 'break'])
+  })
+  it('星号动作与引号外的叙述同样得到 break', () => {
+    const plan = planSpeech('欢迎光临，请坐吧。*她擦了擦杯子*今天想喝点什么？', { mode: 'lines' })
+    expect(plan.gaps).toEqual(['none', 'break'])
+  })
+  it('同一段里相邻的两句得到 inline', () => {
+    const plan = planSpeech('“欢迎光临，请坐吧。今天想喝点什么？”', { mode: 'lines' })
+    expect(plan.sentences).toHaveLength(2)
+    expect(plan.gaps).toEqual(['none', 'inline'])
+  })
+  it('长句被切开的两半是 inline', () => {
+    const plan = planSpeech('甲乙丙丁戊己，庚辛壬癸子丑。', { mode: 'all', maxChars: 8 })
+    expect(plan.sentences.length).toBeGreaterThan(1)
+    expect(plan.gaps[0]).toBe('none')
+    expect(plan.gaps.slice(1).every((g) => g === 'inline')).toBe(true)
+  })
+  it('all 模式换段得到 break，同段是 inline', () => {
+    const plan = planSpeech('第一句话有十个字呢。第二句话有十个字呢。\n\n第三句话有十个字呢。', { mode: 'all' })
+    expect(plan.gaps).toEqual(['none', 'inline', 'break'])
+  })
+  it('lines 模式下换行也是 break', () => {
+    const plan = planSpeech('第一句话有十个字呢。\n第二句话有十个字呢。', { mode: 'lines' })
+    expect(plan.gaps).toEqual(['none', 'break'])
+  })
+  it('gaps 与 sentences 等长，截断后仍等长', () => {
+    const plan = planSpeech('第一句话有十个字呢。第二句话有十个字呢。第三句话有十个字呢。', { mode: 'all', maxTotal: 25 })
+    expect(plan.gaps).toEqual(['none', 'inline'])
+  })
+  it('speakableText 的结果不受标记影响', () => {
+    expect(speakableText('你好呀（笑）朋友', 'lines')).toBe('你好呀朋友')
   })
 })

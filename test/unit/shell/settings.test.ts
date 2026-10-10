@@ -195,7 +195,7 @@ describe('saveVoice / saveImage', () => {
     const NOTE = '语音服务正在运行，改动在重新启动后生效。'
     const started = (over: Record<string, unknown> = {}) => ({
       endpoint: 'http://127.0.0.1:18123', launch: 'mlx' as const, model: MODEL_06, modelAlias: '0.6b', modelsDir: '/data/voice',
-      read: 'lines' as const, language: 'chinese', timeoutSeconds: 120, port: 18123, local: true, ...over,
+      read: 'lines' as const, language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5, port: 18123, local: true, ...over,
     })
     const runningAs = async (over: Record<string, unknown> = {}) => {
       await setup(VOICE_YAML())

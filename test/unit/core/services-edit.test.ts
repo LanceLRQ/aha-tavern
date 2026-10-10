@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { MAX_VOICE_TIMEOUT_SECONDS, loadImageService, loadVoiceService } from '../../../src/core/services'
+import { MAX_VOICE_PAUSE_SECONDS, MAX_VOICE_TIMEOUT_SECONDS, loadImageService, loadVoiceService } from '../../../src/core/services'
 import {
   ServicesEditError, parseImageForm, parseVoiceForm, readServicesForm, updateServicesFile,
 } from '../../../src/core/services-edit'
@@ -106,6 +106,17 @@ describe('parseVoiceForm：入参校验', () => {
     expect(errorsOf(parseVoiceForm({ ...base, timeoutSeconds: MAX_VOICE_TIMEOUT_SECONDS + 1 }))).toHaveProperty('timeoutSeconds')
     expect(okEdit(parseVoiceForm({ ...base, timeoutSeconds: MAX_VOICE_TIMEOUT_SECONDS })).set).toMatchObject({ timeoutSeconds: MAX_VOICE_TIMEOUT_SECONDS })
     expect(errorsOf(parseVoiceForm({ ...base, timeoutSeconds: 'abc' }))).toHaveProperty('timeoutSeconds')
+  })
+
+  it('pauseSeconds：0 到上限的数字（含小数），空串恢复默认，其余拒绝', () => {
+    expect(okEdit(parseVoiceForm({ ...base, pauseSeconds: '2.5' })).set).toMatchObject({ pauseSeconds: 2.5 })
+    expect(okEdit(parseVoiceForm({ ...base, pauseSeconds: 0 })).set).toMatchObject({ pauseSeconds: 0 })
+    expect(okEdit(parseVoiceForm({ ...base, pauseSeconds: '0' })).set).toMatchObject({ pauseSeconds: 0 })
+    expect(okEdit(parseVoiceForm({ ...base, pauseSeconds: MAX_VOICE_PAUSE_SECONDS })).set).toMatchObject({ pauseSeconds: MAX_VOICE_PAUSE_SECONDS })
+    expect(okEdit(parseVoiceForm({ ...base, pauseSeconds: '' })).remove).toContain('pauseSeconds')
+    for (const bad of [-1, '-1', MAX_VOICE_PAUSE_SECONDS + 0.5, 'abc', '1e2', NaN, Infinity, true]) {
+      expect(errorsOf(parseVoiceForm({ ...base, pauseSeconds: bad }))).toHaveProperty('pauseSeconds')
+    }
   })
 
   it('页面不认识的键被忽略，不会写进文件', () => {

@@ -58,7 +58,7 @@ function FieldRow(
   } else {
     input = el('input', S.input, {
       type: def.kind === 'number' ? 'number' : 'text', value, placeholder, spellCheck: false, autoComplete: 'off',
-      onChange: (e: any) => onChange(e.target.value), ...(listId ? { list: listId } : {}),
+      onChange: (e: any) => onChange(e.target.value), ...(listId ? { list: listId } : {}), ...(def.step ? { step: def.step } : {}),
     })
   }
   return el('label', S.field, { key: def.key },

@@ -23,7 +23,7 @@ const settle = (): Promise<void> => new Promise((r) => setImmediate(r))
 const PLAYER: Player = { command: 'afplay', args: (f) => [f] }
 const SETTINGS: VoiceServiceSettings = {
   endpoint: 'http://127.0.0.1:8000', launch: 'none', model: 'm-1', modelsDir: '/models', read: 'lines',
-  language: 'chinese', timeoutSeconds: 120, port: 8000, local: true,
+  language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5, port: 8000, local: true,
 }
 const VOICE = { audio: '/ref/a.wav', text: '参考文字' }
 
@@ -44,12 +44,13 @@ interface Play {
   fail(e: unknown): void
 }
 
-function harness(opts: { auto?: boolean; honorAbort?: boolean; playIgnoresAbort?: boolean } = {}) {
+function harness(opts: { auto?: boolean; honorAbort?: boolean; playIgnoresAbort?: boolean; manualSleep?: boolean } = {}) {
   const auto = opts.auto ?? true
   const honor = opts.honorAbort ?? true
   const disk = new Map<string, Uint8Array>()
   const synths: Synth[] = []
   const plays: Play[] = []
+  const sleeps: { ms: number; aborted: boolean; end(): void }[] = []
   const endpoints: string[] = []
   let seq = 0
   const client = {
@@ -80,6 +81,13 @@ function harness(opts: { auto?: boolean; honorAbort?: boolean; playIgnoresAbort?
         o.signal?.addEventListener('abort', () => { p.aborted = true; if (!opts.playIgnoresAbort) reject(new PlayerError('cancelled')) }, { once: true })
         if (auto) p.end()
       }),
+    sleep: (ms, signal) =>
+      new Promise<void>((resolve) => {
+        const rec = { ms, aborted: false, end: resolve }
+        sleeps.push(rec)
+        signal.addEventListener('abort', () => { rec.aborted = true; resolve() }, { once: true })
+        if (!opts.manualSleep) resolve()
+      }),
     tempFile: () => `/tmp/aha-${++seq}.wav`,
     writeFile: async (f, b) => { disk.set(f, b) },
     removeFile: async (f) => { disk.delete(f) },
@@ -87,11 +95,133 @@ function harness(opts: { auto?: boolean; honorAbort?: boolean; playIgnoresAbort?
     settleLimitMs: 50,
     log,
   }
-  return { deps, disk, synths, plays, endpoints, client, log }
+  return { deps, disk, synths, plays, sleeps, endpoints, client, log }
 }
 
 const req = (sentences: string[], over: Partial<SpeakRequest> = {}): SpeakRequest => ({
   sentences, voice: VOICE, settings: SETTINGS, player: PLAYER, owner: 's1', ...over,
+})
+
+describe('Speaker 句间停顿', () => {
+  const settings = { ...SETTINGS, pauseSeconds: 2.5 }
+  const gapped = (sentences: string[], gaps: ('none' | 'break' | 'inline')[], over: Partial<SpeakRequest> = {}) =>
+    req(sentences, { gaps, settings, ...over })
+
+  it('按间隔种类等待：break 等 pauseSeconds，inline 等 0.5 秒，第一句不等；先等再播', async () => {
+    const h = harness({ manualSleep: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(gapped(['一一一', '二二二', '三三三', '四四四'], ['none', 'break', 'inline', 'break']))
+    await settle()
+    expect(h.plays).toHaveLength(1)
+    expect(h.sleeps).toHaveLength(1)
+    expect(h.sleeps[0]!.ms).toBe(2500)
+    expect(h.plays).toHaveLength(1) // 等待中，第二句没开始
+    h.sleeps[0]!.end()
+    await settle()
+    expect(h.plays).toHaveLength(2)
+    expect(h.sleeps.map((x) => x.ms)).toEqual([2500, 500])
+    h.sleeps[1]!.end()
+    await settle()
+    h.sleeps[2]!.end()
+    await settle()
+    expect(h.sleeps.map((x) => x.ms)).toEqual([2500, 500, 2500])
+    expect(h.plays).toHaveLength(4)
+  })
+
+  it('等待期间合成继续领先一句', async () => {
+    const h = harness({ manualSleep: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(gapped(['一一一', '二二二', '三三三'], ['none', 'break', 'break']))
+    await settle()
+    expect(h.sleeps).toHaveLength(1)
+    expect(h.synths.map((s) => s.text)).toEqual(['一一一', '二二二', '三三三'])
+    expect(h.plays).toHaveLength(1)
+    await sp.stop()
+  })
+
+  it('等待中 stop：立即结束，不播放下一句，临时文件被删', async () => {
+    const h = harness({ manualSleep: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(gapped(['一一一', '二二二'], ['none', 'break']))
+    await settle()
+    expect(h.sleeps).toHaveLength(1)
+    await sp.stop()
+    expect(h.sleeps[0]!.aborted).toBe(true)
+    expect(h.plays).toHaveLength(1)
+    expect(h.disk.size).toBe(0)
+    expect(sp.owner()).toBeNull()
+  })
+
+  it('等待中新的一段顶掉旧段：旧段不再播放，新段不必等满旧段的停顿', async () => {
+    const h = harness({ manualSleep: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(gapped(['一一一', '二二二'], ['none', 'break']))
+    await settle()
+    sp.speak(gapped(['新新新'], ['none']))
+    await settle()
+    expect(h.sleeps[0]!.aborted).toBe(true)
+    expect(h.plays.map((p) => p.file)).toHaveLength(2) // 旧段第一句 + 新段第一句
+    expect(h.synths.map((x) => x.text)).toEqual(['一一一', '二二二', '新新新'])
+  })
+
+  it('pauseSeconds 为 0 时 break 不等待，inline 仍等 0.5 秒', async () => {
+    const h = harness()
+    const sp = new Speaker(h.deps)
+    sp.speak(gapped(['一一一', '二二二', '三三三'], ['none', 'break', 'inline'], { settings: { ...settings, pauseSeconds: 0 } }))
+    await settle()
+    expect(h.plays).toHaveLength(3)
+    expect(h.sleeps.map((x) => x.ms)).toEqual([500])
+  })
+
+  it('没有 gaps 时一律不等待', async () => {
+    const h = harness()
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['一一一', '二二二']))
+    await settle()
+    expect(h.plays).toHaveLength(2)
+    expect(h.sleeps).toHaveLength(0)
+  })
+
+  it('append 接到正在念的后面时，第一句按 break 处理', async () => {
+    const h = harness({ auto: false, manualSleep: true })
+    const sp = new Speaker(h.deps)
+    sp.speak(gapped(['一一一'], ['none']))
+    await settle()
+    h.synths[0]!.done()
+    await settle()
+    sp.append(gapped(['二二二', '三三三'], ['none', 'inline']))
+    await settle()
+    h.synths[1]!.done()
+    h.plays[0]!.end()
+    await settle()
+    expect(h.sleeps.map((x) => x.ms)).toEqual([2500])
+    h.sleeps[0]!.end()
+    await settle()
+    h.synths[2]!.done()
+    h.plays[1]!.end()
+    await settle()
+    expect(h.sleeps.map((x) => x.ms)).toEqual([2500, 500])
+    await sp.stop()
+  })
+
+  it('合成结果写盘前裁掉首尾静音', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['一一一']))
+    await settle()
+    const wav = new Uint8Array(44 + 2000)
+    const t = (at: number, str: string) => [...str].forEach((c, i) => (wav[at + i] = c.charCodeAt(0)))
+    const dv = new DataView(wav.buffer)
+    t(0, 'RIFF'); dv.setUint32(4, wav.length - 8, true); t(8, 'WAVE'); t(12, 'fmt '); dv.setUint32(16, 16, true)
+    dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, 1000, true); dv.setUint32(28, 2000, true)
+    dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); t(36, 'data'); dv.setUint32(40, 2000, true)
+    for (let i = 400; i < 420; i++) dv.setInt16(44 + i * 2, 9000, true)
+    h.synths[0]!.done(wav)
+    await settle()
+    const written = h.disk.get(h.plays[0]!.file)!
+    expect(written.length).toBe(44 + (20 + 60) * 2)
+    await sp.stop()
+  })
 })
 
 describe('Speaker', () => {
@@ -575,6 +705,13 @@ describe('朗读命令：开始朗读', () => {
     expect(w.speaker.owner()).toBe('s1')
     await settle()
     expect(w.h.synths.map((s) => s.text).join('')).toBe(REPLY)
+  })
+  it('台词之间隔着动作描写：两段之间停配置的秒数，同段的两句只停半秒', async () => {
+    const w = await world({ auto: true })
+    await w.invoke('欢迎光临，请坐吧。今天想喝点什么？（她擦了擦杯子）慢慢选，不着急的。')
+    await settle()
+    expect(w.h.plays).toHaveLength(3)
+    expect(w.h.sleeps.map((x) => x.ms)).toEqual([500, 2500])
   })
   it('没有任何角色的话可念：说明', async () => {
     const w = await world()

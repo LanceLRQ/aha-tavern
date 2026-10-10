@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  MAX_VOICE_TIMEOUT_SECONDS,
+  MAX_VOICE_PAUSE_SECONDS, MAX_VOICE_TIMEOUT_SECONDS,
   VOICE_DESIGN_MODEL,
   VOICE_MODELS,
   VOICE_SERVICE_DEFAULTS,
@@ -263,6 +263,30 @@ describe('loadVoiceService：timeoutSeconds 封顶', () => {
   })
 })
 
+describe('loadVoiceService：pauseSeconds', () => {
+  const pause = async (v: string) => voiceOk(await loadVoice(`voice:\n  endpoint: http://127.0.0.1:1\n  pauseSeconds: ${v}\n`))
+  it('没写用默认 2.5，且不记问题', async () => {
+    const r = voiceOk(await loadVoice('voice:\n  endpoint: http://127.0.0.1:1\n'))
+    expect(r.settings.pauseSeconds).toBe(2.5)
+    expect(r.problems).toEqual([])
+  })
+  it('0 到 10 之间的数字（含小数）采用', async () => {
+    for (const [text, n] of [['0', 0], ['3', 3], ['1.5', 1.5], [String(MAX_VOICE_PAUSE_SECONDS), MAX_VOICE_PAUSE_SECONDS]] as const) {
+      const r = await pause(text)
+      expect(r.settings.pauseSeconds).toBe(n)
+      expect(r.problems).toEqual([])
+    }
+  })
+  it('非数字或越界用默认值并记一条问题，不回显字段值', async () => {
+    for (const text of ['abc', '-1', '10.5', '100', '"3"', '.nan']) {
+      const r = await pause(text)
+      expect(r.settings.pauseSeconds).toBe(2.5)
+      expect(r.problems).toHaveLength(1)
+      expect(r.problems[0]).toContain('voice.pauseSeconds')
+    }
+  })
+})
+
 describe('loadVoiceService：已配置', () => {
   it('只给 endpoint：其余取默认值', async () => {
     const { settings, problems } = voiceOk(await loadVoice('voice:\n  endpoint: http://127.0.0.1:18123/\n'))
@@ -277,10 +301,11 @@ describe('loadVoiceService：已配置', () => {
       read: 'lines',
       language: 'chinese',
       timeoutSeconds: 120,
+      pauseSeconds: 2.5,
       port: 18123,
       local: true,
     })
-    expect(VOICE_SERVICE_DEFAULTS).toMatchObject({ launch: 'none', model: '0.6b', read: 'lines', language: 'chinese', timeoutSeconds: 120 })
+    expect(VOICE_SERVICE_DEFAULTS).toMatchObject({ launch: 'none', model: '0.6b', read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5 })
     expect(VOICE_DESIGN_MODEL).toBe('mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-8bit')
   })
 

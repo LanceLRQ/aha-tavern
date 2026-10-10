@@ -35,7 +35,7 @@ function makeWav(seconds: number): Buffer {
 const MODEL = 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit'
 const settings = (over: Partial<VoiceServiceSettings> = {}): VoiceServiceSettings => ({
   endpoint: 'http://127.0.0.1:18123', launch: 'mlx', model: MODEL, modelAlias: '0.6b', modelsDir: '/data/voice',
-  read: 'lines', language: 'chinese', timeoutSeconds: 120, port: 18123, local: true, ...over,
+  read: 'lines', language: 'chinese', timeoutSeconds: 120, pauseSeconds: 2.5, port: 18123, local: true, ...over,
 })
 const PLAYER = { command: 'afplay', args: (f: string) => [f] }
 const DESC = '二十多岁的年轻女声，音色清亮，语速偏快，带一点狡黠的笑意'

@@ -34,6 +34,7 @@ beforeEach(async () => {
     read: 'lines',
     language: 'chinese',
     timeoutSeconds: 120,
+    pauseSeconds: 2.5,
     port: 8000,
     local: true,
   }
