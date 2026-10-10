@@ -168,7 +168,7 @@ function capList<T>(items: T[]): { shown: T[]; more: string } {
   return items.length > LIST_MAX ? { shown: items.slice(0, LIST_MAX), more: `等 ${items.length} 项` } : { shown: items, more: '' }
 }
 
-interface DoctorItem {
+export interface DoctorItem {
   mark: string
   text: string
   /** 模型下载地址 */
@@ -189,7 +189,7 @@ export function drawDoctorIssues(r: DrawDoctorReport): string[] {
   return out
 }
 
-function drawDoctorItems(r: DrawDoctorReport): DoctorItem[] {
+export function drawDoctorItems(r: DrawDoctorReport): DoctorItem[] {
   const items: DoctorItem[] = []
   const problems = (): void => {
     const { shown, more } = capList(r.problems)

@@ -3,9 +3,12 @@
 /** 模式：筹备 / 单聊。 */
 export type TavernMode = 'setup' | 'chat'
 
+/** 插件实例的角色：两个酒馆模式，外加挂在根层、只为"插件"页的设置页服务的 settings。 */
+export type PluginMode = TavernMode | 'settings'
+
 export interface TavernConfig {
-  /** 本插件实例挂在哪个酒馆模式里。 */
-  mode: TavernMode
+  /** 本插件实例挂在哪个酒馆模式里；settings 是根层的设置页实例，不注册命令与工具。 */
+  mode: PluginMode
   /** 主题（文案风格），默认 fools。 */
   theme: string
   /** 世界观预算（字）。 */
@@ -45,14 +48,14 @@ export const DEFAULTS: TavernConfig = {
   servicesPath: '~/.dsh/aha-tavern/services.yaml',
 }
 
-const MODES: readonly TavernMode[] = ['setup', 'chat']
+const MODES: readonly PluginMode[] = ['setup', 'chat', 'settings']
 
 /** 把用户配置与默认值合并：未知字段丢弃，类型不对的字段回落默认值。 */
 export function resolveConfig(input: unknown, env: Record<string, string | undefined> = process.env): TavernConfig {
   const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
   const out: TavernConfig = { ...DEFAULTS }
 
-  if (MODES.includes(raw.mode as TavernMode)) out.mode = raw.mode as TavernMode
+  if (MODES.includes(raw.mode as PluginMode)) out.mode = raw.mode as PluginMode
   if (typeof raw.theme === 'string' && raw.theme) out.theme = raw.theme
   // 默认的登记表与服务配置跟随酒馆数据目录；用户显式配置的路径优先
   const dataDir = tavernDataDir(env)

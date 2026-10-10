@@ -7,6 +7,8 @@
   "main": "./dist/index.js",
   "exports": {
     ".": "./dist/index.js",
+    "./typert": "./dist/typert.host.js",
+    "./client": "./dist/client.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -21,6 +23,14 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ],
+      "platform": "web"
     }
   },
   "scripts": {
@@ -32,12 +42,14 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.4",
     "@deepseek-ai/dsh-llm": ">=0.2.0-rc.2 <0.3.0-0",
-    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0-0"
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0-0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.0-rc.2 <0.3.0-0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.0",

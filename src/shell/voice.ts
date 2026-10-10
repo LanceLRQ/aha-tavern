@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { hasUserInfo, VOICE_MODELS, type VoiceServiceSettings } from '../core/services'
 import { createTtsClient, TtsError, type TtsClient } from '../core/tts'
 import * as server from '../core/voice-server'
-import type { VoiceServerDeps } from '../core/voice-server'
+import type { StopResult, VoiceServerDeps, VoiceServerInfo } from '../core/voice-server'
 import { answerItem, isAbort, type AskItem } from './confirm'
 import type { CommandHandler, CommandReply, Invocation } from './context'
 import { redactUrls } from './draw-doctor'
@@ -235,7 +235,32 @@ const MODEL_SIZE: Record<string, string> = {
 
 const modelLabel = (s: VoiceServiceSettings): string => s.modelAlias ?? s.model
 
+/** 启动前的规划：要么已经有结论（回执），要么可以开始，并附上需要用户确认的安装/下载说明。 */
+export type StartPlan =
+  | { kind: 'reply'; reply: Reply }
+  | { kind: 'go'; install: boolean; offline: boolean; /** 需要安装或下载时的确认说明（Markdown）；不需要为 null。 */ card: string | null }
+
+/** 语音服务当前状态的结构化描述；命令的回执与设置页都从它出。 */
+export type VoiceStatusDetail =
+  | { phase: 'starting'; stage: VoiceStage; seconds: number }
+  | { phase: 'failed'; reason: string; info: VoiceServerInfo }
+  | { phase: 'idle'; reachable: boolean; ours: boolean; busy: boolean; loaded: boolean | null; info: VoiceServerInfo }
+
+/** `/aha 语音` 背后的操作集：命令与设置页走同一套，不各写一份。 */
+export interface VoiceController {
+  handler: CommandHandler
+  planStart(rt: Runtime, s: VoiceServiceSettings): Promise<StartPlan>
+  /** 开始后台启动并最多等 START_WAIT_MS；返回最终回执，或"正在启动"。 */
+  launchAndWait(rt: Runtime, s: VoiceServiceSettings, plan: Extract<StartPlan, { kind: 'go' }>): Promise<Reply>
+  statusOf(rt: Runtime, s: VoiceServiceSettings): Promise<VoiceStatusDetail>
+  stopService(rt: Runtime, s: VoiceServiceSettings): Promise<StopResult['status']>
+}
+
 export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = realVoiceOps): CommandHandler {
+  return createVoiceController(state, ops).handler
+}
+
+export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps = realVoiceOps): VoiceController {
   async function askStart(inv: Invocation, item: AskItem): Promise<'go' | 'declined' | 'cancelled' | 'busy' | 'no-ui'> {
     const { rt, agent, signal } = inv
     const ask = rt.cards?.getAsk()
@@ -360,28 +385,55 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     return launch
   }
 
-  async function startFlow(inv: Invocation, s: VoiceServiceSettings): Promise<Reply> {
-    const { rt } = inv
+  async function planStart(rt: Runtime, s: VoiceServiceSettings): Promise<StartPlan> {
+    const reply = (r: Reply): StartPlan => ({ kind: 'reply', reply: r })
+    // 再次启动前清掉上次的结果
+    const prev = launches.get(s.modelsDir)
+    if (prev?.finished) launches.delete(s.modelsDir)
     const deps = rt.voiceServerDeps()
     const running = launches.get(s.modelsDir)
-    if (running && !running.finished) return voiceBusyReceipt()
+    if (running && !running.finished) return reply(voiceBusyReceipt())
     const info = await ops.inspect(s, deps, { sizes: false })
-    if (info.reachable) return voiceAlreadyRunningReceipt(info.owned !== null)
-    if (s.launch !== 'mlx') return voiceSelfLaunchReceipt('launch')
-    if (!info.supported) return voiceSelfLaunchReceipt('platform')
-    if (!info.uv) return voiceNoUvReceipt()
-    if (info.busy) return voiceBusyReceipt()
+    if (info.reachable) return reply(voiceAlreadyRunningReceipt(info.owned !== null))
+    if (s.launch !== 'mlx') return reply(voiceSelfLaunchReceipt('launch'))
+    if (!info.supported) return reply(voiceSelfLaunchReceipt('platform'))
+    if (!info.uv) return reply(voiceNoUvReceipt())
+    if (info.busy) return reply(voiceBusyReceipt())
 
     const needModel = !info.modelDownloaded
-    if (!info.envInstalled || needModel) {
-      const detail = voiceCardMarkdown({
-        env: !info.envInstalled,
-        model: needModel ? { name: modelLabel(s), size: MODEL_SIZE[s.model] ?? '大小未知' } : null,
-        modelsDir: s.modelsDir,
-        hfEndpoint: s.hfEndpoint ? redactUrls(s.hfEndpoint) : undefined,
-      })
+    const card = !info.envInstalled || needModel
+      ? voiceCardMarkdown({
+          env: !info.envInstalled,
+          model: needModel ? { name: modelLabel(s), size: MODEL_SIZE[s.model] ?? '大小未知' } : null,
+          modelsDir: s.modelsDir,
+          hfEndpoint: s.hfEndpoint ? redactUrls(s.hfEndpoint) : undefined,
+        })
+      : null
+    // 权重已在本地时让服务离线启动，免得去查连不上的仓库
+    return { kind: 'go', install: !info.envInstalled, offline: info.modelDownloaded, card }
+  }
+
+  async function launchAndWait(rt: Runtime, s: VoiceServiceSettings, plan: Extract<StartPlan, { kind: 'go' }>): Promise<Reply> {
+    // 占位必须与 beginLaunch 之间没有 await：inspect 与卡片都可能挂起，别的实例可能已经抢先开始
+    const raced = launches.get(s.modelsDir)
+    if (raced && !raced.finished) return voiceBusyReceipt()
+    const launch = beginLaunch(rt, s, { install: plan.install, offline: plan.offline })
+    const waitCtl = new AbortController()
+    try {
+      const early = await Promise.race([launch.done, ops.sleep(START_WAIT_MS, waitCtl.signal).then(() => null)])
+      return early ?? voiceStartingReceipt(launch.phase)
+    } finally {
+      waitCtl.abort() // 任务先结束时清掉等待的定时器
+    }
+  }
+
+  async function startFlow(inv: Invocation, s: VoiceServiceSettings): Promise<Reply> {
+    const { rt } = inv
+    const plan = await planStart(rt, s)
+    if (plan.kind === 'reply') return plan.reply
+    if (plan.card !== null) {
       const item: AskItem = {
-        id: QUESTION_ID, header: VOICE_CARD_HEADER, question: VOICE_CARD_QUESTION, detail,
+        id: QUESTION_ID, header: VOICE_CARD_HEADER, question: VOICE_CARD_QUESTION, detail: plan.card,
         options: [
           { label: VOICE_OPT_GO, description: '安装并启动，可能要几分钟，期间可以用 /aha 语音 状态 查看进度' },
           { label: VOICE_OPT_CANCEL, description: '什么都不做' },
@@ -393,31 +445,16 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
       if (choice === 'cancelled') return voiceCancelledReceipt()
       if (choice === 'declined') return voiceDeclinedReceipt()
     }
-
-    // 占位必须与 beginLaunch 之间没有 await：inspect 与卡片都可能挂起，别的实例可能已经抢先开始
-    const raced = launches.get(s.modelsDir)
-    if (raced && !raced.finished) return voiceBusyReceipt()
-    // 权重已在本地时让服务离线启动，免得去查连不上的仓库
-    const launch = beginLaunch(rt, s, { install: !info.envInstalled, offline: info.modelDownloaded })
-    const waitCtl = new AbortController()
-    try {
-      const early = await Promise.race([launch.done, ops.sleep(START_WAIT_MS, waitCtl.signal).then(() => null)])
-      return early ?? voiceStartingReceipt(launch.phase)
-    } finally {
-      waitCtl.abort() // 任务先结束时清掉等待的定时器
-    }
+    return launchAndWait(rt, s, plan)
   }
 
-  async function statusFlow(inv: Invocation, s: VoiceServiceSettings): Promise<Reply> {
-    const { rt } = inv
+  async function statusOf(rt: Runtime, s: VoiceServiceSettings): Promise<VoiceStatusDetail> {
     const last = launches.get(s.modelsDir)
     if (last && !last.finished) {
-      return voiceProgressReceipt(last.phase, Math.max(0, Math.round((ops.now() - last.startedAt) / 1000)))
+      return { phase: 'starting', stage: last.phase, seconds: Math.max(0, Math.round((ops.now() - last.startedAt) / 1000)) }
     }
     const info = await ops.inspect(s, rt.voiceServerDeps(), { sizes: false })
-    if (!info.reachable && last?.outcome?.kind === 'failed') {
-      return voiceLastFailedReceipt(last.outcome.reason, s.modelsDir)
-    }
+    if (!info.reachable && last?.outcome?.kind === 'failed') return { phase: 'failed', reason: last.outcome.reason, info }
     let loaded: boolean | null = null
     if (info.reachable) {
       try {
@@ -426,12 +463,25 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
         loaded = null
       }
     }
-    return voiceStatusReceipt({
-      reachable: info.reachable, ours: info.owned !== null, busy: info.busy, model: modelLabel(s), loaded,
-    })
+    return { phase: 'idle', reachable: info.reachable, ours: info.owned !== null, busy: info.busy, loaded, info }
   }
 
-  return async (inv) => {
+  async function statusFlow(inv: Invocation, s: VoiceServiceSettings): Promise<Reply> {
+    const d = await statusOf(inv.rt, s)
+    if (d.phase === 'starting') return voiceProgressReceipt(d.stage, d.seconds)
+    if (d.phase === 'failed') return voiceLastFailedReceipt(d.reason, s.modelsDir)
+    return voiceStatusReceipt({ reachable: d.reachable, ours: d.ours, busy: d.busy, model: modelLabel(s), loaded: d.loaded })
+  }
+
+  async function stopService(rt: Runtime, s: VoiceServiceSettings): Promise<StopResult['status']> {
+    abortLaunch(s.modelsDir)
+    const r = await ops.stop(s, rt.voiceServerDeps())
+    if (r.status === 'stopped' && state.started?.settings.modelsDir === s.modelsDir) state.started = null
+    if (r.status === 'stopped') startOffline.delete(s.modelsDir)
+    return r.status
+  }
+
+  const handler: CommandHandler = async (inv) => {
     const action = parseVoiceArgs(inv.args)
     if (action === 'usage') return { kind: 'success', text: VOICE_USAGE_TEXT }
     const { rt } = inv
@@ -443,18 +493,11 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
     if (hasUserInfo(s.endpoint)) return voiceUserInfoReceipt()
 
     if (action === 'status') return statusFlow(inv, s)
-    if (action === 'stop') {
-      abortLaunch(s.modelsDir)
-      const r = await ops.stop(s, rt.voiceServerDeps())
-      if (r.status === 'stopped' && state.started?.settings.modelsDir === s.modelsDir) state.started = null
-      if (r.status === 'stopped') startOffline.delete(s.modelsDir)
-      return voiceStopReceipt(r.status)
-    }
-    // 再次启动前清掉上次的结果
-    const prev = launches.get(s.modelsDir)
-    if (prev?.finished) launches.delete(s.modelsDir)
+    if (action === 'stop') return voiceStopReceipt(await stopService(rt, s))
     return startFlow(inv, s)
   }
+
+  return { handler, planStart, launchAndWait, statusOf, stopService }
 }
 
 /**
@@ -501,7 +544,9 @@ export function installVoice(rt: Runtime, ctx: Context, opts: InstallVoiceOption
   const ops = opts.ops ?? realVoiceOps
   const limit = opts.cleanupLimitMs ?? CLEANUP_LIMIT_MS
   const state: VoiceInstanceState = { started: null, launching: null }
-  rt.handlers.voice = createVoiceHandler(state, ops)
+  const controller = createVoiceController(state, ops)
+  rt.handlers.voice = controller.handler
+  rt.voice = controller
   instanceStates.set(rt, state)
 
   async function cleanup(): Promise<void> {

@@ -11,7 +11,7 @@ import type { VoiceServerDeps } from '../core/voice-server'
 import type { CommandHandler, HostTools } from './context'
 import type { AskFn, SessionGate } from './confirm'
 import type { DrawAvailability } from './draw'
-import { createVoiceServerDeps } from './voice'
+import { createVoiceServerDeps, type VoiceController } from './voice'
 
 export interface Log {
   debug(msg: string): void
@@ -41,6 +41,8 @@ export interface Runtime {
   readonly handlers: Partial<Record<CommandId, CommandHandler>>
   /** 单聊模式的画图能力判定；由 installChat 创建后赋值，自检用它刷新当前会话。 */
   drawing?: DrawAvailability
+  /** 语音服务的启停与状态操作；由 installVoice 赋值，命令与设置页共用。 */
+  voice?: VoiceController
   /** 本模式的提问服务与同会话卡片队列；由 installSetup / installChat 赋值，自检的卡片用它。 */
   cards?: { gate: SessionGate; getAsk(): AskFn | undefined }
 }
@@ -59,6 +61,9 @@ export function builtinWorkflowDirOf(entryUrl: string): string {
 export function builtinAssetsDirOf(entryUrl: string): string {
   return path.resolve(path.dirname(fileURLToPath(entryUrl)), '..', 'assets')
 }
+
+/** 语音权重目录的默认位置：酒馆数据目录下的 voice。 */
+export const defaultModelsDir = (): string => path.join(expandHome(tavernDataDir()), 'voice')
 
 const LOGGER_NAME = 'aha-tavern'
 
@@ -117,8 +122,7 @@ export function createRuntime(host: unknown, rawConfig: unknown, entryUrl: strin
   const builtinWorkflowDir = builtinWorkflowDirOf(entryUrl)
   const servicesPath = () => expandHome(config.servicesPath)
   const builtinAssetsDir = builtinAssetsDirOf(entryUrl)
-  const voiceSettings = () =>
-    loadVoiceService(servicesPath(), { defaultModelsDir: path.join(expandHome(tavernDataDir()), 'voice') })
+  const voiceSettings = () => loadVoiceService(servicesPath(), { defaultModelsDir: defaultModelsDir() })
   return {
     config, log, builtinThemeDir, builtinWorkflowDir, builtinAssetsDir, servicesPath, voiceSettings,
     voiceServerDeps: createVoiceServerDeps, tools, theme: () => themePromise, handlers: {},

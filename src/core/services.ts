@@ -184,7 +184,7 @@ export const VOICE_SERVICE_DEFAULTS = {
   timeoutSeconds: 120,
 } as const
 
-const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+export const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
 /** 读取并校验语音服务配置。问题清单只写字段名，不回显字段值。 */
 export async function loadVoiceService(
