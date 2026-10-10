@@ -79,7 +79,7 @@ export type StartResult =
   | { ok: true; pid: number; alreadyRunning: boolean }
   | {
       ok: false
-      kind: 'busy' | 'unsupported' | 'not-installed' | 'timeout' | 'exited' | 'cancelled' | 'failed'
+      kind: 'busy' | 'unsupported' | 'not-installed' | 'occupied' | 'timeout' | 'exited' | 'cancelled' | 'failed'
       detail: string
     }
 
@@ -102,6 +102,7 @@ const isApple = (d: VoiceServerDeps) => d.platform === 'darwin' && d.arch === 'a
 
 interface Active {
   ctl: AbortController
+  detach: () => void
   done: Promise<void>
   finish: () => void
 }
@@ -113,22 +114,25 @@ function begin(modelsDir: string, outer?: AbortSignal): Active | null {
   const ctl = new AbortController()
   let finish!: () => void
   const done = new Promise<void>((r) => (finish = r))
-  const entry = { ctl, done, finish }
+  const onOuter = () => ctl.abort()
+  const detach = () => outer?.removeEventListener('abort', onOuter)
+  const entry = { ctl, detach, done, finish }
   active.set(modelsDir, entry)
   if (outer?.aborted) ctl.abort()
-  else outer?.addEventListener('abort', () => ctl.abort(), { once: true })
+  else outer?.addEventListener('abort', onOuter, { once: true })
   return entry
 }
 
 function end(modelsDir: string, entry: Active): void {
   active.delete(modelsDir)
+  entry.detach()
   entry.finish()
 }
 
 // ---- 文件辅助 ----
 
 /** 递归求和；符号链接不跟随也不计数（hf 里 snapshots 指向 blobs，只数 blobs 的真实文件）。 */
-async function dirSize(dir: string): Promise<number> {
+export async function dirSize(dir: string, lstat: typeof fs.lstat = fs.lstat): Promise<number> {
   let total = 0
   let entries: import('node:fs').Dirent[]
   try {
@@ -139,8 +143,14 @@ async function dirSize(dir: string): Promise<number> {
   for (const e of entries) {
     const p = path.join(dir, e.name)
     if (e.isSymbolicLink()) continue
-    if (e.isDirectory()) total += await dirSize(p)
-    else if (e.isFile()) total += (await fs.lstat(p)).size
+    if (e.isDirectory()) total += await dirSize(p, lstat)
+    else if (e.isFile()) {
+      try {
+        total += (await lstat(p)).size
+      } catch {
+        // 遍历中文件消失，当 0
+      }
+    }
   }
   return total
 }
@@ -228,6 +238,7 @@ async function findOwned(settings: VoiceServiceSettings, deps: VoiceServerDeps):
     await removePid(settings.modelsDir)
     return null
   }
+  // 端口对不上不算自己的，也不删文件：用户改了端口后，旧服务要等看门回收或手动处理。
   return rec.port === settings.port ? rec : null
 }
 
@@ -284,12 +295,15 @@ export async function inspect(settings: VoiceServiceSettings, deps: VoiceServerD
   }
 }
 
-const NETWORK_HINT = /dns|lookup address|network|connection|connect|timed out|timeout|unreachable|resolve|tls|ssl|proxy/i
+const NETWORK_HINT =
+  /timed out|connection refused|connection reset|dns|failed to fetch|network is unreachable|tls|certificate/i
 
 interface StepResult {
   code: number | null
   aborted: boolean
   spawnFailed: boolean
+  /** 可执行文件不存在。 */
+  missing: boolean
   output: string
 }
 
@@ -305,7 +319,21 @@ function runStep(
     let output = ''
     let aborted = false
     let spawnFailed = false
-    const child = deps.spawn(cmd, args, { env: deps.env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+    let missing = false
+    let finished = false
+    let child: ReturnType<typeof nodeSpawn>
+    try {
+      child = deps.spawn(cmd, args, { env: deps.env as NodeJS.ProcessEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch (e) {
+      resolve({
+        code: null,
+        aborted: false,
+        spawnFailed: true,
+        missing: (e as NodeJS.ErrnoException).code === 'ENOENT',
+        output: String(e),
+      })
+      return
+    }
     const pending: Record<string, string> = {}
     const feed = (tag: string) => (chunk: Buffer | string) => {
       const text = (pending[tag] ?? '') + String(chunk)
@@ -319,16 +347,22 @@ function runStep(
     const onAbort = () => {
       aborted = true
       child.kill('SIGTERM')
+      // 3 秒后仍没退出就强制结束，免得 stop 一直等
+      void deps.sleep(KILL_POLL_MS * KILL_POLLS).then(() => {
+        if (!finished) child.kill('SIGKILL')
+      })
     }
     if (signal.aborted) onAbort()
     else signal.addEventListener('abort', onAbort, { once: true })
     const done = (code: number | null) => {
+      finished = true
       signal.removeEventListener('abort', onAbort)
       for (const rest of Object.values(pending)) if (rest) emit(rest)
-      resolve({ code, aborted: aborted || signal.aborted, spawnFailed, output })
+      resolve({ code, aborted: aborted || signal.aborted, spawnFailed, missing, output })
     }
     child.on('error', (e) => {
       spawnFailed = true
+      missing = (e as NodeJS.ErrnoException).code === 'ENOENT'
       output += String(e)
       done(null)
     })
@@ -358,14 +392,14 @@ export async function install(
       chain = chain.then(() => fs.appendFile(logPath(dir), line + '\n')).catch(() => undefined)
     }
     const steps: string[][] = [
-      ['venv', '--python', '3.12', envDir(dir)],
+      ['venv', '--clear', '--python', '3.12', envDir(dir)],
       ['pip', 'install', '--python', pythonPath(dir), `mlx-audio[server]==${MLX_AUDIO_VERSION}`],
     ]
     for (const args of steps) {
       const r = await runStep(deps, uv, args, entry.ctl.signal, emit)
       await chain
       if (r.aborted) return { ok: false, kind: 'cancelled', detail: '' }
-      if (r.spawnFailed) return { ok: false, kind: 'no-uv', detail: r.output }
+      if (r.spawnFailed) return { ok: false, kind: r.missing ? 'no-uv' : 'failed', detail: r.output }
       if (r.code !== 0) {
         return { ok: false, kind: NETWORK_HINT.test(r.output) ? 'network' : 'failed', detail: r.output }
       }
@@ -393,6 +427,8 @@ export async function start(
     const owned = await findOwned(settings, deps)
     if (owned) return { ok: true, pid: owned.pid, alreadyRunning: true }
     if (signal.aborted) return { ok: false, kind: 'cancelled', detail: '' }
+    // 端口上已有别的服务在应答：不抢，交给调用方说明
+    if (await probeOk(settings, deps, PROBE_MS)) return { ok: false, kind: 'occupied', detail: '' }
 
     try {
       if ((await fs.stat(logPath(dir))).size > LOG_MAX_BYTES) await fs.truncate(logPath(dir), 0)
@@ -402,6 +438,7 @@ export async function start(
     const fd = await fs.open(logPath(dir), 'a')
     let exited = false
     let pid: number | undefined
+    let spawnError = ''
     try {
       const env: Record<string, string | undefined> = { ...deps.env, HF_HOME: hfDir(dir), PYTHONUNBUFFERED: '1' }
       if (settings.hfEndpoint) env.HF_ENDPOINT = settings.hfEndpoint
@@ -413,9 +450,12 @@ export async function start(
       child.on('exit', () => (exited = true))
       child.on('error', () => (exited = true))
       pid = child.pid
+    } catch (e) {
+      spawnError = String(e)
     } finally {
       await fd.close()
     }
+    if (spawnError) return { ok: false, kind: 'failed', detail: spawnError.slice(0, DETAIL_MAX) }
     if (pid === undefined) return { ok: false, kind: 'exited', detail: await logTail(dir) }
     await atomicWrite(
       pidPath(dir),

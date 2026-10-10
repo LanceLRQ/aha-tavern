@@ -7,6 +7,7 @@ import type { VoiceServiceSettings } from '../../../src/core/services'
 import {
   MLX_AUDIO_VERSION,
   WATCHDOG_SCRIPT,
+  dirSize,
   inspect,
   install,
   modelDownloaded,
@@ -263,7 +264,7 @@ describe('start', () => {
   it('成功：参数、环境变量、pid 文件', async () => {
     await installEnvFiles()
     settings.hfEndpoint = 'https://hf-mirror.example'
-    const h = harness({ probe: (n) => n >= 2 })
+    const h = harness({ probe: (n) => n >= 3 })
     const r = await start(settings, h.deps)
     expect(r).toEqual({ ok: true, pid: 4242, alreadyRunning: false })
     const call = h.spawned[0]!
@@ -282,12 +283,12 @@ describe('start', () => {
     const rec = JSON.parse(await fs.readFile(pidFile(), 'utf8'))
     expect(rec).toMatchObject({ pid: 4242, port: 8000, parentPid: 100 })
     expect(typeof rec.startedAt).toBe('number')
-    expect(h.probeCalls).toBe(3)
+    expect(h.probeCalls).toBe(4)
   })
 
   it('没有 hfEndpoint 时不设 HF_ENDPOINT', async () => {
     await installEnvFiles()
-    const h = harness({ probe: () => true })
+    const h = harness({ probe: (n) => n >= 1 })
     await start(settings, h.deps)
     const env = h.spawned[0]!.opts.env as Record<string, string>
     expect('HF_ENDPOINT' in env).toBe(false)
@@ -364,7 +365,7 @@ describe('start', () => {
   it('日志超过 1MB 先清空', async () => {
     await installEnvFiles()
     await fs.writeFile(logFile(), 'x'.repeat(1024 * 1024 + 1))
-    await start(settings, harness({ probe: () => true }).deps)
+    await start(settings, harness({ probe: (n) => n >= 1 }).deps)
     expect((await fs.stat(logFile())).size).toBe(0)
   })
 
@@ -379,14 +380,39 @@ describe('start', () => {
     expect((await inspect(settings, h.deps)).busy).toBe(false)
   })
 
-  it('stop 会取消进行中的 start', async () => {
+  it('stop 在探测轮询中取消 start：结束进程、删 pid 文件，不重复 kill', async () => {
     await installEnvFiles()
     const h = harness()
-    const pending = start(settings, h.deps)
-    const r = await stop(settings, h.deps)
-    expect(r.status).toBe('stopped')
-    expect(await pending).toMatchObject({ ok: false, kind: 'cancelled' })
+    let stopped: ReturnType<typeof stop> | undefined
+    h.onSleep.push(() => {
+      stopped = stop(settings, h.deps)
+    })
+    const r = await start(settings, h.deps)
+    expect(r).toMatchObject({ ok: false, kind: 'cancelled' })
+    expect(h.spawned).toHaveLength(1)
+    expect(await stopped).toMatchObject({ status: 'stopped' })
+    expect(h.signals).toEqual([[4242, 'SIGTERM']])
     expect(await exists(pidFile())).toBe(false)
+  })
+
+  it('端口上已有别的服务：不启动，返回 occupied', async () => {
+    await installEnvFiles()
+    const h = harness({ probe: () => true })
+    expect(await start(settings, h.deps)).toMatchObject({ ok: false, kind: 'occupied' })
+    expect(h.spawned).toHaveLength(0)
+  })
+
+  it('spawn 同步抛错：返回 failed，日志 fd 已关闭', async () => {
+    await installEnvFiles()
+    const h = harness()
+    h.deps.spawn = (() => {
+      throw Object.assign(new Error('spawn EACCES'), { code: 'EACCES' })
+    }) as unknown as VoiceServerDeps['spawn']
+    const r = await start(settings, h.deps)
+    expect(r).toMatchObject({ ok: false, kind: 'failed' })
+    expect(await exists(pidFile())).toBe(false)
+    // 目录能照常清理说明没有遗留句柄冲突；busy 也已释放
+    expect((await inspect(settings, h.deps)).busy).toBe(false)
   })
 })
 
@@ -446,7 +472,7 @@ describe('install', () => {
     const r = await install(settings, h.deps, { onLog: (l) => lines.push(l) })
     expect(r).toEqual({ ok: true })
     expect(h.spawned.map((s) => [s.cmd, s.args])).toEqual([
-      ['/usr/local/bin/uv', ['venv', '--python', '3.12', path.join(dir, 'env')]],
+      ['/usr/local/bin/uv', ['venv', '--clear', '--python', '3.12', path.join(dir, 'env')]],
       [
         '/usr/local/bin/uv',
         ['pip', 'install', '--python', path.join(dir, 'env', 'bin', 'python'), `mlx-audio[server]==${MLX_AUDIO_VERSION}`],
@@ -530,5 +556,64 @@ describe('install', () => {
     })
     await install(settings, h.deps)
     expect(await exists(path.join(dir, 'env.installed'))).toBe(false)
+  })
+
+  it('env 目录已存在、标记不存在：能走完安装', async () => {
+    await fs.mkdir(path.join(dir, 'env', 'bin'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'env', 'bin', 'python'), '')
+    const h = harness({ behave: (c) => ok(c) })
+    expect(await install(settings, h.deps)).toEqual({ ok: true })
+    expect(h.spawned[0]!.args).toContain('--clear')
+    expect(await exists(path.join(dir, 'env.installed'))).toBe(true)
+  })
+
+  it('spawn 同步抛错：ENOENT 归 no-uv，其他归 failed', async () => {
+    const make = (code: string) => {
+      const h = harness()
+      h.deps.spawn = (() => {
+        throw Object.assign(new Error('x'), { code })
+      }) as unknown as VoiceServerDeps['spawn']
+      return h
+    }
+    expect(await install(settings, make('ENOENT').deps)).toMatchObject({ ok: false, kind: 'no-uv' })
+    expect(await install(settings, make('EACCES').deps)).toMatchObject({ ok: false, kind: 'failed' })
+  })
+
+  it('取消后 SIGTERM 不管用就补 SIGKILL', async () => {
+    const ctl = new AbortController()
+    const h = harness({
+      behave: (c) => {
+        c.kill.mockImplementation((sig: string) => {
+          if (sig === 'SIGKILL') setImmediate(() => c.emit('close', null, 'SIGKILL'))
+        })
+        setImmediate(() => ctl.abort())
+      },
+    })
+    const r = await install(settings, h.deps, { signal: ctl.signal })
+    expect(r).toMatchObject({ ok: false, kind: 'cancelled' })
+    expect(h.children[0]!.kill.mock.calls.map((c) => c[0])).toEqual(['SIGTERM', 'SIGKILL'])
+  })
+
+  it('"resolved" 之类的依赖解析报错不算网络问题', async () => {
+    const h = harness({
+      behave: (c) =>
+        setImmediate(() => {
+          c.stderr.emit('data', Buffer.from('error: No solution found when resolving dependencies'))
+          c.emit('close', 1, null)
+        }),
+    })
+    expect(await install(settings, h.deps)).toMatchObject({ ok: false, kind: 'failed' })
+  })
+})
+
+describe('dirSize', () => {
+  it('遍历中 lstat 失败当 0，不抛错', async () => {
+    await fs.writeFile(path.join(dir, 'a'), 'xxxx')
+    await fs.writeFile(path.join(dir, 'b'), 'yy')
+    const lstat = (async (p: string) => {
+      if (String(p).endsWith('a')) throw Object.assign(new Error('gone'), { code: 'ENOENT' })
+      return fs.lstat(p)
+    }) as unknown as typeof fs.lstat
+    expect(await dirSize(dir, lstat)).toBe(2)
   })
 })
