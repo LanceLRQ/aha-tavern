@@ -158,7 +158,7 @@ export interface VoiceServiceSettings {
   read: 'lines' | 'all'
   language: string
   timeoutSeconds: number
-  /** 两段要念的话之间隔着没念出来的文字时停多久（秒）；0 表示不停。 */
+  /** 两段要念的话之间隔着约 12 个没念出来的字时停多久（秒）；实际停顿随字数平滑变化，见 breakPauseSeconds；0 表示不停。 */
   pauseSeconds: number
   /** 从 endpoint 解析出的端口；没写端口时按协议取 80 / 443。 */
   port: number
