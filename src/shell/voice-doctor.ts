@@ -31,6 +31,8 @@ export interface VoiceDoctorReport {
     credentials?: boolean
     /** 连得上时：谁启动的；连不上时不适用（无此字段）。 */
     ours?: 'plugin' | 'external'
+    /** 服务不在本机：它需要能读到这台机器上角色的参考录音路径（提醒，不算失败项）。 */
+    remote?: boolean
     /** 正在启动；stage 与 seconds 来自本插件的启动记录，别处发起的启动没有。 */
     launching?: { stage?: VoiceStage; seconds?: number }
     /** 连不上且上次启动失败时的简短原因。 */
@@ -50,7 +52,7 @@ export interface VoiceDoctorReport {
   player?: { found: boolean; name?: string }
   /** 仅在单聊·聊天中有。 */
   voice?: { present: boolean }
-  lastError?: { kind: string; at: number }
+  lastError?: { kind: string; at: number; remote?: boolean }
 }
 
 export interface VoiceDoctorDeps {
@@ -104,6 +106,7 @@ export async function checkVoice(deps: VoiceDoctorDeps, opts: VoiceDoctorOptions
   const running = snap !== null && !snap.finished
   const service: NonNullable<VoiceDoctorReport['service']> = { host, connected: info.reachable }
   if (info.reachable) service.ours = info.owned ? 'plugin' : 'external'
+  if (!s.local) service.remote = true
   // 连得上也可能还在启动（模型下载、加载中），此时不算可用
   if (running || (!info.reachable && info.busy)) {
     service.launching = running
@@ -142,14 +145,14 @@ export async function checkVoice(deps: VoiceDoctorDeps, opts: VoiceDoctorOptions
   }
 
   const last = deps.lastSpeakError()
-  if (last) report.lastError = { kind: last.kind, at: last.at }
+  if (last) report.lastError = { kind: last.kind, at: last.at, ...(last.remote ? { remote: true } : {}) }
   stopped()
   return report
 }
 
 export type VoiceTrial =
   | { status: 'ok'; sentences: number; seconds: number }
-  | { status: 'failed'; kind: string }
+  | { status: 'failed'; kind: string; remote?: boolean }
   | { status: 'cancelled' }
 
 /**
@@ -180,7 +183,7 @@ export async function trialSpeak(deps: VoiceDoctorDeps, signal?: AbortSignal): P
     case 'ok':
       return { status: 'ok', sentences: 1, seconds: Math.max(0, Math.round((deps.now() - started) / 1000)) }
     case 'failed':
-      return { status: 'failed', kind: out.kind }
+      return { status: 'failed', kind: out.kind, ...(settings.local === false ? { remote: true } : {}) }
     case 'timeout':
       return { status: 'failed', kind: 'trial-timeout' }
     case 'stopped':

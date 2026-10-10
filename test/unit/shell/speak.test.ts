@@ -205,6 +205,18 @@ describe('Speaker', () => {
     expect(h.plays).toHaveLength(0)
   })
 
+  it('服务不在本机时，失败记录带 remote 标记；本机服务没有', async () => {
+    for (const [local, want] of [[false, { kind: 'bad-response', at: 1000, remote: true }], [true, { kind: 'bad-response', at: 1000 }]] as const) {
+      const h = harness({ auto: false })
+      const sp = new Speaker(h.deps)
+      sp.speak(req(['甲甲甲'], { settings: { ...SETTINGS, local } }))
+      await settle()
+      h.synths[0]!.fail(new TtsError('bad-response', 'HTTP 500 secret'))
+      await settle()
+      expect(sp.lastError()).toEqual(want)
+    }
+  })
+
   it('没在念时 stop 什么也不做', async () => {
     const sp = new Speaker(harness().deps)
     await expect(sp.stop()).resolves.toBeUndefined()

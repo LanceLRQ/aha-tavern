@@ -311,7 +311,12 @@ async function designVoice(
     } catch (e) {
       log.warn(`音色设计停止试听失败：${(e as Error).message}`)
     }
-    await fs.rm(tmp, { recursive: true, force: true })
+    try {
+      await fs.rm(tmp, { recursive: true, force: true })
+    } catch (e) {
+      // 删不掉只记日志：不能因此跳过卸载与重启，更不能记成"重启失败"
+      log.warn(`音色设计删除临时目录失败：${(e as Error).message}`)
+    }
     if (!touched) return false
     try {
       await client.unload(VOICE_DESIGN_MODEL, { timeoutMs: UNLOAD_MS })

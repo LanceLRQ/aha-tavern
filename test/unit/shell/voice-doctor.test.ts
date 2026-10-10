@@ -451,6 +451,47 @@ describe('启动中的预热阶段不算可用', () => {
   })
 })
 
+describe('服务不在本机的提醒（读不到参考录音）', () => {
+  const REMOTE = '语音服务不在本机：它需要能读到这台机器上角色的参考录音路径'
+  const HINT = '服务不在本机时，请确认它读得到参考录音'
+
+  it('local 为 false：多一项提醒，不算失败项；本机服务没有', async () => {
+    cfg = { configured: true, settings: settings({ endpoint: 'http://10.0.0.2:8000', local: false }), problems: [] }
+    const r = await checkVoice(makeDeps({ inspect: vi.fn(async () => up()) }), { detail: true })
+    expect(r.service?.remote).toBe(true)
+    expect(voiceDoctorOneLine(r)).toContain(`! ${REMOTE}`)
+    expect(voiceDoctorIssues(r)).toEqual([])
+    expect(voiceDoctorBrief(r)).toEqual({ status: '可用', flagged: false })
+    cfg = { configured: true, settings: settings(), problems: [] }
+    const local = await checkVoice(makeDeps({ inspect: vi.fn(async () => up()) }), { detail: true })
+    expect(local.service?.remote).toBeUndefined()
+    expect(voiceDoctorOneLine(local)).not.toContain('不在本机')
+  })
+
+  it('最近一次朗读出错是服务返回异常且服务不在本机：说明里附一句', async () => {
+    const at = new Date(2026, 9, 10, 8, 5, 9).getTime()
+    const bad = await checkVoice(makeDeps({ lastSpeakError: vi.fn(() => ({ kind: 'bad-response', at, remote: true })) }), { detail: true })
+    expect(voiceDoctorOneLine(bad)).toContain(`最近一次朗读出错：服务返回异常；${HINT}（08:05:09）`)
+    const other = await checkVoice(makeDeps({ lastSpeakError: vi.fn(() => ({ kind: 'timeout', at, remote: true })) }), { detail: true })
+    expect(voiceDoctorOneLine(other)).not.toContain(HINT)
+    const localBad = await checkVoice(makeDeps({ lastSpeakError: vi.fn(() => ({ kind: 'bad-response', at })) }), { detail: true })
+    expect(voiceDoctorOneLine(localBad)).not.toContain(HINT)
+  })
+
+  it('试念失败：服务不在本机且是服务返回异常时附一句；原文不进说明', async () => {
+    cfg = { configured: true, settings: settings({ local: false }), problems: [] }
+    const deps = makeDeps({ speaker: { speakAndWait: vi.fn(async () => ({ status: 'failed' as const, kind: 'bad-response' })) } })
+    const t = await trialSpeak(deps)
+    expect(t).toEqual({ status: 'failed', kind: 'bad-response', remote: true })
+    expect(voiceTrialMarkdown(t as never)).toContain(HINT)
+    expect(voiceDoctorCardReceipt({ configured: true, problems: [] } as never, t)).toMatchObject({ text: expect.stringContaining(HINT) })
+    cfg = { configured: true, settings: settings(), problems: [] }
+    const t2 = await trialSpeak(deps)
+    expect(t2).toEqual({ status: 'failed', kind: 'bad-response' })
+    expect(voiceTrialMarkdown(t2 as never)).not.toContain(HINT)
+  })
+})
+
 describe('trialSpeak', () => {
   const s = settings()
 

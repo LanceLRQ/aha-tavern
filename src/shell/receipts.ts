@@ -600,7 +600,12 @@ const SPEAK_FAIL_TEXT: Record<string, string> = {
 }
 
 /** 朗读失败的归类说明；不认识的种类一律"出错"。 */
-const speakFailText = (kind: string): string => (Object.hasOwn(SPEAK_FAIL_TEXT, kind) ? SPEAK_FAIL_TEXT[kind]! : SPEAK_FAIL_TEXT.other!)
+const REMOTE_REF_HINT = '服务不在本机时，请确认它读得到参考录音'
+/** remote：当时的服务不在本机；服务返回异常时多提一句参考录音读不读得到。 */
+const speakFailText = (kind: string, remote = false): string => {
+  const base = Object.hasOwn(SPEAK_FAIL_TEXT, kind) ? SPEAK_FAIL_TEXT[kind]! : SPEAK_FAIL_TEXT.other!
+  return remote && kind === 'bad-response' ? `${base}；${REMOTE_REF_HINT}` : base
+}
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 const clockText = (at: number): string => {
@@ -677,6 +682,7 @@ function voiceDoctorItems(r: VoiceDoctorReport): DoctorItem[] {
         items.push({ mark: '✗', text: `上次启动失败：${clip(s.lastFailure)}（日志 ${r.launch.modelsDir}/server.log）` })
       }
     }
+    if (s.remote && !s.credentials) items.push({ mark: '!', text: '语音服务不在本机：它需要能读到这台机器上角色的参考录音路径' })
   }
   const m = r.model
   if (m) {
@@ -709,7 +715,7 @@ function voiceDoctorItems(r: VoiceDoctorReport): DoctorItem[] {
       : { mark: '!', text: '当前角色还没有音色，朗读时没有声音可用' })
   }
   if (r.lastError) {
-    items.push({ mark: '!', text: `最近一次朗读出错：${speakFailText(r.lastError.kind)}（${clockText(r.lastError.at)}）` })
+    items.push({ mark: '!', text: `最近一次朗读出错：${speakFailText(r.lastError.kind, r.lastError.remote)}（${clockText(r.lastError.at)}）` })
   }
   problems()
   return items
@@ -752,7 +758,7 @@ export const voiceBriefText = (b: VoiceDoctorBrief): string => `语音 ${b.statu
 export function voiceDoctorCardReceipt(r: VoiceDoctorReport, trial?: VoiceTrial): Reply {
   if (trial?.status === 'cancelled') return guide('语音自检：全部通过，试念被打断，没有念完。')
   if (trial?.status === 'ok') return guide(`语音自检：全部通过，试念成功（${trial.sentences} 句，${trial.seconds} 秒）。`)
-  if (trial?.status === 'failed') return guide(`语音自检：全部通过，试念失败（${speakFailText(trial.kind)}）。`)
+  if (trial?.status === 'failed') return guide(`语音自检：全部通过，试念失败（${speakFailText(trial.kind, trial.remote)}）。`)
   const n = voiceDoctorIssues(r).length
   return guide(n === 0 ? '语音自检：全部通过。' : `语音自检：${n} 项未通过。`)
 }
@@ -761,7 +767,7 @@ export function voiceDoctorCardReceipt(r: VoiceDoctorReport, trial?: VoiceTrial)
 export function voiceTrialMarkdown(t: Exclude<VoiceTrial, { status: 'cancelled' }>): string {
   return t.status === 'ok'
     ? `- ✓ 试念成功，共 ${t.sentences} 句，用时 ${t.seconds} 秒`
-    : `- ✗ 试念失败（${speakFailText(t.kind)}）`
+    : `- ✗ 试念失败（${speakFailText(t.kind, t.remote)}）`
 }
 
 // ---------- 朗读 ----------
@@ -855,7 +861,7 @@ export const VOICE_DESIGN_OPT_USE = '用这一段'
 export const VOICE_DESIGN_OPT_BACK = '返回'
 /** 音色设计模型的大小说明（固定模型，大小固定）。 */
 export const VOICE_DESIGN_MODEL_SIZE = '约 2.9GB'
-export const VOICE_DESIGN_MEMORY_NOTE = '设计时内存占用约 6GB，建议先关掉占内存的应用。设计结束后语音服务会重启一次，以释放内存。'
+export const VOICE_DESIGN_MEMORY_NOTE = '设计时内存占用约 5GB，加载时峰值约 10GB，建议先关掉占内存的应用。设计结束后语音服务会重启一次，以释放内存。'
 
 export const voiceDesignSegmentLabel = (n: number): string => `第 ${n} 段`
 

@@ -271,7 +271,8 @@ describe('设计模型的下载确认', () => {
     expect(q.detail).toContain('约 2.9GB')
     expect(q.detail).toContain('/data/voice')
     expect(q.detail).toContain('https://hf-mirror.com')
-    expect(q.detail).toContain('约 6GB')
+    expect(q.detail).toContain('约 5GB，加载时峰值约 10GB')
+    expect(q.detail).not.toContain('6GB')
     expect(q.options.map((o: { label: string }) => o.label)).toEqual(['开始下载', '取消'])
     expect(modelDownloaded).toHaveBeenCalledWith('/data/voice', VOICE_DESIGN_MODEL)
   })
@@ -699,6 +700,24 @@ describe('收尾', () => {
     expect(log.warn).toHaveBeenCalled()
     expect(restartService).toHaveBeenCalledTimes(1)
     expect(await tmpEntries()).toEqual([])
+  })
+
+  it('收尾里删临时目录失败：只记日志，仍然卸载与重启，不报重启失败', async () => {
+    const realRm = fs.rm.bind(fs)
+    const spy = vi.spyOn(fs, 'rm').mockImplementation(async (p, o) => {
+      if (String(p).includes('aha-voice-design-')) throw new Error('EBUSY /secret/tmp')
+      return realRm(p, o)
+    })
+    try {
+      script.push('取消')
+      const r = await exec()
+      expect(r).not.toContain('restart failed')
+      expect(unload).toHaveBeenCalledTimes(1)
+      expect(restartService).toHaveBeenCalledTimes(1)
+      expect(log.warn).toHaveBeenCalled()
+          } finally {
+      spy.mockRestore()
+    }
   })
 
   it('期间服务被用户停掉（不再是插件启动的）：不重启，只清理', async () => {

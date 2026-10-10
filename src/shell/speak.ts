@@ -52,7 +52,7 @@ export interface SpeakRequest {
   sentences: readonly string[]
   /** 参考录音的绝对路径与录音里说的话。 */
   voice: { audio: string; text: string }
-  settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds'>
+  settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds'> & Partial<Pick<VoiceServiceSettings, 'local'>>
   player: Player
   /** 会话编号：会话销毁、或该会话来了新的用户消息时，据此停下属于它的朗读。 */
   owner: string
@@ -61,6 +61,8 @@ export interface SpeakRequest {
 export interface SpeakError {
   kind: string
   at: number
+  /** 当时的语音服务不在本机（服务读不到这台机器上的参考录音是常见原因）。 */
+  remote?: boolean
 }
 
 /** 一段朗读的结局：念完 / 出错（带种类）/ 被停下或顶掉 / 等待超时。 */
@@ -240,7 +242,7 @@ export class Speaker {
         run.outcome = { status: 'ok' }
       }
     } catch (e) {
-      if (!run.ctl.signal.aborted) run.outcome = { status: 'failed', kind: this.fail(e) }
+      if (!run.ctl.signal.aborted) run.outcome = { status: 'failed', kind: this.fail(e, run.req?.settings.local === false) }
     } finally {
       run.closed = true
       if (this.current === run) this.current = null
@@ -288,11 +290,11 @@ export class Speaker {
   }
 
   /** 记下最近一次失败，返回归类后的种类。 */
-  private fail(e: unknown): string {
+  private fail(e: unknown, remote = false): string {
     const known = e instanceof TtsError || e instanceof PlayerError
     const kind = known ? e.kind : 'other'
     const detail = known ? e.detail || e.message : e instanceof Error ? e.message : String(e)
-    this.lastErr = { kind, at: this.deps.now() }
+    this.lastErr = { kind, at: this.deps.now(), ...(remote ? { remote: true } : {}) }
     this.deps.log.warn(`朗读中断（${kind}）：${redactUrls(detail)}`)
     return kind
   }
