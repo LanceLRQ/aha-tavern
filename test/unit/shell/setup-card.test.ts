@@ -106,6 +106,17 @@ describe('保存 / 列出 / 读取', () => {
     expect(r.message).toContain('file-missing')
   })
 
+  it('列出：每个角色标明有没有音色', async () => {
+    const a = await mk('白狐')
+    const b = await mk('阿九')
+    await fs.writeFile(path.join(a.dir, 'voice_ref.wav'), Buffer.alloc(8))
+    await fs.writeFile(path.join(a.dir, 'voice_ref.txt'), '你好')
+    await fs.writeFile(path.join(b.dir, 'voice_ref.txt'), '只有文字')
+    const lines = (await listCharactersText(dir)).message.split('\n')
+    expect(lines.find((l) => l.includes('name: 白狐'))).toMatch(/\| voice: yes$/)
+    expect(lines.find((l) => l.includes('name: 阿九'))).toMatch(/\| voice: no$/)
+  })
+
   it('读取：按编号；找不到失败', async () => {
     const a = await mk('白狐')
     expect((await readCardText(dir, a.card.id)).message).toContain('name:\n白狐')

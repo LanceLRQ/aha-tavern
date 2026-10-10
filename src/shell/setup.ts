@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import hostSetupGuide from '../prompts/host-setup.md'
 import { listCharacters } from '../core/card'
 import { readMe, readWorld } from '../core/docs'
+import { readVoice } from '../core/voice'
 import { readRegistry, registerTavern, updateTavernPath } from '../core/registry'
 import { createTavern, type TavernInfo, type TavernMarker } from '../core/tavern'
 import {
@@ -59,8 +60,12 @@ export async function collectFacts(rt: Runtime, agent: HostAgent, cc: CommandCon
   if (!tavern) return facts
   const entries = await safe('角色列表', () => listCharacters(tavern.dir), [])
   for (const e of entries) {
-    if (e.ok) facts.characters.push({ name: e.card.name, ...(e.card.tagline ? { tagline: e.card.tagline } : {}) })
-    else facts.brokenCards.push({ dirName: e.dirName, problem: e.problem })
+    if (e.ok) {
+      const voice = await safe('角色音色', () => readVoice(e.dir), null)
+      facts.characters.push({
+        name: e.card.name, ...(e.card.tagline ? { tagline: e.card.tagline } : {}), voice: voice?.ok === true,
+      })
+    } else facts.brokenCards.push({ dirName: e.dirName, problem: e.problem })
   }
   const me = await safe('主角档案', () => readMe(tavern.dir), null)
   if (me) facts.profile = { empty: me.empty, length: me.length }

@@ -3,6 +3,7 @@ import type { TavernMode } from '../config'
 import type { DispatchReason } from '../core/dispatch'
 import type { OutsideReason } from '../core/state'
 import type { Theme } from '../core/theme'
+import type { AskItem } from './confirm'
 import type { DoctorFailKind, DrawDoctorReport } from './draw-doctor'
 
 export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊' }
@@ -620,4 +621,24 @@ export function autoReadOffReceipt(): Reply {
 
 export function autoReadReadonlyReceipt(theme: Theme): Reply {
   return guide(`这间${theme.concept('tavern')}的数据比插件新，不能改自动朗读的开关；朗读本身可以用。`)
+}
+
+// ---------- 登记音色 ----------
+
+export const VOICE_SET_QUESTION_ID = 'voice-replace'
+export const VOICE_SET_OPT_REPLACE = '覆盖'
+export const VOICE_SET_OPT_CANCEL = '取消'
+
+/** 角色已有音色时的覆盖确认卡片；名字由调用方先压平、去掉引号类符号。 */
+export function voiceReplaceQuestion(name: string): AskItem {
+  return {
+    id: VOICE_SET_QUESTION_ID,
+    header: '角色音色',
+    question: `给「${name}」换一个声音？`,
+    detail: `角色「${name}」已经有音色了，登记新的录音会替换现有的声音。`,
+    options: [
+      { label: VOICE_SET_OPT_REPLACE, description: '用新的录音替换现有的声音' },
+      { label: VOICE_SET_OPT_CANCEL, description: '保留现有的声音，不登记' },
+    ],
+  }
 }

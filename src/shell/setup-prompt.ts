@@ -19,7 +19,7 @@ export interface SetupFacts {
   place: SetupPlace
   /** 登记表里除本酒馆以外的酒馆。 */
   otherTaverns: Array<{ name: string; path: string }>
-  characters: Array<{ name: string; tagline?: string }>
+  characters: Array<{ name: string; tagline?: string; voice?: boolean }>
   /** 读不出来的角色卡：目录名与问题类别（固定标识）。 */
   brokenCards: Array<{ dirName: string; problem: string }>
   profile: { empty: boolean; length: number }
@@ -46,7 +46,10 @@ function renderPlace(p: SetupPlace): string {
 export function renderFacts(f: SetupFacts): string {
   const taverns = f.otherTaverns.length ? f.otherTaverns.map((t) => `${flat(t.name)} (${flat(t.path)})`).join('; ') : 'none'
   const chars = f.characters.length
-    ? f.characters.map((c) => (c.tagline ? `${flat(c.name)}（${flat(c.tagline)}）` : flat(c.name))).join('、')
+    ? f.characters.map((c) => {
+      const base = c.tagline ? `${flat(c.name)}（${flat(c.tagline)}）` : flat(c.name)
+      return c.voice === undefined ? base : `${base} [voice: ${c.voice ? 'yes' : 'no'}]`
+    }).join('、')
     : 'none'
   const lines = [
     `place: ${renderPlace(f.place)}`,

@@ -227,7 +227,7 @@ export class Speaker {
 }
 
 /** 播放器不要占用终端的输入输出。 */
-const quietSpawn: PlayerSpawn = (command, args) => spawn(command, args, { stdio: 'ignore' })
+export const quietSpawn: PlayerSpawn = (command, args) => spawn(command, args, { stdio: 'ignore' })
 
 export function realSpeakerDeps(log: Pick<Log, 'debug' | 'warn'>): SpeakerDeps {
   return {
@@ -498,16 +498,21 @@ export interface Speaking {
   handler: CommandHandler
 }
 
-/** 真实环境下的朗读装配：命令处理函数与自动朗读跟踪器，共用进程唯一的朗读队列。 */
-export function createSpeaking(rt: Runtime, getServices: () => HostServices | undefined): Speaking {
-  const speaker = sharedSpeaker(rt.log)
-  const env: SpeakEnv = {
+/** 真实环境下朗读前检查要用的依赖。 */
+export function realSpeakEnv(rt: Runtime, speaker: Speaker = sharedSpeaker(rt.log)): SpeakEnv {
+  return {
     rt,
     speaker,
     probe: (endpoint) => createTtsClient({ endpoint, fetch: globalThis.fetch }).probe(PROBE_MS),
     findPlayer: () => findPlayer({ platform: process.platform, which: whichOnPath }),
     isLaunching,
   }
+}
+
+/** 真实环境下的朗读装配：命令处理函数与自动朗读跟踪器，共用进程唯一的朗读队列。 */
+export function createSpeaking(rt: Runtime, getServices: () => HostServices | undefined): Speaking {
+  const speaker = sharedSpeaker(rt.log)
+  const env = realSpeakEnv(rt, speaker)
   const auto = new AutoReader(env, async (agent) => {
     const services = getServices()
     return services ? resolveChatTarget(agent, services, rt.log) : null

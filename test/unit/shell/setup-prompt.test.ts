@@ -74,6 +74,12 @@ describe('状态事实', () => {
     expect(t).toContain('over budget')
   })
 
+  it('角色带音色标记时显示 voice: yes|no', () => {
+    const t = renderFacts({ ...base, characters: [{ name: '白狐', voice: true }, { name: '阿九', tagline: '猫', voice: false }] })
+    expect(t).toContain('白狐 [voice: yes]')
+    expect(t).toContain('阿九（猫） [voice: no]')
+  })
+
   it('空档案与无角色写成 empty / none', () => {
     const t = renderFacts(base)
     expect(t).toContain('profile: empty')

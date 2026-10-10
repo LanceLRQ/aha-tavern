@@ -152,8 +152,12 @@ describe('registerVoice', () => {
     const s = await write('s.wav', makeWav(MIN_VOICE_SECONDS - 1))
     const l = await write('l.wav', makeWav(MAX_VOICE_SECONDS + 1))
     expect(await registerVoice({ characterDir: dir, sourcePath: s, text: '好' })).toEqual({ kind: 'too-short', seconds: 2 })
-    expect(await registerVoice({ characterDir: dir, sourcePath: l, text: '好' })).toEqual({ kind: 'too-long', seconds: 31 })
+    expect(await registerVoice({ characterDir: dir, sourcePath: l, text: '好' })).toEqual({ kind: 'too-long', seconds: 16 })
     expect(await exists(path.join(dir, VOICE_AUDIO_FILE))).toBe(false)
+  })
+
+  it('时长上限是 15 秒', () => {
+    expect(MAX_VOICE_SECONDS).toBe(15)
   })
 
   it('时长恰好在边界上可以通过', async () => {

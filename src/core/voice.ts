@@ -8,7 +8,7 @@ export const VOICE_AUDIO_FILE = 'voice_ref.wav'
 export const VOICE_TEXT_FILE = 'voice_ref.txt'
 
 export const MIN_VOICE_SECONDS = 3
-export const MAX_VOICE_SECONDS = 30
+export const MAX_VOICE_SECONDS = 15
 export const MAX_VOICE_BYTES = 20 * 1024 * 1024
 /** 录音文字的上限，按 Unicode 码点计。 */
 export const VOICE_TEXT_MAX_CHARS = 500

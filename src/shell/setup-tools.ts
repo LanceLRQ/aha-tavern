@@ -7,6 +7,7 @@ import {
   listCharacters, MEMORY_FILE, saveCharacter, type CharacterCard, type CharacterEntry, type CharacterInput,
 } from '../core/card'
 import { countChars, writeMe, writeWorld } from '../core/docs'
+import { readVoice } from '../core/voice'
 import { memoryChars, readMemory, replaceSections, type Memory } from '../core/memory'
 import { isTavern } from '../core/tavern'
 import type { HostAgent } from './context'
@@ -15,6 +16,7 @@ import { createConfirm, DeclineTracker, SessionGate, type AskFn, type Confirm } 
 import { renderCard } from './setup-prompt'
 import { escapeClosingTag, flatText } from './steer'
 import { readonlyToolMessage } from './writable'
+import { realVoiceToolDeps, registerVoiceTools, type VoiceToolDeps } from './voice-tools'
 
 export interface SaveResult {
   ok: boolean
@@ -150,9 +152,10 @@ export async function listCharactersText(dir: string): Promise<SaveResult> {
   try {
     const entries = await listCharacters(dir)
     if (entries.length === 0) return { ok: true, message: 'characters: none' }
-    const lines = entries.map((e) =>
+    const voices = await Promise.all(entries.map((e) => (e.ok ? readVoice(e.dir).then((v) => v.ok) : false)))
+    const lines = entries.map((e, i) =>
       e.ok
-        ? `- id: ${e.card.id} | name: ${flatText(e.card.name, 'characters')} | tagline: ${e.card.tagline ? flatText(e.card.tagline, 'characters') : '(empty)'}`
+        ? `- id: ${e.card.id} | name: ${flatText(e.card.name, 'characters')} | tagline: ${e.card.tagline ? flatText(e.card.tagline, 'characters') : '(empty)'} | voice: ${voices[i] ? 'yes' : 'no'}`
         : `- unreadable: ${entryProblem(e)}`)
     return { ok: true, message: `characters:\n${lines.join('\n')}` }
   } catch (e) {
@@ -308,7 +311,7 @@ export function registerSetupTools(
   rt: Runtime,
   onSaved: (agent: HostAgent) => Promise<void>,
   getAsk: () => AskFn | undefined = () => undefined,
-  shared: { gate?: SessionGate; declines?: DeclineTracker } = {},
+  shared: { gate?: SessionGate; declines?: DeclineTracker; voice?: VoiceToolDeps } = {},
 ): void {
   const gate = shared.gate ?? new SessionGate()
   const declines = shared.declines ?? new DeclineTracker()
@@ -455,5 +458,9 @@ export function registerSetupTools(
     output: { schema: { type: 'string' }, render: text },
     execute: (args, exec) => runGated('aha_rewrite_memory', exec, (dir, confirm) =>
       rewriteMemoryText(dir, (args as { id?: unknown }).id, args, confirm), false),
+  }))
+
+  registerVoiceTools(ctx, shared.voice ?? realVoiceToolDeps(rt, {
+    getAsk, gate, tavernDirOf, onRegistered: onSaved,
   }))
 }
