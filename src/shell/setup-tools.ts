@@ -152,7 +152,7 @@ export async function listCharactersText(dir: string): Promise<SaveResult> {
   try {
     const entries = await listCharacters(dir)
     if (entries.length === 0) return { ok: true, message: 'characters: none' }
-    const voices = await Promise.all(entries.map((e) => (e.ok ? readVoice(e.dir).then((v) => v.ok) : false)))
+    const voices = await Promise.all(entries.map((e) => (e.ok ? readVoice(e.dir).then((v) => v.ok, () => false) : false)))
     const lines = entries.map((e, i) =>
       e.ok
         ? `- id: ${e.card.id} | name: ${flatText(e.card.name, 'characters')} | tagline: ${e.card.tagline ? flatText(e.card.tagline, 'characters') : '(empty)'} | voice: ${voices[i] ? 'yes' : 'no'}`
@@ -461,6 +461,6 @@ export function registerSetupTools(
   }))
 
   registerVoiceTools(ctx, shared.voice ?? realVoiceToolDeps(rt, {
-    getAsk, gate, tavernDirOf, onRegistered: onSaved,
+    getAsk, gate, declines, tavernDirOf, onRegistered: onSaved,
   }))
 }

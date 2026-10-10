@@ -10,7 +10,7 @@ import {
   type VoiceConvert, type VoiceRegisterResult,
 } from '../core/voice'
 import { findConverter } from '../core/player'
-import { answerItem, type AskFn, type SessionGate } from './confirm'
+import { answerItem, isAbort, type AskFn, type DeclineTracker, type SessionGate } from './confirm'
 import type { HostAgent } from './context'
 import { VOICE_SET_OPT_REPLACE, VOICE_SET_QUESTION_ID, voiceReplaceQuestion } from './receipts'
 import type { Runtime } from './runtime'
@@ -26,12 +26,17 @@ export const VOICE_SET_TRIAL_TEXT = '你好，这是我现在的声音。'
 
 const NOT_TAVERN = 'error: this workspace is not a tavern yet, voice not registered'
 const CANCELLED = 'not registered: user cancelled the replacement'
+const ABORTED = 'not registered: cancelled'
+const ALREADY_DECLINED = 'not registered: already declined this turn; ask the user what to change first'
+const DECLINE_KIND = 'voice-set'
 
 export interface VoiceToolDeps {
   rt: Pick<Runtime, 'log'>
   getAsk(): AskFn | undefined
   /** 与保存类工具共用：同一会话的卡片整段排队。 */
   gate: SessionGate
+  /** 同一轮内被拒绝后不再重复弹卡片。 */
+  declines?: DeclineTracker
   speaker: Pick<Speaker, 'speak'>
   /** 现在能不能念：与朗读命令同一套检查。 */
   readiness(target: { tavernDir: string; characterId: string }): Promise<Readiness>
@@ -45,7 +50,7 @@ export interface VoiceToolDeps {
 
 /** 真实环境下的依赖；酒馆目录与登记后的刷新由调用方给。 */
 export function realVoiceToolDeps(
-  rt: Runtime, shared: Pick<VoiceToolDeps, 'getAsk' | 'gate' | 'tavernDirOf' | 'onRegistered'>,
+  rt: Runtime, shared: Pick<VoiceToolDeps, 'getAsk' | 'gate' | 'declines' | 'tavernDirOf' | 'onRegistered'>,
 ): VoiceToolDeps {
   const speaker = sharedSpeaker(rt.log)
   const env = realSpeakEnv(rt, speaker)
@@ -102,15 +107,21 @@ async function confirmReplace(
     deps.rt.log.warn('确认卡片不可用（没有 userQuestions 服务），不登记音色')
     return 'not registered: confirmation unavailable'
   }
-  if (signal?.aborted) return CANCELLED
+  const session = agent?.id
+  if (session !== undefined && deps.declines?.has(session, DECLINE_KIND)) return ALREADY_DECLINED
+  if (signal?.aborted) return ABORTED
   try {
     const shown = name.replace(/[「」]/g, '').replace(/\s+/g, ' ').trim()
     const answer = await ask({ agent, ...(signal ? { signal } : {}), questions: [voiceReplaceQuestion(shown)] })
     const item = answerItem(answer, VOICE_SET_QUESTION_ID)
     const selected = Array.isArray(item?.selected) ? item.selected : []
     const custom = typeof item?.custom === 'string' ? item.custom.trim() : ''
-    return custom === '' && selected.includes(VOICE_SET_OPT_REPLACE) ? null : CANCELLED
+    if (custom === '' && selected.includes(VOICE_SET_OPT_REPLACE)) return null
+    // 自由输入是修改意见，不算拒绝
+    if (custom === '' && session !== undefined) deps.declines?.mark(session, DECLINE_KIND)
+    return CANCELLED
   } catch (e) {
+    if (isAbort(e, signal)) return ABORTED
     deps.rt.log.warn(`确认卡片失败：${(e as Error).message}`)
     return CANCELLED
   }

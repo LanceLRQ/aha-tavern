@@ -54,6 +54,8 @@ describe('数据版本检查', () => {
     const m = await readonlyToolMessage(dir)
     expect(m).not.toBeNull()
     expect(m).toContain('not saved')
+    expect(m).not.toContain('abc')
+    expect(m).not.toContain(dir)
   })
 
   it('版本较旧但迁移失败：按只读处理并记日志', async () => {

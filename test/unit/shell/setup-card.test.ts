@@ -117,6 +117,24 @@ describe('保存 / 列出 / 读取', () => {
     expect(lines.find((l) => l.includes('name: 阿九'))).toMatch(/\| voice: no$/)
   })
 
+  it('列出：某个角色读音色出错时按 no 处理，清单照常，不带系统错误原文', async () => {
+    const a = await mk('白狐')
+    await mk('阿九')
+    // 文字文件的位置是一个目录以外读不了的东西：权限全关
+    await fs.writeFile(path.join(a.dir, 'voice_ref.wav'), Buffer.alloc(8))
+    await fs.writeFile(path.join(a.dir, 'voice_ref.txt'), '你好')
+    await fs.chmod(path.join(a.dir, 'voice_ref.txt'), 0)
+    try {
+      const r = await listCharactersText(dir)
+      expect(r.ok).toBe(true)
+      expect(r.message).toMatch(/name: 白狐[^\n]*\| voice: no/)
+      expect(r.message).toContain('name: 阿九')
+      expect(r.message).not.toContain('EACCES')
+    } finally {
+      await fs.chmod(path.join(a.dir, 'voice_ref.txt'), 0o600)
+    }
+  })
+
   it('读取：按编号；找不到失败', async () => {
     const a = await mk('白狐')
     expect((await readCardText(dir, a.card.id)).message).toContain('name:\n白狐')

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveCharacter } from '../../../src/core/card'
 import { createTavern } from '../../../src/core/tavern'
 import { MAX_VOICE_SECONDS, MIN_VOICE_SECONDS, VOICE_AUDIO_FILE, VOICE_TEXT_FILE } from '../../../src/core/voice'
-import { SessionGate } from '../../../src/shell/confirm'
+import { DeclineTracker, SessionGate } from '../../../src/shell/confirm'
 import type { HostAgent } from '../../../src/shell/context'
 import type { Readiness } from '../../../src/shell/speak'
 import {
@@ -49,6 +49,7 @@ let speak: ReturnType<typeof vi.fn>
 let readiness: ReturnType<typeof vi.fn>
 let convert: ReturnType<typeof vi.fn>
 let onRegistered: ReturnType<typeof vi.fn>
+let declines: DeclineTracker
 let exec: (args: unknown, agent?: HostAgent | null) => Promise<string>
 let defs: Record<string, { description: string; parameters: Record<string, { required?: boolean }>; execute(a: unknown, e: unknown): Promise<string> }>
 
@@ -61,6 +62,7 @@ function build(over: Partial<VoiceToolDeps> = {}) {
     rt: { log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } },
     getAsk: () => ask as never,
     gate: new SessionGate(),
+    declines,
     speaker: { speak } as never,
     readiness: readiness as never,
     findConverter: async () => convert as never,
@@ -82,6 +84,7 @@ beforeEach(async () => {
   await fs.writeFile(src, makeWav(5))
   ask = vi.fn(async () => ({ answers: [{ id: 'voice-replace', selected: ['覆盖'] }] }))
   speak = vi.fn()
+  declines = new DeclineTracker()
   readiness = vi.fn(async () => READY)
   convert = vi.fn()
   onRegistered = vi.fn(async () => {})
@@ -171,6 +174,34 @@ describe('覆盖现有音色', () => {
     expect(r).toBe('not registered: user cancelled the replacement')
     expect(await fs.readFile(path.join(charDir, VOICE_TEXT_FILE), 'utf8')).toBe('旧的话')
     expect(speak).not.toHaveBeenCalled()
+  })
+
+  it('取消后同一轮不再弹卡，下一轮可以再弹', async () => {
+    ask.mockResolvedValueOnce({ answers: [{ id: 'voice-replace', selected: ['取消'] }] })
+    declines.onStep('s', 1)
+    await exec(args())
+    expect(ask).toHaveBeenCalledTimes(1)
+    const r = await exec(args())
+    expect(r).toBe('not registered: already declined this turn; ask the user what to change first')
+    expect(ask).toHaveBeenCalledTimes(1)
+    declines.onStep('s', 2)
+    expect(await exec(args())).toContain('voice registered')
+    expect(ask).toHaveBeenCalledTimes(2)
+  })
+
+  it('自由输入不算拒绝', async () => {
+    ask.mockResolvedValueOnce({ answers: [{ id: 'voice-replace', custom: '换一段' }] })
+    declines.onStep('s', 1)
+    await exec(args())
+    expect(await exec(args())).toContain('voice registered')
+    expect(ask).toHaveBeenCalledTimes(2)
+  })
+
+  it('卡片被中止：返回 cancelled 短语，不算拒绝', async () => {
+    ask.mockRejectedValueOnce(Object.assign(new Error('x'), { code: 'ASK_ABORTED' }))
+    declines.onStep('s', 1)
+    expect(await exec(args())).toBe('not registered: cancelled')
+    expect(await exec(args())).toContain('voice registered')
   })
 
   it('没有确认服务：不覆盖', async () => {
