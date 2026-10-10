@@ -566,3 +566,58 @@ export function voiceStatusReceipt(s: VoiceStatusInfo): Reply {
 export function voiceStatusNotConfiguredReceipt(): Reply {
   return guide('语音服务：未配置（见 docs/voice-setup.md）。')
 }
+
+// ---------- 朗读 ----------
+
+/** 朗读开始不了的原因；检查按这个顺序进行。 */
+export type SpeakBlock = 'not-configured' | 'user-info' | 'unreachable' | 'starting' | 'no-voice' | 'no-player'
+
+/** 不能朗读的原因，一句话、不带句号；回执与"自动朗读已打开"的补充说明共用。 */
+export function speakBlockReason(block: SpeakBlock, theme: Theme): string {
+  switch (block) {
+    case 'not-configured':
+      return '还没有配置语音服务，配置方法见 docs/voice-setup.md'
+    case 'user-info':
+      return '语音服务地址里不能带用户名或密码，请去掉后再试'
+    case 'unreachable':
+      return '语音服务连不上，可以用 /aha 语音 启动'
+    case 'starting':
+      return '语音服务还在启动中，稍后再试'
+    case 'no-voice':
+      return `这个${theme.concept('character')}还没有声音，请到筹备模式给它配声音`
+    case 'no-player':
+      return '没有找到播放器（macOS 需要 afplay，其他系统需要 ffplay、paplay 或 aplay 之一）'
+  }
+}
+
+export function speakBlockedReceipt(block: SpeakBlock, theme: Theme): Reply {
+  return guide(`${speakBlockReason(block, theme)}。`)
+}
+
+export function speakStartedReceipt(count: number, truncated: boolean): Reply {
+  return guide(`开始朗读，共 ${count} 句${truncated ? '，超出的部分没有念' : ''}。`)
+}
+
+export function speakNothingReceipt(): Reply {
+  return guide('没有可念的字。')
+}
+
+export function speakNoReplyReceipt(): Reply {
+  return guide('这场聊天里还没有角色的话可念。')
+}
+
+export function speakStoppedReceipt(): Reply {
+  return guide('已停止朗读。')
+}
+
+export function autoReadOnReceipt(block: SpeakBlock | null, theme: Theme): Reply {
+  return guide(block === null ? '自动朗读已打开。' : `自动朗读已打开；现在还念不了：${speakBlockReason(block, theme)}。`)
+}
+
+export function autoReadOffReceipt(): Reply {
+  return guide('自动朗读已关闭。')
+}
+
+export function autoReadReadonlyReceipt(theme: Theme): Reply {
+  return guide(`这间${theme.concept('tavern')}的数据比插件新，不能改自动朗读的开关；朗读本身可以用。`)
+}

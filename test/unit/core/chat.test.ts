@@ -12,6 +12,8 @@ import {
   writeSummary,
   writeSummaryFile,
   setChatTitle,
+  setChatAutoRead,
+  readChatAutoRead,
   recallChat,
 } from '../../../src/core/chat'
 import { countChars } from '../../../src/core/docs'
@@ -154,6 +156,39 @@ describe('writeSummaryFile / setChatTitle', () => {
     const c = await mk()
     await fs.rm(path.join(c.dir, 'meta.yaml'))
     await expect(setChatTitle(dir, c.id, 't')).rejects.toSatisfy((e) => isAhaError(e, 'chat-invalid'))
+  })
+})
+
+describe('autoRead', () => {
+  it('新建聊天缺省为 false，meta.yaml 里没有该字段也能解析', async () => {
+    const c = await mk()
+    expect(YAML.parse(await fs.readFile(path.join(c.dir, 'meta.yaml'), 'utf8'))).not.toHaveProperty('autoRead')
+    expect(await readChatAutoRead(dir, c.id)).toBe(false)
+    expect((await readChatMeta(dir, c.id)).autoRead).toBeUndefined()
+  })
+  it('写 true 再写 false；不动标题和别的字段', async () => {
+    const c = await mk()
+    await setChatTitle(dir, c.id, '标题')
+    await setChatAutoRead(dir, c.id, true)
+    expect(await readChatAutoRead(dir, c.id)).toBe(true)
+    expect(await readChatMeta(dir, c.id)).toMatchObject({ title: '标题', session: 's-1', autoRead: true })
+    await setChatAutoRead(dir, c.id, false)
+    expect(await readChatAutoRead(dir, c.id)).toBe(false)
+    await setChatTitle(dir, c.id, '新标题')
+    expect(await readChatMeta(dir, c.id)).toMatchObject({ title: '新标题', autoRead: false })
+  })
+  it('非布尔值当 false，文件仍能解析', async () => {
+    const c = await mk()
+    const file = path.join(c.dir, 'meta.yaml')
+    const meta = YAML.parse(await fs.readFile(file, 'utf8'))
+    await fs.writeFile(file, YAML.stringify({ ...meta, autoRead: 'yes' }))
+    expect(await readChatAutoRead(dir, c.id)).toBe(false)
+  })
+  it('找不到聊天抛 chat-not-found；meta 缺失时写入抛 chat-invalid', async () => {
+    await expect(setChatAutoRead(dir, 'zzzz', true)).rejects.toSatisfy((e) => isAhaError(e, 'chat-not-found'))
+    const c = await mk()
+    await fs.rm(path.join(c.dir, 'meta.yaml'))
+    await expect(setChatAutoRead(dir, c.id, true)).rejects.toSatisfy((e) => isAhaError(e, 'chat-invalid'))
   })
 })
 

@@ -31,6 +31,7 @@ import { registerChatTools, type StartArgs } from './chat-tools'
 import { createMemoryEnv, onChatStep, RememberTurns, rememberHandler, rememberTool, reviewTool } from './remember'
 import { recallTool } from './recall'
 import { defaultDrawDeps, drawPromptSync, DrawAvailability, DrawEcho, drawTool, rerollHandler } from './draw'
+import { createSpeaking } from './speak'
 import { resolveChatTarget, TranscriptRecorder, type ChatTarget } from './transcript'
 import { isReadonly } from './writable'
 
@@ -761,6 +762,11 @@ export function installChat(ctx: Context, rt: Runtime): void {
   rt.handlers.start = startHandler(env)
   rt.handlers.reroll = rerollHandler({ drawing })
   rt.handlers.remember = rememberHandler(memoryEnv)
+  const speaking = createSpeaking(rt, () => services)
+  rt.handlers.speak = speaking.handler
+  // 卸载时停下正在念的（用 ctx.effect，实测 ctx.on('dispose') 不触发）
+  const effect = (ctx as unknown as { effect(fn: () => () => unknown): unknown }).effect
+  effect.call(ctx, () => () => speaking.speaker.stop())
   host.inject(['agentPresets'], (c) => {
     services = c
     const ensure = async (agent: HostAgent, via: string): Promise<void> => {
@@ -777,7 +783,10 @@ export function installChat(ctx: Context, rt: Runtime): void {
     })
     const recorder = new TranscriptRecorder({
       resolve: (agent) => resolveChatTarget(agent, c, rt.log), log: rt.log, onFirstUser: firstLineIndexer(env),
-      onReply: (agent, text) => drawEcho.onReply(agent.id, text),
+      onReply: (agent, text) => {
+        drawEcho.onReply(agent.id, text)
+        speaking.auto.onReply(agent.id, text)
+      },
     })
     // 一轮正常结束前核对图片行；用户中断的轮次不经过这里（见 DrawEcho 注释）
     c.on('agent/turn-stopping', (payload: { agent: HostAgent; turn?: unknown }) => {
@@ -785,6 +794,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
         if (typeof payload.agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
         payload.agent.steer(makeNotice(notice, '补上图片'))
       })
+      void speaking.auto.onTurnStopping(payload.agent, payload.turn)
     })
     c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
@@ -792,6 +802,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
       drawTurns.onStep(payload.agent.id, payload.turn, newUsers)
       drawEcho.onStep(payload.agent.id, payload.turn, newUsers)
+      speaking.auto.onStep(payload.agent.id, newUsers)
       await onChatStep(memoryEnv, payload.agent, payload.turn, newUsers)
       return next()
     })
@@ -805,6 +816,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
       drawSections.forget(payload.agent.id)
       drawTurns.forget(payload.agent.id)
       drawEcho.forget(payload.agent.id)
+      speaking.auto.forget(payload.agent.id)
       clearWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
       memoryEnv.reminder.forget(payload.agent.id)

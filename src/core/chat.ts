@@ -27,6 +27,8 @@ export interface ChatMeta {
   /** 开始时间（ISO） */
   started: string
   title: string
+  /** 自动朗读开关；缺省与非布尔值都按关闭处理 */
+  autoRead?: boolean
 }
 
 export interface ChatRecord {
@@ -206,6 +208,20 @@ export async function setChatTitle(tavernDir: string, chatId: string, title: str
   await modifyFile(path.join(dir, CHAT_META_FILE), (current) => {
     if (current === null) throw new AhaError('chat-invalid', `聊天元数据缺失：${chatId}`)
     return YAML.stringify({ ...parseMeta(current, chatId), title })
+  })
+}
+
+/** 自动朗读是否打开；字段缺省或不是布尔值都读作 false。 */
+export async function readChatAutoRead(tavernDir: string, chatId: string): Promise<boolean> {
+  return (await readChatMeta(tavernDir, chatId)).autoRead === true
+}
+
+/** 只改 meta.yaml 里的自动朗读开关（带锁读改写）。 */
+export async function setChatAutoRead(tavernDir: string, chatId: string, value: boolean): Promise<void> {
+  const dir = await requireChatDir(tavernDir, chatId)
+  await modifyFile(path.join(dir, CHAT_META_FILE), (current) => {
+    if (current === null) throw new AhaError('chat-invalid', `聊天元数据缺失：${chatId}`)
+    return YAML.stringify({ ...parseMeta(current, chatId), autoRead: value })
   })
 }
 

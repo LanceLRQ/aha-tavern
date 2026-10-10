@@ -156,6 +156,12 @@ export function abortLaunch(modelsDir: string): void {
   if (l && !l.finished) l.ctl.abort()
 }
 
+/** 该权重目录上是否有进行中的启动；朗读前的检查用它区分"还在启动"和"没启动"。 */
+export function isLaunching(modelsDir: string): boolean {
+  const l = launches.get(modelsDir)
+  return l !== undefined && !l.finished
+}
+
 /** 清掉启动历史并打断进行中的启动；只给测试用，免得模块级状态在用例之间串味。 */
 export function resetLaunchesForTest(): void {
   for (const l of launches.values()) if (!l.finished) l.ctl.abort()

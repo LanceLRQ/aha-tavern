@@ -871,6 +871,11 @@ describe('提示词文字', () => {
   it('筹备掌柜：称呼直接用，不解释', () => {
     expect(hostSetupText).toContain('不用向 user 解释')
   })
+  it('house-rules 末尾一条：动作神态写在全角括号里，前面的条目不变', () => {
+    expect(houseRulesText).toContain('10. 动作、神态写在全角括号（）里，说出口的话写在括号外。')
+    expect(houseRulesText.trimEnd().split('\n').pop()).toMatch(/^10\. /)
+    expect(houseRulesText).toContain('9. <core_memory> 的“往事索引”')
+  })
   it('house-rules 第 7 条：summary 与 title 每次都给', () => {
     expect(houseRulesText).toContain('没有要改的栏就只给 summary 和 title')
     expect(houseRulesText).not.toContain('就不调用')

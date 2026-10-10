@@ -9,7 +9,8 @@ import { createTavern } from '../../../src/core/tavern'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import type { AskFn } from '../../../src/shell/confirm'
 import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
-import { buildContext, type HostAgent } from '../../../src/shell/context'
+import { saveSession } from '../../../src/core/state'
+import { buildContext, sessionsFile, type HostAgent } from '../../../src/shell/context'
 import { doctorLine, readonlyReceipt } from '../../../src/shell/receipts'
 import type { Runtime } from '../../../src/shell/runtime'
 import { collectFacts } from '../../../src/shell/setup'
@@ -99,6 +100,19 @@ describe('命令入口', () => {
       expect(await handleCommand(rt, services, agentAt(), parseSubcommand(word), `/aha ${word}`)).toEqual(readonlyReceipt(theme))
     }
     for (const h of Object.values(others)) expect(h).not.toHaveBeenCalled()
+  })
+
+  it('只读：单聊·聊天中的朗读命令照常执行', async () => {
+    await setVersion(99)
+    const rt = rtOf()
+    ;(rt.config as { mode: string }).mode = 'chat'
+    await saveSession(sessionsFile(dir), 's1', { mode: 'chat', state: 'chatting', chatId: 'ab12', characterId: 'c_1' })
+    const speak = vi.fn(() => ({ kind: 'success' as const, text: '念了' }))
+    rt.handlers.speak = speak
+    const chatServices = { agentPresets: { composedPreset: () => 'tavern-chat' } }
+    const r = await handleCommand(rt, chatServices, agentAt(), parseSubcommand('朗读 你好'), '/aha 朗读')
+    expect(r.text).toBe('念了')
+    expect(speak).toHaveBeenCalled()
   })
 
   it('可写时照常执行', async () => {

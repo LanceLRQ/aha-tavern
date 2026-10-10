@@ -36,7 +36,7 @@ export const SUBCOMMANDS: readonly Subcommand[] = [
   sub('start', ['开场'], '选定角色，开始聊天', '[角色名]'),
   sub('remember', ['记忆', '记住'], '记一句话，或让角色回顾并整理记忆', '[内容]'),
   sub('reroll', ['重新生图', '重掷'], '上一张图重新生成', '[修改词]'),
-  sub('speak', ['说话', '朗读'], '念出来', '[文本]'),
+  sub('speak', ['说话', '朗读'], '念出来，或开关自动朗读', '[文本|开|关|停]'),
   sub('doctor', ['自检'], '检查当前状态与外部服务'),
   sub('voice', ['语音'], '启动、停止或查看语音服务', '[启动|停止|状态]'),
 ]
@@ -127,7 +127,7 @@ async function processCommand(
     }
     const d = dispatch(context.mode, context.state, parsed.id)
     if (!d.run) return dispatchReceipt(theme, d.reason, { label, outsideReason: context.outsideReason })
-    if (isReadonly(context.tavern) && parsed.id !== 'doctor' && parsed.id !== 'voice') return readonlyReceipt(theme)
+    if (isReadonly(context.tavern) && parsed.id !== 'doctor' && parsed.id !== 'voice' && parsed.id !== 'speak') return readonlyReceipt(theme)
     const handler = rt.handlers[parsed.id]
     if (!handler) return pendingReceipt(label)
     return await handler({ agent, services, rt, theme, context, args: parsed.args, label, steer, ...(signal ? { signal } : {}) })
