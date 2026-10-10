@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { loadImageService, loadVoiceService } from '../../../src/core/services'
+import { MAX_VOICE_TIMEOUT_SECONDS, loadImageService, loadVoiceService } from '../../../src/core/services'
 import {
   ServicesEditError, parseImageForm, parseVoiceForm, readServicesForm, updateServicesFile,
 } from '../../../src/core/services-edit'
@@ -103,6 +103,8 @@ describe('parseVoiceForm：入参校验', () => {
     expect(errorsOf(parseVoiceForm({ ...base, timeoutSeconds: 0 }))).toHaveProperty('timeoutSeconds')
     expect(errorsOf(parseVoiceForm({ ...base, timeoutSeconds: 1.5 }))).toHaveProperty('timeoutSeconds')
     expect(errorsOf(parseVoiceForm({ ...base, timeoutSeconds: 99999 }))).toHaveProperty('timeoutSeconds')
+    expect(errorsOf(parseVoiceForm({ ...base, timeoutSeconds: MAX_VOICE_TIMEOUT_SECONDS + 1 }))).toHaveProperty('timeoutSeconds')
+    expect(okEdit(parseVoiceForm({ ...base, timeoutSeconds: MAX_VOICE_TIMEOUT_SECONDS })).set).toMatchObject({ timeoutSeconds: MAX_VOICE_TIMEOUT_SECONDS })
     expect(errorsOf(parseVoiceForm({ ...base, timeoutSeconds: 'abc' }))).toHaveProperty('timeoutSeconds')
   })
 

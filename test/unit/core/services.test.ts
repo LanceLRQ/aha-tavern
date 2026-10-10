@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  MAX_VOICE_TIMEOUT_SECONDS,
   VOICE_DESIGN_MODEL,
   VOICE_MODELS,
   VOICE_SERVICE_DEFAULTS,
@@ -245,6 +246,20 @@ describe('两节互不影响', () => {
   it('只写了 voice 时 image 未配置，反之亦然', async () => {
     expect((await load('voice:\n  endpoint: http://x\n')).configured).toBe(false)
     expect((await loadVoice('image:\n  endpoint: http://x\n')).configured).toBe(false)
+  })
+})
+
+describe('loadVoiceService：timeoutSeconds 封顶', () => {
+  it('恰好等于上限时采用，超过上限按写错处理', async () => {
+    const ok = voiceOk(await loadVoice(`voice:\n  endpoint: http://127.0.0.1:1\n  timeoutSeconds: ${MAX_VOICE_TIMEOUT_SECONDS}\n`))
+    expect(ok.settings.timeoutSeconds).toBe(MAX_VOICE_TIMEOUT_SECONDS)
+    expect(ok.problems).toEqual([])
+    const bad = voiceOk(await loadVoice(`voice:\n  endpoint: http://127.0.0.1:1\n  timeoutSeconds: ${MAX_VOICE_TIMEOUT_SECONDS + 1}\n`))
+    expect(bad.settings.timeoutSeconds).toBe(120)
+    expect(bad.problems).toHaveLength(1)
+    expect(bad.problems[0]).toContain('voice.timeoutSeconds')
+    const huge = voiceOk(await loadVoice('voice:\n  endpoint: http://127.0.0.1:1\n  timeoutSeconds: 99999999\n'))
+    expect(huge.settings.timeoutSeconds).toBe(120)
   })
 })
 

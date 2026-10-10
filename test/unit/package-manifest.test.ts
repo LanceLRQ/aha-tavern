@@ -15,6 +15,11 @@ describe('设置页的包清单约定', () => {
     expect(pkg.files).toContain('dist')
   })
 
+  it('files 含 assets，随包录音存在（预热与无角色试念要用）', () => {
+    expect(pkg.files).toContain('assets')
+    expect(fs.existsSync(new URL('../../assets/voice-ref.wav', import.meta.url))).toBe(true)
+  })
+
   it('补丁里有一行根层的设置页实例：说明符等于包名，mode 为 settings；酒馆模式的 id 与名字不变', () => {
     const patch = YAML.parse(read('cordis.patch.yml')) as { insert: { id: string; name: string; config?: any }[] }[]
     const rows = patch[0]!.insert

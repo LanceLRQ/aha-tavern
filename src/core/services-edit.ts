@@ -3,7 +3,7 @@
 import fs from 'node:fs/promises'
 import YAML from 'yaml'
 import { expandHome, modifyFile } from './fsx'
-import { LOCAL_HOSTS } from './services'
+import { LOCAL_HOSTS, MAX_VOICE_TIMEOUT_SECONDS } from './services'
 
 export type ServicesSection = 'voice' | 'image'
 
@@ -170,7 +170,7 @@ export function parseVoiceForm(input: unknown, opts: ParseOptions = {}): FormRes
   }, (v) => v.replace(/\/+$/, ''))
   form.choice('read', ['lines', 'all'] as const)
   form.text('language', 'language', (v) => (LANGUAGE.test(v) ? null : '只能是英文字母，如 chinese'))
-  form.int('timeoutSeconds', 1, 3600)
+  form.int('timeoutSeconds', 1, MAX_VOICE_TIMEOUT_SECONDS)
   return form.result()
 }
 

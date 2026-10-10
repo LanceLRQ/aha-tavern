@@ -184,6 +184,9 @@ export const VOICE_SERVICE_DEFAULTS = {
   timeoutSeconds: 120,
 } as const
 
+/** 语音 timeoutSeconds 的上限（秒）：再大没有意义，且乘 1000 后可能超过定时器上限。读取端与设置页表单共用。 */
+export const MAX_VOICE_TIMEOUT_SECONDS = 600
+
 export const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
 /** 读取并校验语音服务配置。问题清单只写字段名，不回显字段值。 */
@@ -261,7 +264,10 @@ export async function loadVoiceService(
       hfEndpoint,
       read: pick('read', (v): v is 'lines' | 'all' => v === 'lines' || v === 'all', d.read, '应是 lines 或 all'),
       language: pick('language', isText, d.language, '应是非空文字'),
-      timeoutSeconds: pick('timeoutSeconds', isPositiveInt, d.timeoutSeconds, '应是正整数'),
+      timeoutSeconds: pick(
+        'timeoutSeconds', (v): v is number => isPositiveInt(v) && v <= MAX_VOICE_TIMEOUT_SECONDS, d.timeoutSeconds,
+        `应是 1 到 ${MAX_VOICE_TIMEOUT_SECONDS} 的整数`,
+      ),
       port: url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80,
       local,
     },
