@@ -231,6 +231,32 @@ describe('浏览器端加载与页面', () => {
     expect(button(tree, '重试')).toBeTruthy()
   })
 
+  it('插件端出错返回固定值：getState 给重试，测试连接只在本区域显示错误，页面其余部分照常', async () => {
+    const { mini } = await loadClient()
+    const failed = ok({ ok: false, text: '操作出错，详情见日志。' })
+    const remote = { getState: vi.fn(async () => failed) }
+    await clientModule.apply(fakeClientCtx(remote))
+    const root = mini.React.createElement(registered[0]!.component, { view: 'page' })
+    let tree = await mini.render(root)
+    expect(textOf(tree)).toContain('插件端返回的内容不对')
+    expect(button(tree, '重试')).toBeTruthy()
+
+    const remote2 = { getState: vi.fn(async () => ok(stateOf())), testVoice: vi.fn(async () => failed), voiceStatus: vi.fn(async () => failed) }
+    const second = await loadClient()
+    await clientModule.apply(fakeClientCtx(remote2))
+    const root2 = second.mini.React.createElement(registered[0]!.component, { view: 'page' })
+    const render2 = second.mini.render
+    tree = await render2(root2)
+    button(tree, '测试连接').props.onClick()
+    tree = await render2(root2)
+    expect(textOf(tree)).toContain('插件端返回的内容不对')
+    expect(textOf(tree)).toContain('语音服务：未启动。')
+    button(tree, '刷新状态').props.onClick()
+    tree = await render2(root2)
+    expect(textOf(tree)).toContain('语音服务：未启动。')
+    expect(textOf(tree)).toContain('生图')
+  })
+
   it('启动服务：先显示确认说明，点"开始"后才带上同一份说明再调一次', async () => {
     const { mini } = await loadClient()
     const detail = '- 运行环境（约 0.5GB）\n- 存放目录：/d/voice'
@@ -264,7 +290,7 @@ describe('浏览器端加载与页面', () => {
     expect(remote.voiceStatus.mock.calls.length).toBeGreaterThan(before)
   })
 
-  it('修改后保存：把整张表单交给插件端；校验错误显示在字段下', async () => {
+  it('修改后保存：只把改动的字段交给插件端；校验错误显示在字段下', async () => {
     const { mini } = await loadClient()
     const saveVoice = vi.fn(async () => ok({ ok: false, text: '有填写不对的地方，请改正后再保存。', errors: { modelsDir: '应是绝对路径' } }))
     await clientModule.apply(fakeClientCtx({ getState: vi.fn(async () => ok(stateOf())), saveVoice }))
@@ -277,7 +303,7 @@ describe('浏览器端加载与页面', () => {
     expect(save.props.disabled).toBe(false)
     save.props.onClick()
     tree = await mini.render(root)
-    expect(saveVoice).toHaveBeenCalledWith(expect.objectContaining({ endpoint: 'http://127.0.0.1:18123', modelsDir: 'rel/path' }))
+    expect(saveVoice).toHaveBeenCalledWith({ modelsDir: 'rel/path' })
     expect(textOf(tree)).toContain('应是绝对路径')
   })
 })

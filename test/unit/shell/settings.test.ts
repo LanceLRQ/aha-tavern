@@ -159,6 +159,22 @@ describe('saveVoice / saveImage', () => {
     expect((await fs.readFile(file, 'utf8')).trim()).toBe('voice:\n  endpoint: http://127.0.0.1:18123')
   })
 
+  it('只提交改动的字段：页面打开期间手改的别的字段不会被覆盖回旧值', async () => {
+    await setup(VOICE_YAML('  read: lines\n'))
+    await api.saveVoice({ read: 'all' })
+    const text = await fs.readFile(file, 'utf8')
+    expect(text).toContain('read: all')
+    expect(text).toContain('launch: mlx')
+    expect(text).toContain('modelsDir: /data/voice')
+  })
+
+  it('只提交改动的字段：文件里本来没有地址时仍要求填地址', async () => {
+    const r = await api.saveVoice({ read: 'all' })
+    expect(r.ok).toBe(false)
+    expect(r.errors).toHaveProperty('endpoint')
+    await expect(fs.access(file)).rejects.toBeTruthy()
+  })
+
   it('生图：保存并读回，models 展平', async () => {
     const r = await api.saveImage({ endpoint: 'http://h:8188', workflow: 'qwen-image-2.1-gguf', auto: false, unet: 'a.gguf', width: 640 })
     expect(r.ok).toBe(true)

@@ -30,5 +30,7 @@ describe('设置页的包清单约定', () => {
 
   it('peerDependencies 声明了设置页要用的协议包', () => {
     expect(pkg.peerDependencies['@deepseek-ai/dsh-typert-protocol']).toBeTruthy()
+    // 协议包缺席时插件照常装配，只是没有设置页：标为可选
+    expect(pkg.peerDependenciesMeta['@deepseek-ai/dsh-typert-protocol']).toEqual({ optional: true })
   })
 })

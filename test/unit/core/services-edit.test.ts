@@ -72,6 +72,9 @@ describe('parseVoiceForm：入参校验', () => {
     expect(okEdit(parseVoiceForm({ ...base, model: '1.7b' })).set.model).toBe('1.7b')
     expect(okEdit(parseVoiceForm({ ...base, model: 'mlx-community/Some-Model_8bit' })).set.model).toBe('mlx-community/Some-Model_8bit')
     expect(errorsOf(parseVoiceForm({ ...base, model: '../../etc' }))).toHaveProperty('model')
+    for (const bad of ['a/..', '../x', './x', 'a/.', '.hidden/x', 'org/.x', 'org/name/extra', 'plain', 'org/', '/name']) {
+      expect(errorsOf(parseVoiceForm({ ...base, model: bad })), bad).toHaveProperty('model')
+    }
     expect(errorsOf(parseVoiceForm({ ...base, model: 'a b' }))).toHaveProperty('model')
     expect(okEdit(parseVoiceForm({ ...base, model: '' })).remove).toContain('model')
   })
@@ -106,6 +109,26 @@ describe('parseVoiceForm：入参校验', () => {
   it('页面不认识的键被忽略，不会写进文件', () => {
     const edit = okEdit(parseVoiceForm({ ...base, evil: 'x', __proto__: { a: 1 } }))
     expect(Object.keys(edit.set)).toEqual(['endpoint'])
+  })
+})
+
+describe('parseVoiceForm：只提交改动过的字段', () => {
+  it('没传 endpoint 但给了当前地址：不写 endpoint，也不报必填', () => {
+    const r = parseVoiceForm({ read: 'all' }, { currentEndpoint: 'http://127.0.0.1:18123' })
+    expect(okEdit(r).set).toEqual({ read: 'all' })
+  })
+  it('launch 为 mlx 时按当前地址判断是否本机', () => {
+    expect(errorsOf(parseVoiceForm({ launch: 'mlx' }, { currentEndpoint: 'http://192.168.1.2:1' }))).toHaveProperty('launch')
+    expect(okEdit(parseVoiceForm({ launch: 'mlx' }, { currentEndpoint: 'http://localhost:1' })).set.launch).toBe('mlx')
+  })
+  it('没有当前地址、也没传：仍然必填', () => {
+    expect(errorsOf(parseVoiceForm({ read: 'all' }, { currentEndpoint: '' }))).toHaveProperty('endpoint')
+  })
+  it('传了空 endpoint 是错误，不会被当成"没改"', () => {
+    expect(errorsOf(parseVoiceForm({ endpoint: '' }, { currentEndpoint: 'http://127.0.0.1:1' }))).toHaveProperty('endpoint')
+  })
+  it('生图同理', () => {
+    expect(okEdit(parseImageForm({ width: 640 }, { currentEndpoint: 'http://h:1' }) as any).set).toEqual({ width: 640 })
   })
 })
 
@@ -258,6 +281,16 @@ describe('updateServicesFile：改写服务配置', () => {
   it('节本身不是映射（比如写成了文字）：拒绝改写', async () => {
     await fs.writeFile(file, 'voice: hello\n', 'utf8')
     await expect(updateServicesFile(file, 'voice', { set: { endpoint: 'http://x:1' }, remove: [] })).rejects.toMatchObject({ code: 'format' })
+  })
+
+  it('长字符串与长注释保存后不被折行', async () => {
+    const longStyle = '很长的画风描述 '.repeat(40).trim()
+    const longComment = `# ${'这是一条很长的注释 '.repeat(30).trim()}`
+    await fs.writeFile(file, `${longComment}\nimage:\n  endpoint: http://h:1\n  style: ${longStyle}\n`, 'utf8')
+    await updateServicesFile(file, 'image', { set: { steps: 8 }, remove: [] })
+    const text = await fs.readFile(file, 'utf8')
+    expect(text).toContain(longComment)
+    expect(text).toContain(`style: ${longStyle}\n`)
   })
 
   it('原子写：目录里不留临时文件与锁', async () => {

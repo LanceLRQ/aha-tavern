@@ -133,7 +133,10 @@ export function createSettingsApi(rt: Runtime, deps: Partial<SettingsApiDeps> = 
     }
   }
 
-  async function save(section: ServicesSection, parsed: FormResult): Promise<SaveResult> {
+  async function save(section: ServicesSection, parse: (opts: { currentEndpoint: string }) => FormResult): Promise<SaveResult> {
+    // 页面只提交改动的字段；没提交地址时，用文件里现有的地址做关联校验
+    const current = (await readServicesForm(rt.servicesPath()))[section].endpoint
+    const parsed = parse({ currentEndpoint: current.trim() })
     if (!parsed.ok) return { ok: false, errors: parsed.errors, text: '有填写不对的地方，请改正后再保存。' }
     try {
       await updateServicesFile(rt.servicesPath(), section, parsed.edit)
@@ -282,8 +285,8 @@ export function createSettingsApi(rt: Runtime, deps: Partial<SettingsApiDeps> = 
 
   return {
     getState,
-    saveVoice: (form) => save('voice', parseVoiceForm(form)),
-    saveImage: (form) => save('image', parseImageForm(form)),
+    saveVoice: (form) => save('voice', (o) => parseVoiceForm(form, o)),
+    saveImage: (form) => save('image', (o) => parseImageForm(form, o)),
     voiceStatus,
     voiceStart,
     voiceStop,

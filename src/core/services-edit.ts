@@ -26,7 +26,14 @@ export class ServicesEditError extends Error {
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
 const URL_SHAPE = /^https?:\/\/\S+$/
-const MODEL_NAME = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$|^[A-Za-z0-9][\w.-]*$/
+const MODEL_ALIAS = /^(0\.6b|1\.7b)$/i
+const MODEL_SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/
+/** 简称（0.6b、1.7b）或 `组织/名字`；每段只含字母数字与 -_.，不以 . 开头（也就不会是 . 或 ..）。 */
+const isModelName = (v: string): boolean => {
+  if (MODEL_ALIAS.test(v)) return true
+  const parts = v.split('/')
+  return parts.length === 2 && parts.every((p) => MODEL_SEGMENT.test(p))
+}
 const BUILTIN_WORKFLOW = /^[A-Za-z0-9][\w.-]*$/
 const LANGUAGE = /^[A-Za-z][A-Za-z_-]{0,29}$/
 const MODEL_FILE = /^[\w][\w .()+/-]{0,199}$/
@@ -102,7 +109,25 @@ function checkEndpoint(v: string): { error: string } | { value: string; url: URL
   return { value: v.replace(/\/+$/, ''), url }
 }
 
-function requireEndpoint(form: Form): URL | null {
+/** 解析选项：currentEndpoint 是文件里现有的地址；表单没带 endpoint（没改）时用它做关联校验，且不重写。 */
+export interface ParseOptions {
+  currentEndpoint?: string
+}
+
+function currentUrl(opts: ParseOptions): URL | null {
+  try {
+    return opts.currentEndpoint && URL_SHAPE.test(opts.currentEndpoint) ? new URL(opts.currentEndpoint) : null
+  } catch {
+    return null
+  }
+}
+
+function requireEndpoint(form: Form, opts: ParseOptions): URL | null {
+  if (form.input.endpoint === undefined) {
+    const url = currentUrl(opts)
+    if (!url) form.fail('endpoint', '必填')
+    return url
+  }
   const raw = typeof form.input.endpoint === 'string' ? form.input.endpoint.trim() : ''
   if (raw === '') {
     form.fail('endpoint', '必填')
@@ -131,15 +156,15 @@ function toForm(input: unknown): Form | null {
 const NOT_OBJECT: FormResult = { ok: false, errors: { _: '提交的内容格式不对' } }
 
 /** 校验语音表单。没传的字段不动，空串表示恢复默认（删除该字段）。页面不认识的键一律忽略。 */
-export function parseVoiceForm(input: unknown): FormResult {
+export function parseVoiceForm(input: unknown, opts: ParseOptions = {}): FormResult {
   const form = toForm(input)
   if (!form) return NOT_OBJECT
-  const url = requireEndpoint(form)
+  const url = requireEndpoint(form, opts)
   form.choice('launch', ['mlx', 'none'] as const)
   if (form.set.launch === 'mlx' && url && !LOCAL_HOSTS.has(url.hostname)) {
     form.fail('launch', '代为启动时地址必须是本机地址（127.0.0.1 或 localhost）')
   }
-  form.text('model', 'model', (v) => (MODEL_NAME.test(v) && v.length <= 200 ? null : '应是 0.6b、1.7b 或完整的模型名'))
+  form.text('model', 'model', (v) => (isModelName(v) && v.length <= 200 ? null : '应是 0.6b、1.7b 或完整的模型名'))
   form.text('modelsDir', 'modelsDir', (v) => {
     if (v.length > 500) return '太长'
     if (!isAbsoluteLike(v)) return '应是绝对路径（可以用 ~ 开头）'
@@ -156,10 +181,10 @@ export function parseVoiceForm(input: unknown): FormResult {
 }
 
 /** 校验生图表单；规则同语音。三个模型文件名写成 `models.unet` 等点号路径。 */
-export function parseImageForm(input: unknown): FormResult {
+export function parseImageForm(input: unknown, opts: ParseOptions = {}): FormResult {
   const form = toForm(input)
   if (!form) return NOT_OBJECT
-  requireEndpoint(form)
+  requireEndpoint(form, opts)
   form.text('workflow', 'workflow', (v) => {
     if (v.length > 500) return '太长'
     if (v.startsWith('/')) return hasDotDot(v) ? '路径里不能有 ..' : null
@@ -220,7 +245,8 @@ export async function updateServicesFile(file: string, section: ServicesSection,
     // 删光了的 models 整段去掉
     const models = doc.getIn([section, 'models'], true)
     if (isMap(models) && models.items.length === 0) doc.deleteIn([section, 'models'])
-    return doc.toString()
+    // lineWidth: 0 不折行，否则长字符串与长注释会被重排
+    return doc.toString({ lineWidth: 0 })
   })
 }
 

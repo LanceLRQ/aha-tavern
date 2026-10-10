@@ -1,5 +1,7 @@
 // 设置页里不依赖 React 的部分：字段表、远程调用结果的拆包、表单是否改动。
-import type { SettingsState } from '../shell/settings'
+import type {
+  ActionResult, SaveResult, SettingsState, StartResultView, TestResult, VoiceStatusView,
+} from '../shell/settings'
 
 export type Fields = Record<string, string>
 
@@ -56,6 +58,40 @@ export const SUGGEST_HF = ['https://hf-mirror.com'] as const
 export function unwrap<T>(r: unknown): T {
   if (r && typeof r === 'object' && (r as { ok?: unknown }).ok === true && 'value' in r) return (r as { value: T }).value
   throw new Error('和插件通信失败，请确认插件已启用后刷新页面。')
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
+const VOICE_STATES = ['not-configured', 'invalid', 'starting', 'failed', 'running', 'stopped']
+
+export const isActionResult = (v: unknown): v is ActionResult => isObj(v) && typeof v.ok === 'boolean' && typeof v.text === 'string'
+export const isSaveResult = (v: unknown): v is SaveResult =>
+  isActionResult(v) && ((v as SaveResult).errors === undefined || isObj((v as SaveResult).errors))
+export const isTestResult = (v: unknown): v is TestResult =>
+  isObj(v) && typeof v.ok === 'boolean' && Array.isArray(v.lines) &&
+  v.lines.every((l) => isObj(l) && typeof l.mark === 'string' && typeof l.text === 'string')
+export const isVoiceStatus = (v: unknown): v is VoiceStatusView =>
+  isObj(v) && typeof v.state === 'string' && VOICE_STATES.includes(v.state) && typeof v.text === 'string' &&
+  typeof v.canStart === 'boolean' && typeof v.canStop === 'boolean'
+export const isStartResult = (v: unknown): v is StartResultView =>
+  isActionResult(v) && ['need-confirm', 'starting', 'done'].includes((v as unknown as StartResultView).result) &&
+  ((v as unknown as StartResultView).confirm === undefined ||
+    (isObj((v as unknown as StartResultView).confirm) && typeof (v as unknown as StartResultView).confirm!.detail === 'string'))
+export const isSettingsState = (v: unknown): v is SettingsState =>
+  isObj(v) && typeof v.servicesPath === 'string' && Array.isArray(v.workflows) &&
+  isObj(v.voice) && isObj(v.voice.form) && isObj(v.image) && isObj(v.image.form) && isObj(v.defaults) &&
+  isObj(v.problems) && Array.isArray(v.problems.voice) && Array.isArray(v.problems.image) && Array.isArray(v.problems.file) &&
+  isVoiceStatus(v.voiceStatus)
+
+/** 拆包并判别形状：通信失败或形状不对（比如插件端出错返回的固定值）都抛出中文说明，由调用处显示在对应区域。 */
+export function guard<T>(r: unknown, check: (v: unknown) => v is T): T {
+  const value = unwrap<unknown>(r)
+  if (!check(value)) throw new Error('插件端返回的内容不对，可能是操作出错了，详情见日志。')
+  return value
+}
+
+/** 只留下与已保存值不同的字段；保存时只提交这些，免得覆盖用户在别处改过的其它字段。 */
+export function changedFields(form: Fields, saved: Fields): Fields {
+  return Object.fromEntries(Object.entries(form).filter(([k, v]) => v !== (saved[k] ?? '')))
 }
 
 export function isDirty(form: Fields, saved: Fields): boolean {

@@ -1,11 +1,10 @@
 // 设置页的界面。只用原生 HTML 元素和宿主提供的 React，样式用继承色与半透明边框，明暗主题下都能看。
 // 所有结果文字来自插件端（与对应的 /aha 命令同一份文案）；这里不拼服务端原文。
 import { createElement as h, useEffect, useRef, useState } from 'react'
-import type {
-  ActionResult, SaveResult, SettingsState, StartResultView, TestResult, VoiceStatusView,
-} from '../shell/settings'
+import type { SettingsState, StartResultView, TestResult, VoiceStatusView } from '../shell/settings'
 import {
-  IMAGE_FIELDS, SUGGEST_HF, SUGGEST_MODELS, VOICE_FIELDS, isDirty, placeholders, unwrap, type FieldDef, type Fields,
+  IMAGE_FIELDS, SUGGEST_HF, SUGGEST_MODELS, VOICE_FIELDS, changedFields, guard, isActionResult, isDirty, isSaveResult,
+  isSettingsState, isStartResult, isTestResult, isVoiceStatus, placeholders, type FieldDef, type Fields,
 } from './logic'
 
 /** 插件端远程服务的方法；每个都返回 { ok, value }。 */
@@ -121,7 +120,7 @@ function useSection(
 
   const doSave = () => run('save', async () => {
     try {
-      const r = unwrap<SaveResult>(await save(form))
+      const r = guard(await save(changedFields(form, saved)), isSaveResult)
       setErrors(r.errors ?? {})
       setMessage({ text: r.text, ok: r.ok })
       if (r.ok) await props.reload()
@@ -131,7 +130,7 @@ function useSection(
   })
   const doTest = () => run('test', async () => {
     try {
-      setTestResult(unwrap<TestResult>(await test()))
+      setTestResult(guard(await test(), isTestResult))
     } catch (e) {
       setTestResult({ ok: false, lines: [{ mark: '✗', text: (e as Error).message }] })
     }
@@ -172,7 +171,7 @@ function VoiceSection(props: SectionProps) {
 
   const refresh = async () => {
     try {
-      setStatus(unwrap<VoiceStatusView>(await remote.voiceStatus()))
+      setStatus(guard(await remote.voiceStatus(), isVoiceStatus))
     } catch (e) {
       setNote({ text: (e as Error).message, ok: false })
     }
@@ -189,7 +188,7 @@ function VoiceSection(props: SectionProps) {
     setActionBusy(true)
     setNote(null)
     try {
-      const r = unwrap<StartResultView>(await remote.voiceStart(confirmedDetail === undefined ? {} : { confirmed: true, detail: confirmedDetail }))
+      const r = guard(await remote.voiceStart(confirmedDetail === undefined ? {} : { confirmed: true, detail: confirmedDetail }), isStartResult)
       if (r.result === 'need-confirm' && r.confirm) {
         setConfirm(r.confirm)
       } else {
@@ -207,7 +206,7 @@ function VoiceSection(props: SectionProps) {
     setActionBusy(true)
     setNote(null)
     try {
-      const r = unwrap<ActionResult>(await remote.voiceStop())
+      const r = guard(await remote.voiceStop(), isActionResult)
       setNote({ text: r.text, ok: r.ok })
       await refresh()
     } catch (e) {
@@ -256,7 +255,7 @@ function PageBody(props: { getRemote: () => Remote }) {
   const remote = props.getRemote()
   const reload = async () => {
     try {
-      setState(unwrap<SettingsState>(await remote.getState()))
+      setState(guard(await remote.getState(), isSettingsState))
       setError('')
     } catch (e) {
       setError((e as Error).message)
