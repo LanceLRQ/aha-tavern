@@ -342,7 +342,7 @@ describe('设计模型的下载确认', () => {
     script.push(...pickAndUse())
     await exec()
     expect(questionsOf().map((q: { id: string }) => q.id)).not.toContain('voice-design-download')
-    expect(restartService.mock.calls.every((c) => c[1] === undefined)).toBe(true)
+    expect(restartService.mock.calls.every((c) => c[1]?.offline === undefined)).toBe(true)
   })
 })
 
@@ -367,25 +367,58 @@ describe('生成', () => {
     expect(synth.mock.calls.map((c) => c[1].timeoutMs)).toEqual([30 * 60_000, 5 * 60_000, 5 * 60_000])
   })
 
-  it('时长不在 2 到 20 秒、或不是 wav 的丢弃并补生成', async () => {
-    const outs = [makeWav(1.5), makeWav(21), Buffer.from('not a wav at all, definitely'), makeWav(2), makeWav(20), makeWav(6)]
+  it('时长不在 3 到 15 秒（与保存时的要求一致）、或不是 wav 的丢弃并补生成', async () => {
+    const outs = [makeWav(2.5), makeWav(15.5), Buffer.from('not a wav at all, definitely'), makeWav(3), makeWav(15), makeWav(6)]
     synth.mockImplementation(async () => ({ bytes: new Uint8Array(outs.shift()!), format: 'wav' }))
     script.push('取消')
     await exec()
     expect(synth).toHaveBeenCalledTimes(5) // 总尝试 5 次封顶
     const q = questionsOf()[0]
     expect(q.options.map((o: { label: string }) => o.label)).toEqual(['第 1 段', '第 2 段', '重新生成', '取消'])
-    expect(q.detail).toContain('2 秒')
-    expect(q.detail).toContain('20 秒')
+    expect(q.detail).toContain('3 秒')
+    expect(q.detail).toContain('15 秒')
   })
 
-  it('一段都没有：生成失败；全部失败也只尝试 5 次', async () => {
+  it('过滤上下限直接取自保存时的常量', async () => {
+    const { MIN_VOICE_SECONDS, MAX_VOICE_SECONDS } = await import('../../../src/core/voice')
+    const outs = [makeWav(MIN_VOICE_SECONDS - 0.1), makeWav(MAX_VOICE_SECONDS + 0.1), makeWav(MIN_VOICE_SECONDS)]
+    synth.mockImplementation(async () => ({ bytes: new Uint8Array(outs.shift() ?? makeWav(MAX_VOICE_SECONDS)), format: 'wav' }))
+    script.push('取消')
+    await exec()
+    expect(questionsOf()[0].options.map((o: { label: string }) => o.label)).toEqual(['第 1 段', '第 2 段', '第 3 段', '重新生成', '取消'])
+  })
+
+  it('全是过短的段：生成失败，不会有选了存不下的段', async () => {
+    synth.mockImplementation(async () => ({ bytes: new Uint8Array(makeWav(2.5)), format: 'wav' }))
+    expect(await exec()).toContain('generation-failed')
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('一段都没有：生成失败；同一种失败连续两次就不再试', async () => {
     synth.mockRejectedValue(new TtsError('bad-response', 'secret server text'))
     const r = await exec()
     expect(r).toContain('generation-failed')
     expect(r).not.toContain('secret')
-    expect(synth).toHaveBeenCalledTimes(5)
+    expect(synth).toHaveBeenCalledTimes(2)
     expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('失败种类交替出现不算连续：继续尝试到 5 次封顶', async () => {
+    const kinds = ['timeout', 'bad-response', 'timeout', 'bad-response', 'timeout'] as const
+    let i = 0
+    synth.mockImplementation(async () => { throw new TtsError(kinds[i++ % kinds.length]!) })
+    expect(await exec()).toContain('generation-failed')
+    expect(synth).toHaveBeenCalledTimes(5)
+  })
+
+  it('中间成功一次就重新计连续失败', async () => {
+    synth.mockRejectedValueOnce(new TtsError('timeout'))
+    synth.mockResolvedValueOnce({ bytes: new Uint8Array(makeWav(5)), format: 'wav' })
+    synth.mockRejectedValueOnce(new TtsError('timeout'))
+    synth.mockResolvedValue({ bytes: new Uint8Array(makeWav(5)), format: 'wav' })
+    script.push('取消')
+    await exec()
+    expect(questionsOf()[0].options).toHaveLength(5)
   })
 
   it('服务连不上：不再重试', async () => {
@@ -491,17 +524,6 @@ describe('试听与挑选', () => {
     onRegistered.mockRejectedValue(new Error('boom'))
     script.push(...pickAndUse())
     expect(await exec()).toContain('voice designed and registered')
-  })
-
-  it('选的那段存不下（时长不在 3 到 15 秒）：返回说明，不改现有音色', async () => {
-    synth.mockImplementation(async () => ({ bytes: new Uint8Array(makeWav(2.5)), format: 'wav' }))
-    script.push(...pickAndUse())
-    const r = await exec()
-    expect(r).toContain('too-short')
-    expect(r).toContain('3 to 15 seconds')
-    expect(await exists(path.join(charDir, VOICE_AUDIO_FILE))).toBe(false)
-    expect(unload).toHaveBeenCalled()
-    expect(await tmpEntries()).toEqual([])
   })
 
   it('没有播放器：不播放；卡片写明无法试听并列出文件路径；选段直接进第二级', async () => {
@@ -627,7 +649,7 @@ describe('收尾', () => {
     expect(unload).toHaveBeenCalledWith(VOICE_DESIGN_MODEL, { timeoutMs: 10_000 })
     expect(restartService).toHaveBeenCalledTimes(1)
     expect(restartService.mock.calls[0]![0]).toMatchObject({ modelsDir: '/data/voice' })
-    expect(restartService.mock.calls[0]![1]).toBeUndefined()
+    expect(restartService.mock.calls[0]![1]).toEqual({ signal: expect.any(AbortSignal) })
     expect(await tmpEntries()).toEqual([])
   })
 
@@ -680,6 +702,29 @@ describe('收尾', () => {
     expect(restartService).not.toHaveBeenCalled()
     expect(r).not.toContain('restart failed')
     expect(await tmpEntries()).toEqual([])
+  })
+
+  it('流程里出意外且收尾重启也失败：通用说明之外同样附重启失败的提示', async () => {
+    restartService.mockResolvedValue(false)
+    script.push(new Error('/secret/path exploded'))
+    const r = await exec()
+    expect(r.startsWith('error:')).toBe(true)
+    expect(r).not.toContain('exploded')
+    expect(r.endsWith('service: restart failed; ask the user to run /aha 语音 启动')).toBe(true)
+  })
+
+  it('收尾超时：给重启的信号被中止并记日志，中止后不再继续', async () => {
+    let seen: AbortSignal | undefined
+    restartService.mockImplementation((_s: unknown, o?: { signal?: AbortSignal }) => {
+      seen = o?.signal
+      return new Promise(() => undefined)
+    })
+    script.push('取消')
+    const r = await exec()
+    expect(seen).toBeInstanceOf(AbortSignal)
+    expect(seen!.aborted).toBe(true)
+    expect(r).toContain('restart failed')
+    expect(log.warn.mock.calls.some((c: string[]) => String(c[0]).includes('收尾超时'))).toBe(true)
   })
 
   it('重启失败：返回值附一句提示，结果本身不变', async () => {

@@ -9,7 +9,7 @@ import path from 'node:path'
 import { findPlayer, type Player } from '../core/player'
 import { hasUserInfo, VOICE_DESIGN_MODEL, type VoiceServiceSettings } from '../core/services'
 import { createTtsClient, TtsError, type TtsClient } from '../core/tts'
-import { readVoice, saveDesignedVoice, wavInfo } from '../core/voice'
+import { MAX_VOICE_SECONDS, MIN_VOICE_SECONDS, readVoice, saveDesignedVoice, wavInfo } from '../core/voice'
 import { inspect as inspectServer, modelDownloaded } from '../core/voice-server'
 import { answerItem, isAbort, shownName, type AskFn, type AskItem, type DeclineTracker, type SessionGate } from './confirm'
 import type { HostAgent } from './context'
@@ -33,8 +33,8 @@ export const DESIGN_SAMPLE_RANGE = { min: 10, max: 60 } as const
 const SEGMENTS = 3
 const MAX_ATTEMPTS = 5
 const MAX_ROUNDS = 3
-/** 每段试听要求的时长（秒）。 */
-const CLIP_SECONDS = { min: 2, max: 20 } as const
+/** 每段试听要求的时长（秒）：与采用时保存音色的要求一致，免得选了存不下。 */
+const CLIP_SECONDS = { min: MIN_VOICE_SECONDS, max: MAX_VOICE_SECONDS } as const
 /** 整个流程里第一次合成可能含模型下载，等得久；其后各段只合成。 */
 const FIRST_SYNTH_MS = 30 * 60_000
 const NEXT_SYNTH_MS = 5 * 60_000
@@ -56,7 +56,7 @@ export interface VoiceDesignDeps {
   inspect: typeof inspectServer
   modelDownloaded: typeof modelDownloaded
   /** 由插件重启服务；offline 不传时按所配模型是否已下载。 */
-  restartService(s: VoiceServiceSettings, opts?: { offline?: boolean }): Promise<boolean>
+  restartService(s: VoiceServiceSettings, opts?: { offline?: boolean; signal?: AbortSignal }): Promise<boolean>
   lastStartOffline(modelsDir: string): boolean | undefined
   isLaunching(modelsDir: string): boolean
   /** 系统临时目录；每次流程在它下面建专用目录。 */
@@ -183,6 +183,7 @@ async function designVoice(
   /** 生成一批试听；凑满 SEGMENTS 段或尝试满 MAX_ATTEMPTS 次为止。 */
   async function generate(round: number): Promise<Clip[] | 'aborted'> {
     const clips: Clip[] = []
+    let lastKind: string | null = null
     for (let attempt = 1; attempt <= MAX_ATTEMPTS && clips.length < SEGMENTS; attempt++) {
       if (signal?.aborted) return 'aborted'
       const timeoutMs = firstSynth ? FIRST_SYNTH_MS : NEXT_SYNTH_MS
@@ -202,12 +203,15 @@ async function designVoice(
         const file = path.join(tmp, `r${round}-${n}.wav`)
         await fs.writeFile(file, audio.bytes, { mode: 0o600 })
         clips.push({ n, file, seconds: wav.seconds })
+        lastKind = null
       } catch (e) {
         if (signal?.aborted || (e instanceof TtsError && e.kind === 'cancelled')) return 'aborted'
         const kind = e instanceof TtsError ? e.kind : 'other'
         const detail = e instanceof TtsError ? e.detail || e.message : (e as Error).message
         log.warn(`音色设计：第 ${round} 轮第 ${attempt} 次生成失败（${kind}）：${redactUrls(detail)}`)
-        if (kind === 'unreachable') break
+        // 连不上，或同一种失败连续两次：再试也没用，别让用户干等
+        if (kind === 'unreachable' || kind === lastKind) break
+        lastKind = kind
       }
     }
     return clips
@@ -299,7 +303,7 @@ async function designVoice(
   }
 
   /** 收尾：停掉还在播的试听、删临时目录、卸载设计模型、重启服务释放内存。返回重启是否失败。 */
-  async function cleanup(): Promise<boolean> {
+  async function cleanup(abort: AbortSignal): Promise<boolean> {
     try {
       await deps.speaker.stopIfOwner(owner)
     } catch (e) {
@@ -314,29 +318,41 @@ async function designVoice(
     }
     // 卸载不归还内存，要重启服务进程；服务已不是插件启动的（比如用户中途停了它）就不管
     const now = await deps.inspect(s, deps.rt.voiceServerDeps(), { sizes: false })
-    if (!now.owned) return false
-    return !(await deps.restartService(s))
+    if (!now.owned || abort.aborted) return false
+    return !(await deps.restartService(s, { signal: abort }))
   }
 
   let msg: string
+  let failure: unknown
+  let failed = false
   try {
     msg = await run()
+  } catch (e) {
+    failed = true
+    failure = e
+    msg = ''
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const abort = new AbortController()
+  const limit = new Promise<'timeout'>((r) => { timer = setTimeout(() => r('timeout'), deps.cleanupLimitMs ?? CLEANUP_LIMIT_MS) })
+  try {
+    const out = await Promise.race([cleanup(abort.signal).catch((e): boolean => {
+      log.warn(`音色设计收尾出错：${redactUrls((e as Error).message)}`)
+      return true
+    }), limit])
+    if (out === 'timeout') {
+      // 让后台的重启就此作罢，免得之后与用户再次启动服务撞车
+      abort.abort()
+      log.warn('音色设计收尾超时，已中止后台的重启')
+      restartFailed = true
+    } else if (out) restartFailed = true
   } finally {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const limit = new Promise<'timeout'>((r) => { timer = setTimeout(() => r('timeout'), deps.cleanupLimitMs ?? CLEANUP_LIMIT_MS) })
-    try {
-      const out = await Promise.race([cleanup().catch((e): boolean => {
-        log.warn(`音色设计收尾出错：${redactUrls((e as Error).message)}`)
-        return true
-      }), limit])
-      if (out === 'timeout') {
-        log.warn('音色设计收尾超时')
-        restartFailed = true
-      } else if (out) restartFailed = true
-    } finally {
-      clearTimeout(timer)
-      await fs.rm(tmp, { recursive: true, force: true }).catch(() => undefined)
-    }
+    clearTimeout(timer)
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => undefined)
+  }
+  if (failed) {
+    log.warn(`工具 aha_voice_design 出错：${(failure as Error).message}`)
+    msg = fail('voice not designed, internal error; try again or tell the user to check the files')
   }
   return restartFailed ? `${msg}; ${T.restartFailed}` : msg
 }

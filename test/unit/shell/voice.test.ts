@@ -913,6 +913,24 @@ describe('restartVoiceService：由插件重启服务', () => {
     expect(await restartVoiceService(rt, settings(), { offline: true, ops: ops as unknown as VoiceOps })).toBe(false)
     expect(lastStartOffline(DIR)).toBeUndefined()
   })
+  it('把信号传给 start；停止之后信号已中止则不再启动', async () => {
+    const rt = setup()
+    const ac = new AbortController()
+    await restartVoiceService(rt, settings(), { offline: true, signal: ac.signal, ops: ops as unknown as VoiceOps })
+    expect(ops.start.mock.calls[0]![2]).toMatchObject({ signal: ac.signal })
+    ops.start.mockClear()
+    ops.stop.mockImplementation(async () => { ac.abort(); return { status: 'stopped', forced: false } })
+    expect(await restartVoiceService(rt, settings(), { offline: true, signal: ac.signal, ops: ops as unknown as VoiceOps })).toBe(false)
+    expect(ops.start).not.toHaveBeenCalled()
+  })
+  it('信号一开始就已中止：连停都不停', async () => {
+    const rt = setup()
+    const ac = new AbortController()
+    ac.abort()
+    expect(await restartVoiceService(rt, settings(), { offline: true, signal: ac.signal, ops: ops as unknown as VoiceOps })).toBe(false)
+    expect(ops.stop).not.toHaveBeenCalled()
+    expect(ops.start).not.toHaveBeenCalled()
+  })
   it('重启后卸载时会停掉这个新进程', async () => {
     let cleanup!: () => Promise<void>
     const ctx: any = { effect: (fn: () => () => Promise<void>) => { cleanup = fn() } }

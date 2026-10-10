@@ -463,16 +463,20 @@ export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = re
  * 音色设计用它：卸载模型不归还内存，只能重启进程。
  */
 export async function restartVoiceService(
-  rt: Pick<Runtime, 'log' | 'voiceServerDeps'>, s: VoiceServiceSettings, opts: { offline?: boolean; ops?: VoiceOps } = {},
+  rt: Pick<Runtime, 'log' | 'voiceServerDeps'>, s: VoiceServiceSettings,
+  opts: { offline?: boolean; ops?: VoiceOps; signal?: AbortSignal } = {},
 ): Promise<boolean> {
   const ops = opts.ops ?? realVoiceOps
   const deps = rt.voiceServerDeps()
+  if (opts.signal?.aborted) return false
   const state = instanceStates.get(rt)
   const offline = opts.offline ?? await ops.modelDownloaded(s.modelsDir, s.model)
   if (state?.started?.settings.modelsDir === s.modelsDir) state.started = null
   startOffline.delete(s.modelsDir)
   await ops.stop(s, deps)
-  const r = await ops.start(s, deps, { offline })
+  // 调用方已放弃（比如收尾超时）：不再起新进程
+  if (opts.signal?.aborted) return false
+  const r = await ops.start(s, deps, { offline, ...(opts.signal ? { signal: opts.signal } : {}) })
   if (!r.ok) {
     rt.log.warn(`重启语音服务未完成（${r.kind}）：${redactUrls(r.detail)}`)
     return false
