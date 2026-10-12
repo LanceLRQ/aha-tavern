@@ -24,9 +24,12 @@ export interface ImageRecord {
   redoOf: number | null
   /** 重新生成时沿用上一张的方向 */
   orientation: ImageOrientation
+  /** 用了哪套定妆图："default"、形象编号，没带定妆图为 null；重新生图沿用它 */
+  look: string | null
 }
 
-export type NewImageRecord = Omit<ImageRecord, 'n' | 'ts' | 'file'> & { ts?: string }
+/** look 缺省记 null，所以不带定妆图的调用方不用改。 */
+export type NewImageRecord = Omit<ImageRecord, 'n' | 'ts' | 'file' | 'look'> & { ts?: string; look?: string | null }
 
 export interface SavedImage {
   n: number
@@ -54,7 +57,10 @@ function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
 function parseRecord(line: string): ImageRecord | null {
   try {
     const v = JSON.parse(line) as ImageRecord
-    if (v && typeof v === 'object' && Number.isInteger(v.n) && v.n > 0) return v
+    if (v && typeof v === 'object' && Number.isInteger(v.n) && v.n > 0) {
+      // 旧记录没有 look，按没带定妆图处理
+      return { ...v, look: typeof v.look === 'string' && v.look ? v.look : null }
+    }
   } catch {
     // 损坏行跳过
   }
@@ -153,6 +159,7 @@ export async function saveImage(
       workflow: record.workflow,
       redoOf: record.redoOf,
       orientation: record.orientation,
+      look: record.look ?? null,
     }
     const prefix = (await endsWithoutNewline(logFile)) ? '\n' : ''
     await fs.appendFile(logFile, prefix + JSON.stringify(full) + '\n', 'utf8')

@@ -142,3 +142,23 @@ describe('lastImage', () => {
     expect(await lastImage(dir, 'zzzz')).toBeNull()
   })
 })
+
+describe('look 字段', () => {
+  it('缺省记 null；给了就记下来；重新读出来一致', async () => {
+    const c = await mk()
+    const a = await saveImage(dir, c.id, png, 'png', rec())
+    expect(a.record.look).toBeNull()
+    const b = await saveImage(dir, c.id, png, 'png', rec({ look: 'default' }))
+    const d = await saveImage(dir, c.id, png, 'png', rec({ look: 'l_abcdefgh' }))
+    expect([b.record.look, d.record.look]).toEqual(['default', 'l_abcdefgh'])
+    expect((await lastImage(dir, c.id))?.look).toBe('l_abcdefgh')
+  })
+
+  it('旧记录没有 look 这一项：读出来按 null', async () => {
+    const c = await mk()
+    const old = { n: 1, ts: 't', file: 'images/001.png', scene: 's', prompt: 'p', seed: 1, width: 8, height: 8, steps: 1, workflow: 'w', redoOf: null, orientation: 'square' }
+    await fs.writeFile(path.join(c.dir, 'images.jsonl'), JSON.stringify(old) + '\n')
+    const r = await lastImage(dir, c.id)
+    expect(r).toMatchObject({ n: 1, look: null })
+  })
+})
