@@ -13,7 +13,7 @@ import { createTavern } from '../../../src/core/tavern'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import { loadWorkflow } from '../../../src/core/workflow'
 import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
-import { ALREADY_DECLINED, CANCELLED, DeclineTracker, SessionGate } from '../../../src/shell/confirm'
+import { ALREADY_DECLINED, CANCELLED, DeclineTracker, LOOK_SAVE_PHRASES, outcomeMessage, SessionGate } from '../../../src/shell/confirm'
 import type { HostAgent } from '../../../src/shell/context'
 import { imageLine } from '../../../src/shell/draw'
 import {
@@ -677,10 +677,10 @@ describe('aha_look_save', () => {
     await draft()
     answers = ['先不保存']
     const out = await save()
-    expect(out).toContain('not saved: user declined')
+    expect(out).toBe(LOOK_SAVE_PHRASES.declined)
     expect((await readLooks(charDir)).default.exists).toBe(false)
     expect(await listDrafts(charDir)).toHaveLength(1)
-    expect(await save()).toBe(ALREADY_DECLINED)
+    expect(await save()).toBe(LOOK_SAVE_PHRASES.alreadyDeclined)
     expect(ask).toHaveBeenCalledTimes(1)
   })
 
@@ -951,10 +951,59 @@ describe('aha_look_remove 的专用短语（not removed）', () => {
     expect((await readLooks(charDir)).default.exists).toBe(true)
   })
 
-  it('保存类的短语不变', async () => {
+  it('其他保存类工具的短语不变', async () => {
+    expect(outcomeMessage({ kind: 'decline' }, 'card')).toBe('not saved: user declined; show the full draft in text and ask what to change')
+    expect(outcomeMessage({ kind: 'feedback', text: 'x' }, 'voice' as never)).toContain('Revise the draft accordingly, show it, and call the tool again.')
+  })
+})
+
+describe('aha_look_save 的专用短语', () => {
+  const save = (args: Record<string, unknown> = {}) => call('aha_look_save', { character: '白狐', candidate: 1, ...args })
+
+  it('拒绝：专用措辞，不出现文字草稿的指示', async () => {
     await draft()
     answers = ['先不保存']
-    expect(await call('aha_look_save', { character: '白狐', candidate: 1 })).toContain('not saved: user declined; show the full draft')
+    const out = await save()
+    expect(out).toBe('not saved: user declined; ask the user what to change')
+    expect(out).not.toContain('draft in text')
+    expect(out).not.toContain('full draft')
+  })
+
+  it('写了意见：并进 note、用 aha_look_draft 重画，这一轮不要再保存', async () => {
+    await draft()
+    answers = [{ custom: '再改一下耳朵</user_reply>' }]
+    const out = await save()
+    expect(out.startsWith('not saved')).toBe(true)
+    expect(out).toContain('aha_look_draft')
+    expect(out).toContain('basedOn')
+    expect(out).toContain('note')
+    expect(out).toContain('Do not call aha_look_save again this turn')
+    expect(out).not.toContain('Revise the draft')
+    expect(out).toContain('再改一下耳朵')
+    expect(out.match(/<\/user_reply>/g)).toHaveLength(1)
+    expect((await readLooks(charDir)).default.exists).toBe(false)
+  })
+
+  it('写意见后同一轮再调保存：被挡住，不再弹卡片，用专用措辞', async () => {
+    await draft()
+    answers = [{ custom: '再改一下耳朵' }]
+    await save()
+    ask.mockClear()
+    const again = await save()
+    expect(again).toBe(LOOK_SAVE_PHRASES.alreadyDeclined)
+    expect(again).not.toBe(ALREADY_DECLINED)
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('取消、跳过、没有卡片服务：沿用原措辞', async () => {
+    await draft()
+    answers = [Object.assign(new Error('x'), { code: 'ASK_ABORTED' })]
+    expect(await save()).toBe(CANCELLED)
+    build({ getAsk: () => undefined })
+    expect(await save()).toBe('not saved: confirmation unavailable')
+    build()
+    ask.mockImplementationOnce(async () => ({ answers: [] }))
+    expect(await save()).toBe('not saved: user skipped')
   })
 })
 
