@@ -444,3 +444,86 @@ describe('来源的特殊情况', () => {
     await expect(importCharacter(src, dst, { characterId: a.card.id, now: NOW })).rejects.toMatchObject({ code: 'character-not-found' })
   })
 })
+
+describe('形象随角色导入', () => {
+  const A = 'l_aaaaaaaa'
+  const B = 'l_bbbbbbbb'
+  const seed = async () => {
+    const a = await mk('白狐', { looks: [{ id: A, name: '睁眼', when: '认真时' }, { id: B, name: '便装', when: '' }] })
+    const looks = path.join(a.dir, 'looks')
+    await fs.mkdir(looks)
+    await fs.writeFile(path.join(looks, `${A}.png`), 'IMG-A')
+    await fs.writeFile(path.join(looks, `${B}.png`), 'IMG-B')
+    await fs.writeFile(path.join(looks, 'notes.txt'), 'x')           // 不是形象图
+    await fs.writeFile(path.join(looks, 'l_BAD.png'), 'x')            // 编号不合法
+    await fs.mkdir(path.join(looks, 'l_cccccccc.png'))                // 目录不算
+    await fs.mkdir(path.join(a.dir, '.look-drafts'))
+    await fs.writeFile(path.join(a.dir, '.look-drafts', '001.png'), 'DRAFT')
+    return a
+  }
+
+  it('带上 looks/ 里的形象图与角色卡 looks 栏，不带候选和杂文件', async () => {
+    const a = await seed()
+    const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    expect(r.status === 'imported' && r.skippedFiles).toEqual([])
+    const out = path.join(dst, 'characters', '白狐')
+    expect((await fs.readdir(path.join(out, 'looks'))).sort()).toEqual([`${A}.png`, `${B}.png`])
+    expect(await fs.readFile(path.join(out, 'looks', `${A}.png`), 'utf8')).toBe('IMG-A')
+    expect(await exists(path.join(out, '.look-drafts'))).toBe(false)
+    expect((await fs.readdir(out)).filter((f) => f.endsWith('.tmp'))).toEqual([])
+    const got = await readCharacter(dst, a.card.id)
+    expect(got?.ok && got.card.looks).toEqual([{ id: A, name: '睁眼', when: '认真时' }, { id: B, name: '便装', when: '' }])
+  })
+
+  it('没有形象的角色：目标里不会多出空的 looks/', async () => {
+    const a = await mk('黑猫')
+    await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    expect(await exists(path.join(dst, 'characters', '黑猫', 'looks'))).toBe(false)
+  })
+
+  it('超过大小上限的形象图记入 skippedFiles', async () => {
+    const a = await seed()
+    const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW, maxFileBytes: 4 })
+    expect(r.status === 'imported' && r.skippedFiles.map((s) => [s.name, s.reason]).sort()).toEqual([
+      [`looks/${A}.png`, 'too-large'], [`looks/${B}.png`, 'too-large'],
+    ])
+  })
+
+  it('覆盖导入：目标原有的 looks/ 先清掉再复制', async () => {
+    const a = await seed()
+    await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    const out = path.join(dst, 'characters', '白狐', 'looks')
+    await fs.writeFile(path.join(out, 'l_dddddddd.png'), 'OLD-ONLY-IN-TARGET')
+    await fs.writeFile(path.join(out, `${A}.png`), 'TARGET-EDIT')
+    // 来源删掉一套形象
+    await fs.rm(path.join(src, 'characters', '白狐', 'looks', `${B}.png`))
+    await saveCharacter(src, { id: a.card.id, name: '白狐', persona: '新', looks: [{ id: A, name: '睁眼', when: '认真时' }] })
+    const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW, decision: 'overwrite' })
+    expect(r.status === 'imported' && r.mode).toBe('overwrite')
+    expect(await fs.readdir(out)).toEqual([`${A}.png`])
+    expect(await fs.readFile(path.join(out, `${A}.png`), 'utf8')).toBe('IMG-A')
+    const got = await readCharacter(dst, a.card.id)
+    expect(got?.ok && got.card.looks).toEqual([{ id: A, name: '睁眼', when: '认真时' }])
+  })
+
+  it('覆盖导入：来源没有 looks/ 时目标原有的也清掉', async () => {
+    const a = await mk('白狐')
+    await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    const out = path.join(dst, 'characters', '白狐')
+    await fs.mkdir(path.join(out, 'looks'))
+    await fs.writeFile(path.join(out, 'looks', `${A}.png`), 'x')
+    await importCharacter(src, dst, { characterId: a.card.id, now: NOW, decision: 'overwrite' })
+    expect(await exists(path.join(out, 'looks'))).toBe(false)
+  })
+
+  it('另存为副本时照常复制', async () => {
+    const a = await seed()
+    await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
+    const r = await importCharacter(src, dst, { characterId: a.card.id, now: NOW, decision: 'copy' })
+    expect(r.status === 'imported' && r.mode).toBe('copy')
+    const dirName = r.status === 'imported' ? r.dirName : ''
+    expect((await fs.readdir(path.join(dst, 'characters', dirName, 'looks'))).sort()).toEqual([`${A}.png`, `${B}.png`])
+    const got = await readCharacter(dst, dirName)
+    expect(got?.ok && got.card.looks?.length).toBe(2)
+  })
+})

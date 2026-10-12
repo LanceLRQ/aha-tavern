@@ -1,4 +1,4 @@
-// 导入：把另一间酒馆里的角色卡（连同参考图、音色文件）与主角档案复制过来。
+// 导入：把另一间酒馆里的角色卡（连同参考图、音色文件、额外形象图）与主角档案复制过来。
 // 纯文件操作；冲突时由调用方传入决定。记忆、聊天记录不随行。
 import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
@@ -9,7 +9,7 @@ import {
 import { readMe, ME_FILE } from './docs'
 import { AhaError } from './errors'
 import { atomicWrite, pathExists, safeDirName } from './fsx'
-import { newCharacterId } from './ids'
+import { isLookId, newCharacterId } from './ids'
 import { assertWritable, openTavern, type TavernInfo } from './tavern'
 import { VOICE_AUDIO_FILE, VOICE_TEXT_FILE } from './voice'
 
@@ -191,6 +191,63 @@ async function stageAttachments(
   return { staged, skipped }
 }
 
+/** 额外形象的目录名；与 looks.ts 里的 LOOKS_DIR 一致（那边会 import card，这里不反向依赖，免得循环）。 */
+const LOOKS_DIR_NAME = 'looks'
+const isLookFile = (name: string): boolean => name.endsWith('.png') && isLookId(name.slice(0, -4))
+
+interface StagedLooks {
+  /** 目标角色目录里放着已复制文件的临时目录 */
+  tmpDir: string
+  /** 复制成功的文件数；为 0 时提交只清掉目标原有的 looks/，不留空目录 */
+  count: number
+}
+
+/**
+ * 形象图复制到目标角色目录里的临时目录。只带"形象编号.png"的普通文件（不跟随符号链接），
+ * 超过大小上限或复制失败的记入 skipped（名字写成 looks/<文件名>）。不带 .look-drafts/。
+ */
+async function stageLooks(srcDir: string, dstDir: string, maxBytes: number, skipped: SkippedFile[]): Promise<StagedLooks> {
+  const tmpDir = path.join(dstDir, `.looks-${randomBytes(4).toString('hex')}.tmp`)
+  await fs.mkdir(tmpDir)
+  const srcLooks = path.join(srcDir, LOOKS_DIR_NAME)
+  let entries: import('node:fs').Dirent[] = []
+  if (!(await isSymlink(srcLooks))) {
+    entries = await fs.readdir(srcLooks, { withFileTypes: true }).catch(() => [])
+  }
+  let count = 0
+  for (const e of entries) {
+    if (!e.isFile() || !isLookFile(e.name)) continue
+    const label = `${LOOKS_DIR_NAME}/${e.name}`
+    try {
+      const from = path.join(srcLooks, e.name)
+      if ((await fs.lstat(from)).size > maxBytes) {
+        skipped.push({ name: label, reason: 'too-large' })
+        continue
+      }
+      await fs.copyFile(from, path.join(tmpDir, e.name))
+      count++
+    } catch (err) {
+      skipped.push({ name: label, reason: 'failed', ...codeOf(err) })
+    }
+  }
+  return { tmpDir, count }
+}
+
+/** 让临时目录成为 looks/：目标原有的 looks/ 先清掉（新建时本来就没有）。 */
+async function commitLooks(staged: StagedLooks, dstDir: string, skipped: SkippedFile[]): Promise<void> {
+  const target = path.join(dstDir, LOOKS_DIR_NAME)
+  try {
+    await fs.rm(target, { recursive: true, force: true })
+    if (staged.count > 0) await fs.rename(staged.tmpDir, target)
+    else await fs.rm(staged.tmpDir, { recursive: true, force: true })
+  } catch (err) {
+    await fs.rm(staged.tmpDir, { recursive: true, force: true })
+    skipped.push({ name: `${LOOKS_DIR_NAME}/`, reason: 'failed', ...codeOf(err) })
+  }
+}
+
+const discardLooks = (staged: StagedLooks): Promise<void> => fs.rm(staged.tmpDir, { recursive: true, force: true })
+
 const codeOf = (e: unknown): { code?: string } => {
   const c = (e as { code?: unknown } | null)?.code
   return typeof c === 'string' ? { code: c } : {}
@@ -276,13 +333,16 @@ export async function importCharacter(
   // 改目录名失败时把旧卡写回，保证目录里永远是一张完整、可读的卡。
   const oldRaw = await fs.readFile(path.join(sameId.dir, CARD_FILE), 'utf8')
   const { staged, skipped } = await stageAttachments(entry.dir, sameId.dir, maxBytes)
+  const stagedLooks = await stageLooks(entry.dir, sameId.dir, maxBytes, skipped)
   try {
     await atomicWrite(path.join(sameId.dir, CARD_FILE), serializeCard(incoming))
   } catch (e) {
     await discardStaged(staged)
+    await discardLooks(stagedLooks)
     throw e
   }
   await commitStaged(staged, sameId.dir, skipped)
+  await commitLooks(stagedLooks, sameId.dir, skipped)
   let dirName = sameId.dirName
   const newDirName = safeDirName(incoming.name)
   if (newDirName !== dirName) {
@@ -306,13 +366,16 @@ async function writeNew(
   await fs.mkdir(dir)
   try {
     const { staged, skipped } = await stageAttachments(srcDir, dir, maxBytes)
+    const stagedLooks = await stageLooks(srcDir, dir, maxBytes, skipped)
     try {
       await atomicWrite(path.join(dir, CARD_FILE), serializeCard(card))
     } catch (e) {
       await discardStaged(staged)
+      await discardLooks(stagedLooks)
       throw e
     }
     await commitStaged(staged, dir, skipped)
+    await commitLooks(stagedLooks, dir, skipped)
     return { status: 'imported', mode, card, dirName, skippedFiles: skipped }
   } catch (e) {
     await fs.rm(dir, { recursive: true, force: true })
