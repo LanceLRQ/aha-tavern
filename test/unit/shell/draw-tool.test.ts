@@ -728,6 +728,39 @@ describe('带定妆图出图', () => {
     expect((await lastImage(dir, chatId))!.look).toBe(SWIM)
   })
 
+  it('额外形象：提示词只有固定句子、画风、画面，不带外貌文字', async () => {
+    await run({ scene: '雨夜', look: '泳装' })
+    const rec = (await lastImage(dir, chatId))!
+    expect(rec.prompt).toBe(`${REF_PREAMBLE}\n画风\n雨夜`)
+    expect(rec.look).toBe(SWIM)
+  })
+
+  it('额外形象但上传失败降级：恢复带外貌文字的三段，look 为 null', async () => {
+    uploadImage.mockRejectedValue(new ComfyError('upload-failed', ''))
+    await run({ scene: '雨夜', look: '泳装' })
+    const rec = (await lastImage(dir, chatId))!
+    expect(rec.prompt).toBe('画风\n白发狐耳\n雨夜')
+    expect(rec.look).toBeNull()
+  })
+
+  it('额外形象 missing-ref 重传仍失败降级：恢复外貌文字', async () => {
+    generate.mockRejectedValueOnce(new ComfyError('missing-ref', '')).mockRejectedValueOnce(new ComfyError('missing-ref', ''))
+    await run({ scene: '雨夜', look: '泳装' })
+    expect((await lastImage(dir, chatId))).toMatchObject({ prompt: '画风\n白发狐耳\n雨夜', look: null })
+  })
+
+  it('点名不存在的形象改用默认：四段含外貌', async () => {
+    await run({ scene: '雨夜', look: '不存在' })
+    expect((await lastImage(dir, chatId))).toMatchObject({ prompt: `${REF_PREAMBLE}\n画风\n白发狐耳\n雨夜`, look: 'default' })
+  })
+
+  it('redo 沿用额外形象：同样不带外貌文字', async () => {
+    await run({ scene: '雨夜', look: '泳装' })
+    turns.onStep('s1', 2, 1)
+    await run({ redo: true })
+    expect((await lastImage(dir, chatId))).toMatchObject({ prompt: `${REF_PREAMBLE}\n画风\n雨夜`, look: SWIM })
+  })
+
   it('点名不存在的形象：改用默认形象，返回末尾带说明', async () => {
     const out = await run({ scene: 'a', look: '不存在' })
     expect(out.endsWith(`\n${NOTE_LOOK_FALLBACK}`)).toBe(true)

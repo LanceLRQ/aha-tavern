@@ -577,7 +577,12 @@ export function drawTool(env: DrawEnv): (agent: HostAgent | undefined, args: unk
           ref: choice.ref, endpoint: settings.endpoint, uploader: refUploader, upload: (d, n, o) => client.uploadImage(d, n, o),
           ...(signal ? { signal } : {}),
           build: (refName) => {
-            const prompt = composePrompt({ ...(refName !== null ? { prefix: REF_PREAMBLE } : {}), style: settings.style, appearance, scene })
+            // 带的是额外形象时不带角色卡的外貌文字（文字会压过参考图，画回平时的衣着）；降级不带定妆图时恢复
+            const useExtraLook = refName !== null && choice.ref !== null && choice.ref.look !== 'default'
+            const prompt = composePrompt({
+              ...(refName !== null ? { prefix: REF_PREAMBLE } : {}), style: settings.style,
+              ...(useExtraLook ? {} : { appearance }), scene,
+            })
             const graph = fillWorkflow(wf, {
               prompt, width, height, seed, steps: settings.steps, models: settings.models, ...(refName !== null ? { refs: [refName] } : {}),
             })
