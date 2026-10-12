@@ -237,8 +237,9 @@ describe('以已保存的形象为底（basedOnLook）', () => {
     expect((await lastSubmitted()).prompt).toBe('按下面的要求修改这张设定图，其余保持不变。换成便装')
     expect((await lastSubmitted()).refs).toHaveLength(1)
     expect(Buffer.from(uploadImage.mock.calls.at(-1)![0]).equals(saved)).toBe(true)
-    expect(await listDrafts(charDir)).toMatchObject([{ n: 1, origin: 'look', basedOnLook: 'default', note: '换成便装' }])
-    expect(out).toContain('look candidate 1 drawn')
+    // 保存后候选仍留着，新候选的编号接续
+    expect((await listDrafts(charDir)).at(-1)).toMatchObject({ n: 2, origin: 'look', basedOnLook: 'default', note: '换成便装' })
+    expect(out).toContain('look candidate 2 drawn')
     expect(out).not.toContain('side and back views')
     expect(SENTENCE).toBeTruthy()
   })
@@ -252,7 +253,7 @@ describe('以已保存的形象为底（basedOnLook）', () => {
     await draft({ basedOnLook: '夏装', note: '加围巾' })
     expect((await lastSubmitted()).prompt).toBe('按下面的要求修改这张设定图，其余保持不变。加围巾')
     expect(Buffer.from(uploadImage.mock.calls.at(-1)![0]).equals(bytes)).toBe(true)
-    expect((await listDrafts(charDir))[0]).toMatchObject({ origin: 'look', basedOnLook: look.id })
+    expect((await listDrafts(charDir)).at(-1)).toMatchObject({ origin: 'look', basedOnLook: look.id })
     session.onStep(withCwd(tavern), 42, [])
     expect(await draft({ basedOnLook: look.id, note: '去掉围巾' })).toContain('drawn')
   })
@@ -605,15 +606,19 @@ describe('aha_look_save', () => {
   const save = (args: Record<string, unknown> = {}) => call('aha_look_save', { character: '白狐', candidate: 1, ...args })
   const question = () => ask.mock.calls.at(-1)![0].questions[0]
 
-  it('默认形象：卡片写明角色名与默认形象，用户确认后保存并清空候选', async () => {
+  it('默认形象：卡片写明角色名与默认形象，用户确认后保存；候选仍在，编号接续', async () => {
     await draft()
     const out = await save()
     expect(question().header).toBe('定妆图')
     expect(question().question).toBe('把刚才那张定妆图保存为「白狐」的默认形象？')
     expect((await readLooks(charDir)).default.exists).toBe(true)
-    expect(await listDrafts(charDir)).toHaveLength(0)
-    await expect(fs.access(path.join(charDir, '.look-drafts'))).rejects.toBeTruthy()
+    expect(await listDrafts(charDir)).toHaveLength(1)
+    await expect(fs.access(path.join(charDir, '.look-drafts', '001.png'))).resolves.toBeUndefined()
+    session.onStep(withCwd(tavern), 5, [])
+    expect(await draft()).toContain('candidate 2')
+    expect((await listDrafts(charDir)).map((d) => d.n)).toEqual([1, 2])
     expect(out).toContain('look saved (default, replaced: false)')
+    expect(out).not.toContain('cleared')
     expect(out).toContain('pictures drawn in later chats will follow this look sheet')
   })
 

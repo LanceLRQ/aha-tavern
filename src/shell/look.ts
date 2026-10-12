@@ -7,7 +7,7 @@ import os from 'node:os'
 import { listCharacters, matchCharacterName, MAX_LOOKS, normalizeLookName, normalizeLookWhen } from '../core/card'
 import { createComfyClient } from '../core/comfy'
 import { loadImageService } from '../core/services'
-import { clearDrafts, getDraft, readLooks, removeLook, saveLook, summarizeLooks, type SaveLookFailure } from '../core/looks'
+import { getDraft, readLooks, removeLook, saveLook, summarizeLooks, type SaveLookFailure } from '../core/looks'
 import { createConfirm, DeclineTracker, SessionGate, type AskFn } from './confirm'
 import type { CommandHandler, HostAgent } from './context'
 import { defaultDrawDeps, DrawEcho, imagePathText } from './draw'
@@ -220,7 +220,7 @@ const SAVE_FAILURE: Record<SaveLookFailure, string> = {
 
 /** 保存成功后给主持人的说明。 */
 export const savedText = (look: 'default' | string, replaced: boolean): string =>
-  `look saved (${look === 'default' ? 'default' : `named "${flatText(look, 'look')}"`}, replaced: ${replaced}); the candidates are cleared. `
+  `look saved (${look === 'default' ? 'default' : `named "${flatText(look, 'look')}"`}, replaced: ${replaced}). `
   + 'Tell the user: pictures drawn in later chats will follow this look sheet.'
 
 async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<string> {
@@ -264,7 +264,6 @@ async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<s
 
     const r = await saveLook(entry.dir, { draft: n, ...(name !== undefined ? { name } : {}), ...(when ? { when } : {}) })
     if (!r.ok) return r.imageReplaced ? SAVE_TEXT.imageReplaced : SAVE_FAILURE[r.reason]
-    await clearDrafts(entry.dir).catch((e: unknown) => log.warn(`保存定妆图后清空候选失败：${(e as Error).message}`))
     return savedText(name ?? 'default', r.replaced)
   }
   try {
@@ -369,7 +368,7 @@ export function registerLookTools(ctx: Context | ToolHost, deps: LookDeps): void
     name: LOOK_SAVE,
     description: '把某张定妆候选定为 character 的定妆图：不给 name 是默认形象，给 name 是一套额外形象。'
       + '只在 user 明确说这张可以之后才调用；调用后界面会弹卡片请 user 确认，确认前不会写入，不要让 user 打字说保存。'
-      + '已有同一套时卡片上会写明替换。保存后清掉这个 character 的全部候选。'
+      + '已有同一套时卡片上会写明替换。'
       + '多套形象是可选的，user 没提就不要给 name；要加一套时先问清名字和什么时候用。',
     parameters: {
       character: characterParam,
