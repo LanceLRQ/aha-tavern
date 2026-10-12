@@ -875,7 +875,41 @@ describe('提示词文字', () => {
     expect(hostSetupText).toContain('10 到 60 字')
     expect(hostSetupText).toContain('/aha 语音 启动')
     expect(hostSetupText).toContain('不要替 user 挑')
-    expect(hostSetupText).toContain('11. 做完后提示')
+    expect(hostSetupText).toContain('12. 做完后提示')
+  })
+  describe('筹备掌柜：带图建 card', () => {
+    const rules = hostSetupText.split('\n').filter((l) => /^\d+\. /.test(l))
+    const rule11 = rules.find((l) => l.startsWith('11. '))?.trim() ?? ''
+    const rule2 = rules.find((l) => l.startsWith('2. '))?.trim() ?? ''
+    it('有带图建 card 一条，含三个固定选项与关键要求', () => {
+      expect(rule11).toContain('带图建 card')
+      expect(rule11).toContain('“我来说几句”')
+      expect(rule11).toContain('“照图发挥”')
+      expect(rule11).toContain('“只填外貌”')
+      expect(rule11).toContain('看不到')
+      expect(rule11).toContain('不从表情推性格')
+      expect(rule11).toContain('核对 appearance')
+      expect(rule11).toContain('next')
+      expect(rule11).toContain('逐字照抄')
+      expect(rule11).toContain('每样只问一次')
+    })
+    it('规则 2 的例外引用与新规则编号一致，且不超过 60 字', () => {
+      const m = rule2.match(/唯一的例外见规则 (\d+)[^。]*。/)
+      expect(m).not.toBeNull()
+      expect(m![1]).toBe('11')
+      expect([...m![0]].length).toBeLessThanOrEqual(60)
+    })
+    it('最后一条仍是做完后提示新开单聊', () => {
+      expect(rules[rules.length - 1]).toMatch(/^12\. 做完后提示 user 新开「酒馆:单聊」/)
+    })
+    it('新规则不超过 350 字', () => {
+      expect([...rule11].length).toBeLessThanOrEqual(350)
+    })
+    it('不写死宿主图片说明的格式', () => {
+      for (const s of ['sha256', 'Normalized copy', 'attachments/']) {
+        expect(hostSetupText).not.toContain(s)
+      }
+    })
   })
   it('筹备掌柜：称呼直接用，不解释', () => {
     expect(hostSetupText).toContain('不用向 user 解释')
