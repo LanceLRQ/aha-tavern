@@ -374,6 +374,26 @@ export function cardNewNamedReceipt(theme: Theme, input: string): Reply {
   return guide(`还没有叫「${input}」的${theme.concept('character')}，${theme.host().name}会按这个名字新建，等你描述一下 TA。`)
 }
 
+// ---------- 定妆命令的回执 ----------
+
+/** 定妆命令不带名字：请掌柜问用户给谁定妆。 */
+export function lookAskReceipt(theme: Theme): Reply {
+  return guide(`${theme.host().name}正在问你给哪个${theme.concept('character')}定妆。`)
+}
+
+/** 定妆命令带名字且匹配到好卡：请掌柜带用户定妆。 */
+export function lookStartReceipt(theme: Theme, name: string): Reply {
+  return guide(`${theme.host().name}正在带你给「${name}」画${theme.concept('look_sheet')}。`)
+}
+
+/** 没有可定妆的角色：没带名字时是一个都没有，带了名字时是没有这个名字。 */
+export function lookNoneReceipt(theme: Theme, input?: string): Reply {
+  const c = theme.concept('character')
+  return guide(input
+    ? `还没有叫「${input}」的${c}，先用 \`/aha 角色\` 建一个。`
+    : `还没有${c}可以定妆，先用 \`/aha 角色\` 建一个。`)
+}
+
 /** 匹配到的是坏卡：说明哪个文件、什么问题。 */
 export function cardBrokenReceipt(
   theme: Theme,

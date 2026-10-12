@@ -16,6 +16,7 @@ import { createConfirm, DeclineTracker, SessionGate, type AskFn, type Confirm } 
 import { renderCard } from './setup-prompt'
 import { escapeClosingTag, flatText } from './steer'
 import { readonlyToolMessage } from './writable'
+import { LookSession, realLookDeps, registerLookTools, type LookDeps } from './look'
 import { realVoiceDesignDeps, registerVoiceDesignTool, type VoiceDesignDeps } from './voice-design'
 import { realVoiceToolDeps, registerVoiceTools, type VoiceToolDeps } from './voice-tools'
 
@@ -312,7 +313,11 @@ export function registerSetupTools(
   rt: Runtime,
   onSaved: (agent: HostAgent) => Promise<void>,
   getAsk: () => AskFn | undefined = () => undefined,
-  shared: { gate?: SessionGate; declines?: DeclineTracker; voice?: VoiceToolDeps; voiceDesign?: VoiceDesignDeps } = {},
+  shared: {
+    gate?: SessionGate; declines?: DeclineTracker; voice?: VoiceToolDeps; voiceDesign?: VoiceDesignDeps
+    /** 定妆工具的依赖（测试里整体替换）；lookSession 是装配处与宿主事件共用的那一份 */
+    look?: LookDeps; lookSession?: LookSession
+  } = {},
 ): void {
   const gate = shared.gate ?? new SessionGate()
   const declines = shared.declines ?? new DeclineTracker()
@@ -464,4 +469,7 @@ export function registerSetupTools(
   const voiceShared = { getAsk, gate, declines, tavernDirOf, onRegistered: onSaved }
   registerVoiceTools(ctx, shared.voice ?? realVoiceToolDeps(rt, voiceShared))
   registerVoiceDesignTool(ctx, shared.voiceDesign ?? realVoiceDesignDeps(rt, voiceShared))
+  registerLookTools(ctx, shared.look ?? realLookDeps(rt, {
+    getAsk, gate, declines, tavernDirOf, session: shared.lookSession ?? new LookSession(rt.log),
+  }))
 }

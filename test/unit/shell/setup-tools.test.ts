@@ -97,6 +97,10 @@ describe('工具注册与执行', () => {
     expect(Object.keys(setup().defs)).toEqual(expect.arrayContaining(['aha_voice_set', 'aha_voice_design']))
   })
 
+  it('定妆工具一并注册：出候选、定下、删除', () => {
+    expect(Object.keys(setup().defs)).toEqual(expect.arrayContaining(['aha_look_draft', 'aha_look_save', 'aha_look_remove']))
+  })
+
   it('非酒馆工作区：失败说明，不写盘、不刷新', async () => {
     const { defs, onSaved } = setup()
     const r = await defs.aha_save_profile!.execute({ text: 'x' }, { agent: agentAt(dir) })

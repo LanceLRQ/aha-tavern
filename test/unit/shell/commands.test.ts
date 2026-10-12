@@ -18,6 +18,8 @@ describe('parseSubcommand', () => {
     expect(parseSubcommand('自检')).toEqual({ kind: 'command', id: 'doctor', args: '' })
     expect(parseSubcommand('语音 启动')).toEqual({ kind: 'command', id: 'voice', args: '启动' })
     expect(parseSubcommand('VOICE stop')).toEqual({ kind: 'command', id: 'voice', args: 'stop' })
+    expect(parseSubcommand('定妆 白狐')).toEqual({ kind: 'command', id: 'look', args: '白狐' })
+    expect(parseSubcommand('LOOK')).toEqual({ kind: 'command', id: 'look', args: '' })
   })
 
   it('同义写法与主名等价', () => {

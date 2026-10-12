@@ -16,6 +16,8 @@ export function shownName(name: string, max = SHOWN_NAME_MAX): string {
 
 export const OPT_SAVE = '保存'
 export const OPT_DECLINE = '先不保存'
+export const OPT_REMOVE = '删除'
+export const OPT_KEEP = '先不删'
 const QUESTION_ID = 'confirm'
 
 /** 要确认的写盘动作。 */
@@ -24,6 +26,9 @@ export type ConfirmSpec =
   | { kind: 'profile' }
   | { kind: 'world' }
   | { kind: 'memory'; name: string }
+  /** 保存定妆图：look 缺省为默认形象；replaces 为已有同一套（会被替换） */
+  | { kind: 'look-save'; name: string; look?: string; replaces: boolean }
+  | { kind: 'look-remove'; name: string; look?: string }
 
 export interface AskItem {
   id: string
@@ -48,7 +53,9 @@ export function answerItem(answer: unknown, id: string): NonNullable<AskAnswer['
 
 export function buildConfirmQuestion(theme: Theme, spec: ConfirmSpec): AskItem {
   const c = (id: Parameters<Theme['concept']>[0]) => theme.concept(id)
-  if (spec.kind === 'card' || spec.kind === 'memory') {
+  if (spec.kind === 'look-save' || spec.kind === 'look-remove') {
+    spec = { ...spec, name: shownName(spec.name), ...(spec.look !== undefined ? { look: shownName(spec.look) } : {}) }
+  } else if (spec.kind === 'card' || spec.kind === 'memory') {
     spec = { ...spec, name: shownName(spec.name) }
     if (spec.kind === 'card' && spec.oldName !== undefined) spec = { ...spec, oldName: shownName(spec.oldName) }
   }
@@ -74,6 +81,28 @@ export function buildConfirmQuestion(theme: Theme, spec: ConfirmSpec): AskItem {
       header = c('core_memory')
       question = `把改后的${c('core_memory')}保存到「${spec.name}」？`
       break
+    case 'look-save': {
+      header = c('look_sheet')
+      const which = spec.look === undefined ? `默认${c('look')}` : `${c('look')}「${spec.look}」`
+      question = `把刚才那张${c('look_sheet')}保存为「${spec.name}」的${which}？`
+        + (spec.replaces ? `已有${spec.look === undefined ? `默认${c('look')}` : `同名${c('look')}`}，会被替换。` : '')
+      break
+    }
+    case 'look-remove':
+      header = c('look_sheet')
+      question = `删除「${spec.name}」的${spec.look === undefined ? `默认${c('look')}` : `${c('look')}「${spec.look}」`}？`
+      break
+  }
+  if (spec.kind === 'look-remove') {
+    return {
+      id: QUESTION_ID,
+      header,
+      question,
+      options: [
+        { label: OPT_REMOVE, description: `连同对应的${c('look_sheet')}文件一起删除，聊天里不再带它` },
+        { label: OPT_KEEP, description: '不删除，保持原样' },
+      ],
+    }
   }
   return {
     id: QUESTION_ID,
@@ -99,8 +128,8 @@ export function interpretAnswer(answer: unknown): ConfirmOutcome {
   const selected = Array.isArray(item.selected) ? item.selected : []
   const custom = typeof item.custom === 'string' ? item.custom.trim() : ''
   if (custom !== '') return { kind: 'feedback', text: custom }
-  if (selected.includes(OPT_SAVE)) return { kind: 'save' }
-  if (selected.includes(OPT_DECLINE)) return { kind: 'decline' }
+  if (selected.includes(OPT_SAVE) || selected.includes(OPT_REMOVE)) return { kind: 'save' }
+  if (selected.includes(OPT_DECLINE) || selected.includes(OPT_KEEP)) return { kind: 'decline' }
   return { kind: 'skip' }
 }
 

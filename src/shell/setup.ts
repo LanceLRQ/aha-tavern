@@ -15,6 +15,8 @@ import type { Runtime } from './runtime'
 import { buildDocCue, buildOpeningCue, buildSetupPrompt, planCardCommand, type SetupFacts } from './setup-prompt'
 import { DeclineTracker, SessionGate, type AskFn } from './confirm'
 import { importHandler } from './importing'
+import { LookSession, lookHandler } from './look'
+import { makeNotice } from './steer'
 import { isReadonly, openResolved } from './writable'
 import { hostSectionRegister, SessionSections, type SectionPlan } from './sections'
 import { registerSetupTools } from './setup-tools'
@@ -237,9 +239,11 @@ export function installSetup(ctx: Context, rt: Runtime): void {
   const gate = new SessionGate()
   const declines = new DeclineTracker()
   rt.cards = { gate, getAsk: () => ask }
+  // 定妆：一轮一次的名额与漏贴图片行的补发，由下面的宿主事件喂
+  const look = new LookSession(rt.log)
   registerSetupTools(ctx, rt, async (agent) => {
     if (services) await sections.refresh(agent, services, await rt.theme())
-  }, () => ask, { gate, declines })
+  }, () => ask, { gate, declines, lookSession: look })
   // 写盘前的确认卡片用宿主的 userQuestions；服务没来就保持 undefined，工具会拒绝写盘
   ;(ctx as unknown as SetupHost).inject(['userQuestions'], (c) => {
     const uq = (c as unknown as { userQuestions: { ask: AskFn } }).userQuestions
@@ -249,6 +253,7 @@ export function installSetup(ctx: Context, rt: Runtime): void {
   rt.handlers.me = docHandler('profile')
   rt.handlers.world = docHandler('world')
   rt.handlers.card = cardHandler()
+  rt.handlers.look = lookHandler()
   rt.handlers.import = importHandler(sections, () => ask, { gate })
   const host = ctx as unknown as SetupHost
   host.inject(['agentPresets'], (c) => {
@@ -264,14 +269,27 @@ export function installSetup(ctx: Context, rt: Runtime): void {
     c.on('agent/created', (payload: { agent: SetupAgent }) => {
       void ensure(payload.agent, 'created')
     })
-    c.on('agent/pre-step', async (payload: { agent: SetupAgent; turn?: number }, next: () => Promise<unknown>) => {
+    c.on('agent/pre-step', async (payload: { agent: SetupAgent; turn?: number; messages?: readonly unknown[] }, next: () => Promise<unknown>) => {
       declines.onStep(payload.agent.id, payload.turn)
+      look.onStep(payload.agent, payload.turn, (payload.messages ?? []) as never)
       await ensure(payload.agent, 'pre-step')
       return next()
+    })
+    // 通知类事件，不带 next：回复流喂给漏贴图片行的核对
+    c.on('agent/assistant-stream', (payload: { agent: SetupAgent; frame: unknown }) => {
+      look.onFrame(payload.agent, payload.frame as never)
+    })
+    // 一轮正常结束前核对图片行；用户中断的轮次不经过这里（见 DrawEcho 注释）
+    c.on('agent/turn-stopping', (payload: { agent: SetupAgent; turn?: unknown }) => {
+      look.echo.onTurnStopping(payload.agent.id, payload.turn, (notice) => {
+        if (typeof payload.agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
+        payload.agent.steer(makeNotice(notice, '补上图片'))
+      })
     })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
       declines.forget(payload.agent.id)
+      look.forget(payload.agent.id)
     })
     rt.log.info('筹备外壳已装配（created / pre-step / disposed 监听）')
   })

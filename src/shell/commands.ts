@@ -39,6 +39,7 @@ export const SUBCOMMANDS: readonly Subcommand[] = [
   sub('speak', ['说话', '朗读'], '念出来，或开关自动朗读', '[文本|开|关|停]'),
   sub('doctor', ['自检'], '检查当前状态与外部服务'),
   sub('voice', ['语音'], '启动、停止或查看语音服务', '[启动|停止|状态]'),
+  sub('look', ['定妆'], '给角色定妆：画出三视图，之后聊天画图都照它来', '[角色名]'),
 ]
 
 export type ParsedSubcommand =

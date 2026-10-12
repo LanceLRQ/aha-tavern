@@ -495,7 +495,7 @@ export function drawnText(absPath: string): string {
     + imageLine(absPath)
 }
 
-function failKindOf(e: unknown): DrawFailKind {
+export function failKindOf(e: unknown): DrawFailKind {
   if (!(e instanceof ComfyError)) return 'other'
   switch (e.kind) {
     case 'unreachable':

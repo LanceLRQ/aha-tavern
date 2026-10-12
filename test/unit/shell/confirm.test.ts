@@ -46,6 +46,34 @@ describe('构造问题', () => {
   })
 })
 
+describe('定妆图的卡片', () => {
+  const q = (spec: Parameters<typeof buildConfirmQuestion>[1], t = theme) => buildConfirmQuestion(t, spec)
+  it('保存：默认形象与命名形象，已有同一套时写明替换', () => {
+    expect(q({ kind: 'look-save', name: '白狐', replaces: false }).question).toBe('把刚才那张定妆图保存为「白狐」的默认形象？')
+    expect(q({ kind: 'look-save', name: '白狐', replaces: true }).question).toBe('把刚才那张定妆图保存为「白狐」的默认形象？已有默认形象，会被替换。')
+    expect(q({ kind: 'look-save', name: '白狐', look: '夏装', replaces: false }).question).toBe('把刚才那张定妆图保存为「白狐」的形象「夏装」？')
+    expect(q({ kind: 'look-save', name: '白狐', look: '夏装', replaces: true }).question).toBe('把刚才那张定妆图保存为「白狐」的形象「夏装」？已有同名形象，会被替换。')
+    expect(q({ kind: 'look-save', name: '白狐', replaces: false }).options.map((o) => o.label)).toEqual(['保存', '先不保存'])
+  })
+  it('名字与形象名按 shownName 截断、去掉书名号', () => {
+    const long = '长'.repeat(60)
+    expect(q({ kind: 'look-save', name: `「${long}」`, look: long, replaces: false }).question).toContain('长'.repeat(39) + '…')
+    expect(q({ kind: 'look-remove', name: '「甲」', look: '「乙」' }).question).toBe('删除「甲」的形象「乙」？')
+  })
+  it('删除：选项是 删除 / 先不删，选删除才算同意', () => {
+    const item = q({ kind: 'look-remove', name: '白狐' })
+    expect(item.question).toBe('删除「白狐」的默认形象？')
+    expect(item.options.map((o) => o.label)).toEqual(['删除', '先不删'])
+    expect(interpretAnswer(ans(['删除'])).kind).toBe('save')
+    expect(interpretAnswer(ans(['先不删'])).kind).toBe('decline')
+  })
+  it('愚者主题下取愚者的称呼', () => {
+    expect(q({ kind: 'look-save', name: '白狐', look: '夏装', replaces: false }, fools).question)
+      .toBe('把刚才那张扮相图保存为「白狐」的扮相「夏装」？')
+    expect(q({ kind: 'look-remove', name: '白狐' }, fools).header).toBe('扮相图')
+  })
+})
+
 describe('解释回答', () => {
   it('保存 / 先不保存 / 跳过 / 自由输入', () => {
     expect(interpretAnswer(ans(['保存']))).toEqual({ kind: 'save' })
