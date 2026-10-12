@@ -418,7 +418,7 @@ describe('doctorHandler', () => {
     expect(t).not.toContain('看详情')
     expect(askFn).not.toHaveBeenCalled()
     expect(fake.generate).not.toHaveBeenCalled()
-    expect(drawing.refresh).toHaveBeenCalledWith(agent)
+    expect(drawing.refresh).toHaveBeenCalledWith(agent, { notify: true })
   })
 
   it('有问题：行末提示看详情', async () => {

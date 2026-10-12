@@ -118,9 +118,12 @@ export class DrawAvailability {
     return e.pending ?? this.run(agent, e, false)
   }
 
-  /** 无视缓存重新读配置并探测，按结果更新这个会话。 */
-  async refresh(agent: HostAgent): Promise<Availability> {
-    return this.run(agent, this.entry(agent.id), true)
+  /**
+   * 无视缓存重新读配置并探测，按结果更新这个会话。
+   * notify 为真时，只要此刻有画图能力就再通知一次 onChange（让盘上变了的形象列表进提示词段）。
+   */
+  async refresh(agent: HostAgent, opts: { notify?: boolean } = {}): Promise<Availability> {
+    return this.run(agent, this.entry(agent.id), true, opts.notify === true)
   }
 
   /** 出图时发现连不上：撤掉这个会话的能力，并让该地址的缓存失效。 */
@@ -151,14 +154,14 @@ export class DrawAvailability {
     return e
   }
 
-  private run(agent: HostAgent, e: SessionEntry, force: boolean): Promise<Availability> {
+  private run(agent: HostAgent, e: SessionEntry, force: boolean, notify = false): Promise<Availability> {
     const mine = ++e.epoch
     const p = this.decide(agent, force).then((r) => {
       // 判定期间会话可能已被 forget，或有更新的判定 / drop；此时丢弃这次结果
       if (this.sessions.get(agent.id) !== e) return r
       if (e.epoch !== mine) return e.last
       if (r.reason !== 'not-chatting') e.decided = true
-      return this.apply(agent, e, r)
+      return this.apply(agent, e, r, notify)
     }).finally(() => {
       if (e.pending === p) e.pending = null
     })
@@ -207,7 +210,7 @@ export class DrawAvailability {
     return entry.pending
   }
 
-  private apply(agent: HostAgent, e: SessionEntry, r: Availability): Availability {
+  private apply(agent: HostAgent, e: SessionEntry, r: Availability, notify = false): Availability {
     e.last = r
     const changed = e.available !== r.available
     const autoChanged = r.available && !changed && e.settings !== null && e.settings.auto !== r.settings?.auto
@@ -226,7 +229,7 @@ export class DrawAvailability {
     } else {
       this.hideQuietly(e, agent)
     }
-    if (changed || autoChanged) {
+    if (changed || autoChanged || (notify && r.available)) {
       if (changed) this.logChange(agent, r)
       try {
         this.deps.onChange?.(agent, r.available, r.settings)

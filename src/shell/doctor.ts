@@ -59,7 +59,7 @@ const card = (question: string, detail: string, options: AskItem['options']): As
 async function refreshSession(inv: Invocation): Promise<{ available: boolean; reason: string } | null> {
   if (inv.context.mode !== 'chat' || !inv.rt.drawing) return null
   try {
-    const av = await inv.rt.drawing.refresh(inv.agent)
+    const av = await inv.rt.drawing.refresh(inv.agent, { notify: true })
     return av.reason === 'not-chatting' ? null : { available: av.available, reason: av.reason }
   } catch (e) {
     inv.rt.log.warn(`自检：刷新画图能力出错：${(e as Error).message}`)

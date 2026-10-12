@@ -167,6 +167,26 @@ describe('缓存', () => {
     expect(onChange.mock.calls.map((c) => c[1])).toEqual([true, false])
   })
 
+  it('refresh 要求通知：能力与 auto 都没变也回调一次；不带要求时不回调', async () => {
+    const d = make()
+    const a = agentOf('s1')
+    await d.ensure(a)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    await d.refresh(a)
+    expect(onChange).toHaveBeenCalledTimes(1)
+    await d.refresh(a, { notify: true })
+    expect(onChange).toHaveBeenCalledTimes(2)
+    expect(onChange).toHaveBeenLastCalledWith(a, true, expect.objectContaining({ endpoint: 'http://10.0.0.1:8188' }))
+  })
+
+  it('refresh 要求通知但能力不可用：不回调', async () => {
+    probeResult = 'fail'
+    const d = make()
+    const a = agentOf('s1')
+    await d.refresh(a, { notify: true })
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('同一地址的并发探测合并成一次', async () => {
     let finish!: () => void
     probe = vi.fn(() => new Promise<void>((res) => { finish = res }))

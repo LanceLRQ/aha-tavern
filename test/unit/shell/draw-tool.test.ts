@@ -865,6 +865,32 @@ describe('额外形象的提示词段', () => {
       expect(t).toContain('泳装')
       expect(t).toContain('去海边时')
     })
+    it('自检刷新：能力与 auto 都没变时，段文字跟着盘上的 looks 变；删光后与原文逐字符相同', async () => {
+      await card('')
+      const sections = mk()
+      const d = new DrawAvailability({
+        log, inspect: async () => ({ chatting: true, readonly: false }),
+        loadService: async () => ({ configured: true, settings, problems: [] }),
+        probe: async () => undefined,
+        onChange: drawPromptSync(sections, vi.fn(), note()),
+      })
+      await d.ensure(agent)
+      await settle()
+      const base = live.get('s1')!
+      expect(base).toBe(drawPromptText(true))
+      await card(`looks:\n  - id: ${SWIM}\n    name: 泳装\n    when: 去海边时\n`)
+      await fs.writeFile(path.join(charDir, 'looks', `${SWIM}.png`), swimPng)
+      await d.refresh(agent)
+      await settle()
+      expect(live.get('s1')).toBe(base)
+      await d.refresh(agent, { notify: true })
+      await settle()
+      expect(live.get('s1')).toContain('泳装')
+      await card('')
+      await d.refresh(agent, { notify: true })
+      await settle()
+      expect(live.get('s1')).toBe(base)
+    })
     it('读形象出错：退回原文字', async () => {
       drawPromptSync(mk(), vi.fn(), async () => { throw new Error('x') })(agent, true, settings)
       await settle()
