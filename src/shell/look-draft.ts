@@ -1,6 +1,7 @@
 // 定妆候选的生成流程：现读生图配置并探测 -> 准备起点材料 -> 拼提示词 -> 上传参考图 -> 出图 -> 存为候选。
 // 不碰会话、卡片与名额（那些在 look.ts）；所有依赖都由调用方传入，便于测试。
 // 返回值是给主持人看的文字：英文固定短语，不带服务端原文，也不带用户给的路径。
+import path from 'node:path'
 import { ComfyError, type ComfyClient } from '../core/comfy'
 import { prepareImage, type ImagePrepFailure } from '../core/image-prep'
 import { addDraft, getDraft, readPngBytes, resolveLook, type DraftOrigin } from '../core/looks'
@@ -10,8 +11,6 @@ import { failKindOf, hostOf, imageLine, PROBE_TIMEOUT_MS, type DrawFailKind } fr
 import type { RefUploader } from './ref-upload'
 import type { Runtime } from './runtime'
 
-/** 工具名。 */
-export const LOOK_DRAFT_TOOL = 'aha_look_draft'
 /** 至多给几张原图。 */
 export const MAX_LOOK_IMAGES = 4
 /** note 的字数上限。 */
@@ -171,7 +170,9 @@ export async function runDraft(env: DraftEnv, p: DraftInput): Promise<DraftOutco
   try {
     wf = await loadWorkflow(s.workflow, env.rt.builtinWorkflowDir)
   } catch (e) {
-    log.warn(`会话 ${p.session}：定妆读取工作流失败：${(e as Error).message}`)
+    // 自带工作流的路径是用户给的，日志里只留文件名
+    const wfName = path.isAbsolute(s.workflow) ? path.basename(s.workflow) : s.workflow
+    log.warn(`会话 ${p.session}：定妆读取工作流失败：${(e as Error).message.split(s.workflow).join(wfName)}`)
     return no(lookFailText('other'))
   }
   const needRefs = p.start.kind !== 'text'
@@ -207,7 +208,15 @@ export async function runDraft(env: DraftEnv, p: DraftInput): Promise<DraftOutco
   const client = env.createClient(s.endpoint)
   const sig = p.signal ? { signal: p.signal } : {}
   const upload = (d: Uint8Array, n: string, o?: { timeoutMs?: number; signal?: AbortSignal }) => client.uploadImage(d, n, o)
-  const names = (): Promise<string[]> => Promise.all(refs.map((b) => env.uploader.ensure(s.endpoint, b, upload, sig)))
+  const names = async (): Promise<string[]> => {
+    try {
+      return await Promise.all(refs.map((b) => env.uploader.ensure(s.endpoint, b, upload, sig)))
+    } catch (e) {
+      // 自己没被取消，上传却收到取消：共享的那次上传被别的会话取消了，对自己只是上传失败
+      if (e instanceof ComfyError && e.kind === 'cancelled' && !p.signal?.aborted) throw new ComfyError('upload-failed', e.detail)
+      throw e
+    }
+  }
   const draw = async (refNames: string[]) => client.generate(
     fillWorkflow(wf, {
       prompt, width, height, seed, steps: s.steps, models: s.models, ...(refNames.length > 0 ? { refs: refNames } : {}),

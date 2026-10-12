@@ -1,7 +1,7 @@
 // 生图能力的可用性：按会话判定"有没有画图能力"，并据此对该会话隐藏或放开 aha_draw。
 // 判定 = 读服务配置 -> 探测服务（按地址缓存）；没配置、探测不到、只读酒馆、读配置出错都按不可用处理。
 // 隐藏方式是宿主的按会话限制：持有 restrict 返回的解除函数就是隐藏，调用并丢弃就是放开。
-import { readCharacter } from '../core/card'
+import { DEFAULT_LOOK, readCharacter } from '../core/card'
 import { ComfyError, createComfyClient } from '../core/comfy'
 import { lastImage, saveImage, type ImageOrientation, type ImageRecord } from '../core/images'
 import { loadImageService, type ImageServiceResult, type ImageServiceSettings } from '../core/services'
@@ -492,9 +492,9 @@ export function imageLine(absPath: string): string {
   return `![画面](<${imagePathText(absPath)}>)`
 }
 
-/** 成功时给角色的返回值：先写完整回复，最后单独一行原样输出图片行。 */
-export function drawnText(absPath: string): string {
-  return 'drawn. 现在写这一轮的回复（照常扮演，不要提到工具或画图的过程），并在回复的最后单独一行原样输出下面这一行，一个字符都不要改：\n'
+/** 成功时给角色的返回值：先写完整回复，最后单独一行原样输出图片行。note（如点名的形象找不到）放在图片行前面。 */
+export function drawnText(absPath: string, note = ''): string {
+  return `drawn. ${note ? `${note}\n` : ''}现在写这一轮的回复（照常扮演，不要提到工具或画图的过程），并在回复的最后单独一行原样输出下面这一行，一个字符都不要改：\n`
     + imageLine(absPath)
 }
 
@@ -581,7 +581,7 @@ export function drawTool(env: DrawEnv): (agent: HostAgent | undefined, args: unk
           ...(signal ? { signal } : {}),
           build: (refName) => {
             // 带的是额外形象时不带角色卡的外貌文字（文字会压过参考图，画回平时的衣着）；降级不带定妆图时恢复
-            const useExtraLook = refName !== null && choice.ref !== null && choice.ref.look !== 'default'
+            const useExtraLook = refName !== null && choice.ref !== null && choice.ref.look !== DEFAULT_LOOK
             const prompt = composePrompt({
               ...(refName !== null ? { prefix: REF_PREAMBLE } : {}), style: settings.style,
               ...(useExtraLook ? {} : { appearance }), scene,
@@ -606,7 +606,7 @@ export function drawTool(env: DrawEnv): (agent: HostAgent | undefined, args: unk
         if (env.drawing.has(session)) env.echo.expect(session, imagePathText(saved.absPath), saved.n)
         log.info(`会话 ${session}：出图 n=${saved.n} ${now() - started}ms ${summary}`)
         drew = true
-        return note ? `${drawnText(saved.absPath)}\n${note}` : drawnText(saved.absPath)
+        return drawnText(saved.absPath, note)
       } catch (e) {
         const kind = failKindOf(e)
         log.info(`会话 ${session}：出图失败 ${kind} ${now() - started}ms ${summary}`)

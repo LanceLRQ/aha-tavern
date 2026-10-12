@@ -1,5 +1,6 @@
 // 出图时带定妆图：决定用哪张、上传、降级重试。与 harness 的具体事件无关，依赖都由 draw.ts 传入。
 import { ComfyError, type GeneratedImage } from '../core/comfy'
+import { DEFAULT_LOOK } from '../core/card'
 import { readLooks, readPngBytes, resolveLook } from '../core/looks'
 import type { Workflow } from '../core/workflow'
 import type { RefUploader, UploadFn } from './ref-upload'
@@ -13,7 +14,7 @@ export const NOTE_LOOK_FALLBACK = 'note: look not found, used the default look'
 export const NOTE_LOOK_NONE = 'note: look not found'
 
 export interface LoadedRef {
-  /** 'default' 或形象编号 */
+  /** DEFAULT_LOOK 或形象编号 */
   look: string
   bytes: Uint8Array
 }
@@ -56,7 +57,7 @@ export async function chooseRef(p: ChooseRefInput): Promise<RefChoice> {
   const key = p.requested ?? (p.inherited ? p.inherited : undefined)
   let ref = await load(p.charDir, key)
   let note = ''
-  if (!ref && key !== undefined && key !== 'default') {
+  if (!ref && key !== undefined && key !== DEFAULT_LOOK) {
     ref = await load(p.charDir, undefined)
     if (p.requested !== undefined) note = ref ? NOTE_LOOK_FALLBACK : NOTE_LOOK_NONE
   }
@@ -100,13 +101,17 @@ const detailOf = (e: unknown): string => (e instanceof ComfyError ? e.detail || 
 /**
  * 出图，带定妆图时按规格 3.3 降级：上传失败 -> 不带；参考图不存在 -> 忘掉记账、重传、再出一次，
  * 仍不行 -> 不带再出一次。取消与出图期间的其他错误照常抛出，不继续降级。
+ *
+ * 超时说明：这里没有整次出图的总截止时间。上传自带 60 秒超时，不计入出图的 timeoutSeconds，
+ * 出图本身另有自己的超时，所以最坏要多等约两分钟；全程可以取消。
  */
 export async function generateWithRef(p: GenerateWithRefInput): Promise<GenerateWithRefResult> {
   const tryUpload = async (ref: LoadedRef): Promise<string | null> => {
     try {
       return await p.uploader.ensure(p.endpoint, ref.bytes, p.upload, p.signal ? { signal: p.signal } : {})
     } catch (e) {
-      if (p.signal?.aborted || (e instanceof ComfyError && e.kind === 'cancelled')) throw e
+      // 只有自己被取消才当取消；共享的那次上传被别的会话取消了，对自己只是上传失败
+      if (p.signal?.aborted) throw e
       p.debug(`定妆图上传失败，这一张不带定妆图：${detailOf(e)}`)
       return null
     }

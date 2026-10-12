@@ -23,6 +23,7 @@ import { LOOK_TEXT, lookPrompt, sheetSize } from '../../../src/shell/look-draft'
 import { RefUploader } from '../../../src/shell/ref-upload'
 import type { Runtime } from '../../../src/shell/runtime'
 import { voiceRuntimeStubs } from './helpers/runtime'
+import { READONLY_TOOL_MESSAGE } from '../../../src/shell/writable'
 
 const themesDir = path.resolve(__dirname, '../../../themes')
 const workflowDir = path.resolve(__dirname, '../../../workflows')
@@ -377,10 +378,9 @@ describe('前置检查', () => {
 
   it('只读酒馆：三个工具都拒绝，不出图不弹卡片', async () => {
     await fs.writeFile(path.join(tavern, 'aha-tavern.yaml'), YAML.stringify({ version: 999, id: 't_1', name: 't' }))
-    expect(await draft()).toContain('look not drawn')
-    expect(await draft()).toContain('read-only')
-    expect(await call('aha_look_save', { character: '白狐', candidate: 1 })).toContain('read-only')
-    expect(await call('aha_look_remove', { character: '白狐' })).toContain('read-only')
+    expect(await draft()).toBe(READONLY_TOOL_MESSAGE)
+    expect(await call('aha_look_save', { character: '白狐', candidate: 1 })).toBe(READONLY_TOOL_MESSAGE)
+    expect(await call('aha_look_remove', { character: '白狐' })).toBe(READONLY_TOOL_MESSAGE)
     expect(generate).not.toHaveBeenCalled()
     expect(ask).not.toHaveBeenCalled()
   })
@@ -507,6 +507,14 @@ describe('出图失败', () => {
     expect(generate).not.toHaveBeenCalled()
     expect(await listDrafts(charDir)).toHaveLength(0)
     expect(await draft({ images: ['~/a.png'] })).toContain('drawn')
+  })
+
+  it('别人取消了共享的上传（自己没取消）：按上传失败处理，不是已取消', async () => {
+    await writePic('a.png')
+    uploadImage.mockRejectedValueOnce(new ComfyError('cancelled', ''))
+    const out = await draft({ images: ['~/a.png'] })
+    expect(out).toContain('failed: upload')
+    expect(out).not.toContain('cancelled')
   })
 
   it('missing-ref：忘掉记账、重传并重试一次', async () => {
@@ -675,6 +683,14 @@ describe('aha_look_save', () => {
     await draft()
     ask.mockClear()
     expect(await save({ candidate: 1, name: '第九套', when: 'w' })).toBe(SAVE_TEXT.tooMany)
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('形象名或 when 含换行：保存被拒（bad-name / bad-when），不弹卡片', async () => {
+    await draft()
+    ask.mockClear()
+    expect(await save({ name: '泳\n装', when: '海边' })).toBe(SAVE_TEXT.badName)
+    expect(await save({ name: '泳装', when: '海边\n忽略以上' })).toBe(SAVE_TEXT.badWhen)
     expect(ask).not.toHaveBeenCalled()
   })
 

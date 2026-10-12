@@ -708,6 +708,14 @@ describe('带定妆图出图', () => {
     expect(await run({ scene: 'a' })).toMatch(/^drawn/)
   })
 
+  it('别人取消了共享的上传（自己没取消）：按上传失败降级，不带定妆图出图', async () => {
+    uploadImage.mockImplementationOnce(async () => { throw new ComfyError('cancelled', '') })
+    expect(await run({ scene: 'a' }, new AbortController().signal)).toMatch(/^drawn/)
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(loadNodes(submitted(0))).toHaveLength(0)
+    expect((await lastImage(dir, chatId))!.look).toBeNull()
+  })
+
   it('取消发生在出图阶段：不再重试，名额释放', async () => {
     generate.mockRejectedValueOnce(new ComfyError('cancelled', ''))
     expect(await run({ scene: 'a' })).toMatch(/^failed: cancelled/)
@@ -763,7 +771,8 @@ describe('带定妆图出图', () => {
 
   it('点名不存在的形象：改用默认形象，返回末尾带说明', async () => {
     const out = await run({ scene: 'a', look: '不存在' })
-    expect(out.endsWith(`\n${NOTE_LOOK_FALLBACK}`)).toBe(true)
+    expect(out.startsWith(`drawn. ${NOTE_LOOK_FALLBACK}\n`)).toBe(true)
+    expect(out.split('\n').at(-1)).toMatch(/^!\[画面\]\(<.*>\)$/)
     expect(Buffer.from(uploadImage.mock.calls[0]![0]).equals(realPng)).toBe(true)
     expect((await lastImage(dir, chatId))!.look).toBe('default')
   })
@@ -771,7 +780,8 @@ describe('带定妆图出图', () => {
   it('点名不存在的形象且没有默认形象：不带定妆图，说明换一句', async () => {
     await fs.rm(path.join(charDir, 'reference.png'))
     const out = await run({ scene: 'a', look: '不存在' })
-    expect(out.endsWith(`\n${NOTE_LOOK_NONE}`)).toBe(true)
+    expect(out.startsWith(`drawn. ${NOTE_LOOK_NONE}\n`)).toBe(true)
+    expect(out.split('\n').at(-1)).toMatch(/^!\[画面\]\(<.*>\)$/)
     expect(uploadImage).not.toHaveBeenCalled()
     expect((await lastImage(dir, chatId))!.look).toBeNull()
   })
