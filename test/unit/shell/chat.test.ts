@@ -875,7 +875,7 @@ describe('提示词文字', () => {
     expect(hostSetupText).toContain('10 到 60 字')
     expect(hostSetupText).toContain('/aha 语音 启动')
     expect(hostSetupText).toContain('不要替 user 挑')
-    expect(hostSetupText).toContain('10. 做完后提示')
+    expect(hostSetupText).toContain('11. 做完后提示')
   })
   it('筹备掌柜：称呼直接用，不解释', () => {
     expect(hostSetupText).toContain('不用向 user 解释')
