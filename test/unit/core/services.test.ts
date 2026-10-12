@@ -61,6 +61,28 @@ describe('loadImageService：未配置', () => {
   })
 })
 
+describe('loadImageService：reference', () => {
+  const ref = async (line: string) => configured(await load(`image:\n  endpoint: http://h\n${line}`))
+
+  it('不写默认 true', async () => {
+    const r = await ref('')
+    expect(r.settings.reference).toBe(true)
+    expect(r.problems).toEqual([])
+  })
+  it('写 false / true', async () => {
+    expect((await ref('  reference: false\n')).settings.reference).toBe(false)
+    expect((await ref('  reference: true\n')).settings.reference).toBe(true)
+    expect((await ref('  reference:\n')).problems).toEqual([])
+  })
+  it('写了别的类型：按默认值并记一条问题', async () => {
+    for (const v of ['"false"', '0', '[]', 'yes_please']) {
+      const r = await ref(`  reference: ${v}\n`)
+      expect(r.settings.reference).toBe(true)
+      expect(r.problems.filter((p) => p.includes('image.reference'))).toHaveLength(1)
+    }
+  })
+})
+
 describe('loadImageService：已配置', () => {
   it('只给 endpoint：其余取默认值', async () => {
     const { settings, problems } = configured(await load('image:\n  endpoint: http://127.0.0.1:8188\n'))
@@ -69,6 +91,7 @@ describe('loadImageService：已配置', () => {
       endpoint: 'http://127.0.0.1:8188',
       workflow: 'qwen-image-2.1',
       auto: true,
+      reference: true,
       style: '动漫风格插画，线条干净，光影柔和',
       width: 832,
       height: 1216,

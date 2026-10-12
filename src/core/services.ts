@@ -12,6 +12,8 @@ export interface ImageServiceSettings {
   workflow: string
   /** 角色能否自己决定出图；false 时只响应用户要求。 */
   auto: boolean
+  /** 出图时是否带上角色的定妆图；false 则只用外貌文字。 */
+  reference: boolean
   /** 拼在每个提示词最前面的画风。 */
   style: string
   width: number
@@ -29,6 +31,7 @@ export type ImageServiceResult =
 export const IMAGE_SERVICE_DEFAULTS: Omit<ImageServiceSettings, 'endpoint'> = {
   workflow: 'qwen-image-2.1',
   auto: true,
+  reference: true,
   style: '动漫风格插画，线条干净，光影柔和',
   width: 832,
   height: 1216,
@@ -113,6 +116,7 @@ export async function loadImageService(file: string): Promise<ImageServiceResult
       endpoint: endpoint.replace(/\/+$/, ''),
       workflow: pick('workflow', isWorkflow, d.workflow, '应是内置工作流名或绝对路径'),
       auto: pick('auto', isBool, d.auto, '应是 true 或 false'),
+      reference: pick('reference', isBool, d.reference, '应是 true 或 false'),
       style: pick('style', isText, d.style, '应是非空文字'),
       width: snap(pick('width', isPositiveInt, d.width, '应是正整数')),
       height: snap(pick('height', isPositiveInt, d.height, '应是正整数')),
