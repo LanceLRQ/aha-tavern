@@ -10,7 +10,8 @@ import type { HostAgent, Invocation } from '../../../src/shell/context'
 import { doctorHandler } from '../../../src/shell/doctor'
 import { checkDrawing, wantsTrial, type DrawDoctorDeps } from '../../../src/shell/draw-doctor'
 import {
-  drawBriefText, drawDoctorBrief, drawDoctorCardReceipt, drawDoctorMarkdown, drawDoctorOneLine, unavailableWhy,
+  drawBriefText, drawDoctorBrief, drawDoctorCardReceipt, drawDoctorIssues, drawDoctorItems, drawDoctorMarkdown, drawDoctorOneLine,
+  unavailableWhy,
 } from '../../../src/shell/receipts'
 import { OPT_CLOSE, OPT_RECHECK, OPT_TRIAL, RECHECK_MAX } from '../../../src/shell/doctor'
 import { SessionGate } from '../../../src/shell/confirm'
@@ -38,6 +39,9 @@ const fullInfo = async (workflow = 'qwen-image-2.1', drop: string[] = []): Promi
   const info: ObjectInfo = {}
   for (const t of req.nodeTypes) if (!drop.includes(t)) info[t] = {}
   for (const m of req.models) if (info[m.nodeType]) info[m.nodeType]![m.input] = [m.file]
+  // 参考图所需：LoadImage 节点，编码节点的 images 输入（非列表型，只在 allInputs 时出现，值为空数组）
+  info.LoadImage = {}
+  info.TextEncodeQwenImage21 = { ...info.TextEncodeQwenImage21, images: [] }
   return info
 }
 
@@ -162,6 +166,7 @@ describe('检查', () => {
       '✓ 工作流 qwen-image-2.1',
       expect.stringMatching(/^✓ 节点齐全（\d+ 种）$/),
       '✓ 模型文件齐全',
+      '✓ 出图会带上定妆图',
     ])
     expect(fake.generate).not.toHaveBeenCalled()
   })
@@ -539,5 +544,291 @@ describe('doctorHandler', () => {
     expect(t).toContain('✓ 试出图成功')
     const m = /：(\/[^；]+)$/.exec(t)
     await fs.rm(m![1] as string, { force: true })
+  })
+})
+
+
+// ---------- 参考图与当前角色 ----------
+
+const makeLooks = (over: Partial<{ hasDefault: boolean; extras: Array<{ name: string; exists: boolean }> }> = {}) => {
+  const extras = over.extras ?? []
+  return {
+    default: { file: '/c/reference.png', exists: over.hasDefault ?? true },
+    extras: extras.map((e, i) => ({ id: `l${i}`, name: e.name, when: '', file: `/c/looks/l${i}.png`, exists: e.exists })),
+  }
+}
+
+describe('参考图一项', () => {
+  const ref = async (over: Partial<DrawDoctorDeps> = {}) => (await checkDrawing(deps(over), { trial: false })).reference
+
+  it('全部满足：出图会带上定妆图', async () => {
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toEqual({ ok: true })
+    expect(drawDoctorOneLine(r)).toContain('✓ 出图会带上定妆图')
+  })
+
+  it('开关关着：设置里关掉了；不再多取节点信息', async () => {
+    await write(CONFIG + '  reference: false\n')
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toEqual({ ok: false, reason: 'disabled' })
+    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：设置里关掉了')
+    expect(fake.objectInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it('工作流没声明 refs', async () => {
+    const wfFile = path.join(dir, 'plain.json')
+    const raw = JSON.parse(await fs.readFile(path.join(builtinWorkflowDir, 'qwen-image-2.1.json'), 'utf8'))
+    delete raw._aha.refs
+    await fs.writeFile(wfFile, JSON.stringify(raw))
+    await write(CONFIG + `  workflow: ${wfFile}\n`)
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toEqual({ ok: false, reason: 'no-refs' })
+    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：当前工作流没有声明参考图的位置（内置的两份工作流支持）')
+    expect(fake.objectInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it('refs 写错：带出工作流给的原因', async () => {
+    const wfFile = path.join(dir, 'bad.json')
+    const raw = JSON.parse(await fs.readFile(path.join(builtinWorkflowDir, 'qwen-image-2.1.json'), 'utf8'))
+    raw._aha.refs.encoder = '999'
+    await fs.writeFile(wfFile, JSON.stringify(raw))
+    await write(CONFIG + `  workflow: ${wfFile}\n`)
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toEqual({ ok: false, reason: 'bad-refs', problem: 'refs.encoder 没有指向存在的节点' })
+    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：工作流里参考图的写法不对（refs.encoder 没有指向存在的节点）')
+  })
+
+  it('没有 LoadImage 节点', async () => {
+    const info = await fullInfo()
+    delete info.LoadImage
+    fake.objectInfo.mockResolvedValue(info)
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toEqual({ ok: false, reason: 'no-load-image' })
+    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：生图服务上没有 LoadImage 节点，可能需要更新 ComfyUI')
+    expect(fake.objectInfo).toHaveBeenCalledTimes(1)
+  })
+
+  it('编码节点没有 images 输入', async () => {
+    fake.objectInfo.mockImplementation(async () => {
+      const info = await fullInfo()
+      delete info.TextEncodeQwenImage21!.images
+      return info
+    })
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toEqual({ ok: false, reason: 'no-images-input' })
+    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：生图服务上的文本编码节点不支持参考图，可能需要更新 ComfyUI')
+  })
+
+  it('多取的那次节点信息读不到：无法确认，原文不进报告', async () => {
+    fake.objectInfo
+      .mockResolvedValueOnce(await fullInfo())
+      .mockRejectedValueOnce(new ComfyError('unreachable', 'raw secret text'))
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toEqual({ ok: false, reason: 'unknown' })
+    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：没能读到生图服务的节点信息，无法确认')
+    expect(drawDoctorOneLine(r)).not.toContain('raw secret')
+    expect(log.debug).toHaveBeenCalled()
+  })
+
+  it('多取的那次带 allInputs 与取消信号；第一次不带', async () => {
+    const ac = new AbortController()
+    await checkDrawing(deps(), { trial: false, signal: ac.signal })
+    expect(fake.objectInfo).toHaveBeenCalledTimes(2)
+    expect(fake.objectInfo.mock.calls[0]![0].allInputs).toBeUndefined()
+    expect(fake.objectInfo.mock.calls[1]![0]).toMatchObject({ allInputs: true, signal: ac.signal })
+  })
+
+  it('多取时被取消：算已取消', async () => {
+    const ac = new AbortController()
+    fake.objectInfo.mockResolvedValueOnce(await fullInfo()).mockImplementationOnce(async () => {
+      ac.abort()
+      throw new ComfyError('cancelled')
+    })
+    const r = await checkDrawing(deps(), { trial: false, signal: ac.signal })
+    expect(r.cancelled).toBe(true)
+    expect(r.reference).toBeUndefined()
+  })
+
+  it('服务连不上、工作流读不出、节点信息取不到：不检查也不显示', async () => {
+    fake.probe.mockRejectedValue(new ComfyError('unreachable'))
+    expect(await ref()).toBeUndefined()
+    fake.probe.mockResolvedValue('1')
+    fake.objectInfo.mockRejectedValue(new ComfyError('unreachable'))
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.reference).toBeUndefined()
+    expect(drawDoctorOneLine(r)).not.toContain('出图')
+    await write(CONFIG + '  workflow: nope\n')
+    expect(await ref()).toBeUndefined()
+  })
+
+  it('不满足不算未通过：清单、小结、回执都不变，也不用失败标记', async () => {
+    const good = await checkDrawing(deps(), { trial: false })
+    await write(CONFIG + '  reference: false\n')
+    const off = await checkDrawing(deps(), { trial: false })
+    expect(drawDoctorIssues(off)).toEqual([])
+    expect(drawDoctorBrief(off)).toEqual(drawDoctorBrief(good))
+    expect(drawDoctorBrief(off)).toEqual({ status: '可用', notes: [], flagged: false })
+    expect(drawDoctorCardReceipt(off).text).toBe('生图自检：全部通过。')
+    expect(drawDoctorOneLine(off)).not.toMatch(/✗.*出图/)
+  })
+
+  it('试出一张图不带参考图', async () => {
+    await checkDrawing(deps(), { trial: true })
+    const graph = fake.generate.mock.calls[0]![0]
+    expect(Object.values(graph as Record<string, { class_type: string }>).some((n) => n.class_type === 'LoadImage')).toBe(false)
+  })
+
+  it('称呼取自主题', async () => {
+    const { theme } = await loadTheme({ name: 'fools', builtinDir: themeDir })
+    const r = await checkDrawing(deps({ currentLooks: async () => makeLooks({ extras: [{ name: 'a', exists: true }] }) }), { trial: false })
+    const t = drawDoctorOneLine(r, theme)
+    expect(t).toContain(`出图会带上${theme.concept('look_sheet')}`)
+    expect(t).toContain(`有${theme.concept('look_sheet')}，另有 1 套${theme.concept('look')}`)
+    expect(t).not.toContain('定妆图')
+  })
+})
+
+describe('现有模型检查不因多取一次而改变', () => {
+  it('非列表型的模型输入仍是"无法确认"，不会因 allInputs 的空数组变成缺失', async () => {
+    // 模拟真实服务：不带 allInputs 时丢掉非列表输入；带上时它们是空数组
+    fake.objectInfo.mockImplementation(async (o?: { allInputs?: boolean }) => {
+      const info = await fullInfo()
+      if (!o?.allInputs) {
+        delete info.VAELoader!.vae_name
+        delete info.TextEncodeQwenImage21!.images
+      } else {
+        info.VAELoader!.vae_name = []
+      }
+      return info
+    })
+    const r = await checkDrawing(deps(), { trial: false })
+    expect(r.models!.missing).toEqual([])
+    expect(r.models!.unsure).toEqual(['qwen_image_2.1_vae_bf16.safetensors'])
+    expect(r.reference).toEqual({ ok: true })
+    expect(drawDoctorBrief(r).status).toBe('可用')
+  })
+})
+
+describe('当前角色一项', () => {
+  const chara = async (looks: ReturnType<typeof makeLooks> | null | Error, theme?: Awaited<ReturnType<typeof loadTheme>>['theme']) => {
+    const r = await checkDrawing(deps({
+      currentLooks: async () => {
+        if (looks instanceof Error) throw looks
+        return looks
+      },
+    }), { trial: false })
+    return { r, text: drawDoctorOneLine(r, theme) }
+  }
+
+  it('有定妆图、没有额外形象', async () => {
+    const { r, text } = await chara(makeLooks())
+    expect(r.character).toEqual({ hasDefault: true, extras: 0, missing: [] })
+    expect(text).toContain('；当前角色：有定妆图')
+    expect(text).not.toContain('另有')
+    expect(text).not.toContain('丢失')
+  })
+
+  it('有定妆图，另有 2 套形象', async () => {
+    const { text } = await chara(makeLooks({ extras: [{ name: '夏装', exists: true }, { name: '雨天', exists: true }] }))
+    expect(text).toContain('当前角色：有定妆图，另有 2 套形象')
+  })
+
+  it('还没有定妆图：指路', async () => {
+    const { r, text } = await chara(makeLooks({ hasDefault: false }))
+    expect(r.character).toEqual({ hasDefault: false, extras: 0, missing: [] })
+    expect(text).toContain('当前角色：还没有定妆图（在「酒馆:筹备」里用 /aha 定妆 来定）')
+  })
+
+  it('没有默认定妆图但有额外形象', async () => {
+    const { text } = await chara(makeLooks({ hasDefault: false, extras: [{ name: 'a', exists: true }] }))
+    expect(text).toContain('还没有定妆图（在「酒馆:筹备」里用 /aha 定妆 来定）；另有 1 套形象')
+  })
+
+  it('文件丢失：列出名字', async () => {
+    const { text } = await chara(makeLooks({ extras: [{ name: '夏装', exists: false }, { name: '雨天', exists: true }, { name: '正装', exists: false }] }))
+    expect(text).toContain('当前角色：有定妆图，另有 3 套形象；其中 夏装、正装 的图片文件丢失')
+  })
+
+  it('文件丢失超过 3 个：只列前 3 个，其余写等 N 套', async () => {
+    const extras = ['甲', '乙', '丙', '丁', '戊'].map((name) => ({ name, exists: false }))
+    const { text } = await chara(makeLooks({ extras }))
+    expect(text).toContain('其中 甲、乙、丙 等 5 套 的图片文件丢失')
+    expect(text).not.toContain('丁')
+  })
+
+  it('形象名里的换行去掉，名字过长截断，整行不超过上限', async () => {
+    const long = '很'.repeat(200)
+    const extras = [long, `a\nb\r\nc`, long, long, long].map((name) => ({ name, exists: false }))
+    const { r, text } = await chara(makeLooks({ extras }))
+    const line = text.split('；').filter(Boolean).join('；')
+    const item = drawDoctorOneLine(r).split('；').find((x) => x.includes('当前角色'))
+    expect(item).toBeDefined()
+    expect([...item!.replace(/^! /, '')].length).toBeLessThanOrEqual(121)
+    expect(line).not.toContain('\n')
+    expect(text).not.toContain('很'.repeat(13))
+  })
+
+  it('每项文字不超过长度上限（含参考图原因）', async () => {
+    const r = await checkDrawing(deps(), { trial: false })
+    r.reference = { ok: false, reason: 'bad-refs', problem: '长'.repeat(500) }
+    r.character = { hasDefault: true, extras: 999, missing: Array.from({ length: 40 }, () => '长'.repeat(100)) }
+    for (const i of drawDoctorItems(r)) expect([...i.text].length).toBeLessThanOrEqual(121)
+  })
+
+  it('不在单聊或没选定角色：没有这一项', async () => {
+    const { r, text } = await chara(null)
+    expect(r.character).toBeUndefined()
+    expect(text).not.toContain('当前角色')
+    const plain = await checkDrawing(deps(), { trial: false })
+    expect(plain.character).toBeUndefined()
+  })
+
+  it('取角色信息失败：不显示这一项，记 debug 日志，其余报告不受影响', async () => {
+    const { r, text } = await chara(new Error('读卡出错 /secret/path'))
+    expect(r.character).toBeUndefined()
+    expect(text).toContain('✓ 模型文件齐全')
+    expect(text).toContain('✓ 出图会带上定妆图')
+    expect(log.debug).toHaveBeenCalled()
+  })
+
+  it('Markdown 里也有，且格式是列表', async () => {
+    const r = await checkDrawing(deps({ currentLooks: async () => makeLooks() }), { trial: false })
+    const md = drawDoctorMarkdown(r)
+    expect(md).toContain('- ✓ 出图会带上定妆图')
+    expect(md).toContain('- 当前角色：有定妆图')
+  })
+})
+
+describe('doctorHandler：当前角色', () => {
+  it('单聊里已选定角色才查形象；筹备里不查、不显示', async () => {
+    const tavern = path.join(dir, 'tavern')
+    const charDir = path.join(tavern, 'characters', '甲')
+    await fs.mkdir(path.join(charDir, 'looks'), { recursive: true })
+    await fs.writeFile(path.join(tavern, 'aha-tavern.yaml'), 'dataVersion: 1\n')
+    await fs.writeFile(path.join(charDir, 'reference.png'), 'x')
+    const { theme } = await loadTheme({ name: 'plain', builtinDir: themeDir })
+    const mk = (mode: 'setup' | 'chat', record: unknown): Invocation => ({
+      agent, args: '生图', label: '/aha 自检', theme, services: {} as any,
+      rt: {
+        log, servicesPath: () => yaml, builtinWorkflowDir, tools: () => undefined, drawing: { refresh: vi.fn() },
+        cards: undefined, handlers: {}, config: {} as any, builtinThemeDir: themeDir, theme: async () => theme,
+      } as any,
+      context: { mode, tavern: { dir: tavern }, outsideReason: null, cwd: null, sessionId: 's1', record } as any,
+      steer: vi.fn(),
+    })
+    const setup = (await doctorHandler(mk('setup', { chatId: 'c1', characterId: '甲' }))).text as string
+    expect(setup).not.toContain('当前角色')
+    const noRecord = (await doctorHandler(mk('chat', null))).text as string
+    expect(noRecord).not.toContain('当前角色')
+    const rm = /：(\/[^；]+)$/
+    for (const t of [setup, noRecord]) {
+      const m = rm.exec(t)
+      if (m) await fs.rm(m[1]!, { force: true })
+    }
+    const chat = (await doctorHandler(mk('chat', { chatId: 'c1', characterId: '甲' }))).text as string
+    expect(chat).toContain('当前角色：有定妆图')
+    expect(chat).toContain('✓ 出图会带上定妆图')
+    const m = rm.exec(chat)
+    if (m) await fs.rm(m[1]!, { force: true })
   })
 })

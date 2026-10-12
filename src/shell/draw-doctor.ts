@@ -4,8 +4,9 @@ import { randomBytes } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { ComfyError, type ComfyClient } from '../core/comfy'
+import type { LooksState } from '../core/looks'
 import { hasUserInfo, type ImageServiceResult, type ImageServiceSettings } from '../core/services'
-import { fillWorkflow, loadWorkflow, requirementsOf } from '../core/workflow'
+import { fillWorkflow, loadWorkflow, refsRequirementsOf, requirementsOf } from '../core/workflow'
 import { hostOf } from './draw'
 import type { Log } from './runtime'
 
@@ -23,6 +24,9 @@ export interface MissingModel {
   url?: string
 }
 
+/** 出图不会带定妆图的第一条原因（文字在渲染处生成）。 */
+export type ReferenceWhy = 'disabled' | 'no-refs' | 'bad-refs' | 'no-load-image' | 'no-images-input' | 'unknown'
+
 export interface DrawDoctorReport {
   /** 检查中途收到取消信号。 */
   cancelled?: boolean
@@ -34,6 +38,10 @@ export interface DrawDoctorReport {
   /** error 有值表示没能读到节点信息，其余项不再检查。 */
   nodes?: { total: number; missing: string[]; error?: DoctorFailKind }
   models?: { missing: MissingModel[]; unsure: string[] }
+  /** 出图会不会带定妆图；不满足不算自检未通过。服务、工作流、节点信息有问题时不检查。 */
+  reference?: { ok: boolean; reason?: ReferenceWhy; /** reason 为 bad-refs 时工作流自己给出的原因 */ problem?: string }
+  /** 单聊里当前角色的定妆图与额外形象；筹备或还没选定角色时没有。 */
+  character?: { hasDefault: boolean; extras: number; /** 图片文件丢失的额外形象名 */ missing: string[] }
   /** 没请求试出图时为 undefined。 */
   trial?:
     | { status: 'ok'; seconds: number; path: string }
@@ -50,6 +58,8 @@ export interface DrawDoctorDeps {
   /** 0 到 1 之间的随机数 */
   random(): number
   log: Pick<Log, 'debug'>
+  /** 当前聊天的角色有哪些形象；不在单聊或还没选定角色返回 null。缺省表示没有这一项。 */
+  currentLooks?(): Promise<LooksState | null>
 }
 
 export interface DrawDoctorOptions {
@@ -107,6 +117,19 @@ export async function checkDrawing(deps: DrawDoctorDeps, opts: DrawDoctorOptions
   const stopped = (): boolean => {
     if (opts.signal?.aborted) report.cancelled = true
     return report.cancelled === true
+  }
+  if (deps.currentLooks) {
+    try {
+      const looks = await deps.currentLooks()
+      if (looks) {
+        report.character = {
+          hasDefault: looks.default.exists, extras: looks.extras.length,
+          missing: looks.extras.filter((l) => !l.exists).map((l) => l.name),
+        }
+      }
+    } catch (e) {
+      deps.log.debug(`自检：读取当前角色的形象失败：${describe(e)}`)
+    }
   }
   if (hasUserInfo(settings.endpoint)) {
     report.service = { host, connected: false, credentials: true }
@@ -166,12 +189,42 @@ export async function checkDrawing(deps: DrawDoctorDeps, opts: DrawDoctorOptions
     report.models = { missing, unsure }
   }
 
+  const reference = await checkReference(deps, client, settings, wf, info, opts.signal)
+  if (stopped()) return report
+  report.reference = reference
+
   if (opts.trial) {
     if (stopped()) return report
     const allPassed = missingNodes.length === 0 && report.models!.missing.length === 0
     report.trial = allPassed ? await trialDraw(deps, client, settings, wf, opts.signal) : { status: 'skipped' }
   }
   return report
+}
+
+/**
+ * 出图会不会带定妆图。先查开关与工作流（不用请求），都满足才多取一次带 allInputs 的节点信息：
+ * 编码节点的 images 输入不是列表型，默认的节点信息会丢掉它；而模型检查依赖"非列表输入不出现"来判断"无法确认"，
+ * 所以不把第一次请求改成 allInputs，免得非列表的模型输入被当成空列表而误报缺失。
+ */
+async function checkReference(
+  deps: DrawDoctorDeps, client: ComfyClient, settings: ImageServiceSettings,
+  wf: Awaited<ReturnType<typeof loadWorkflow>>, info: Awaited<ReturnType<ComfyClient['objectInfo']>>, signal: AbortSignal | undefined,
+): Promise<NonNullable<DrawDoctorReport['reference']>> {
+  const no = (reason: ReferenceWhy, problem?: string) => ({ ok: false, reason, ...(problem ? { problem } : {}) })
+  if (!settings.reference) return no('disabled')
+  if (wf.refsProblem) return no('bad-refs', wf.refsProblem)
+  const need = refsRequirementsOf(wf)
+  if (!need) return no('no-refs')
+  if (need.nodeTypes.some((t) => !(t in info))) return no('no-load-image')
+  try {
+    const withAll = await client.objectInfo({
+      allInputs: true, timeoutMs: DOCTOR_OBJECT_INFO_TIMEOUT_MS, ...(signal ? { signal } : {}),
+    })
+    return withAll[need.encoderType] && 'images' in withAll[need.encoderType]! ? { ok: true } : no('no-images-input')
+  } catch (e) {
+    deps.log.debug(`自检：读取参考图所需的节点信息失败：${describe(e)}`)
+    return no('unknown')
+  }
 }
 
 async function trialDraw(

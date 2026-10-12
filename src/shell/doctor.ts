@@ -3,6 +3,7 @@
 import os from 'node:os'
 import { readCharacter } from '../core/card'
 import { createComfyClient } from '../core/comfy'
+import { readLooks } from '../core/looks'
 import { findPlayer } from '../core/player'
 import { loadImageService } from '../core/services'
 import { createTtsClient } from '../core/tts'
@@ -42,6 +43,13 @@ const check = (inv: Invocation, trial: boolean): Promise<DrawDoctorReport> =>
     now: Date.now,
     random: Math.random,
     log: inv.rt.log,
+    currentLooks: async () => {
+      const { context } = inv
+      const tavernDir = context.tavern?.dir
+      const characterId = context.mode === 'chat' && context.record?.chatId ? context.record.characterId : undefined
+      const entry = tavernDir && characterId ? await readCharacter(tavernDir, characterId) : null
+      return entry ? readLooks(entry.dir) : null
+    },
   }, { trial, ...(inv.signal ? { signal: inv.signal } : {}) })
 
 /** 正文放在 detail：界面只对 detail 做 Markdown 排版，question 是原样显示的一行。 */
@@ -90,7 +98,7 @@ async function cardFlow(inv: Invocation, ask: AskFn): Promise<Reply> {
       const options = passed
         ? [{ label: OPT_TRIAL, description: '用当前配置真的生成一张，大约十几秒到一分钟' }, { label: OPT_CLOSE, description: '看完了' }]
         : [{ label: OPT_RECHECK, description: '改好配置或装好缺的东西后再查一遍' }, { label: OPT_CLOSE, description: '看完了' }]
-      const choice = await ask1(ask, inv, card(passed ? '生图服务检查结果：全部通过' : '生图服务检查结果：有未通过的项', drawDoctorMarkdown(report), options))
+      const choice = await ask1(ask, inv, card(passed ? '生图服务检查结果：全部通过' : '生图服务检查结果：有未通过的项', drawDoctorMarkdown(report, inv.theme), options))
       if (choice === OPT_TRIAL && passed) {
         const tried = await check(inv, true)
         if (tried.trial && tried.trial.status !== 'skipped') {
@@ -264,7 +272,7 @@ export const doctorHandler: CommandHandler = async (inv) => {
       // 没有提问服务：完整结果压成一行
       const report = await check(inv, true)
       await refreshSession(inv)
-      return { kind: 'success', text: report.cancelled ? DOCTOR_CANCELLED_TEXT : drawDoctorOneLine(report) }
+      return { kind: 'success', text: report.cancelled ? DOCTOR_CANCELLED_TEXT : drawDoctorOneLine(report, inv.theme) }
     }
     const [report, voice] = await Promise.all([check(inv, false), voiceBrief(inv)])
     const session = await refreshSession(inv)

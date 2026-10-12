@@ -3,8 +3,8 @@ import type { TavernMode } from '../config'
 import type { DispatchReason } from '../core/dispatch'
 import type { OutsideReason } from '../core/state'
 import type { Theme } from '../core/theme'
-import type { AskItem } from './confirm'
-import type { DoctorFailKind, DrawDoctorReport } from './draw-doctor'
+import { shownName, type AskItem } from './confirm'
+import type { DoctorFailKind, DrawDoctorReport, ReferenceWhy } from './draw-doctor'
 import type { VoiceDoctorReport, VoiceTrial } from './voice-doctor'
 
 export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊' }
@@ -189,7 +189,36 @@ export function drawDoctorIssues(r: DrawDoctorReport): string[] {
   return out
 }
 
-export function drawDoctorItems(r: DrawDoctorReport): DoctorItem[] {
+const REFERENCE_WHY: Record<Exclude<ReferenceWhy, 'bad-refs'>, string> = {
+  disabled: '设置里关掉了',
+  'no-refs': '当前工作流没有声明参考图的位置（内置的两份工作流支持）',
+  'no-load-image': '生图服务上没有 LoadImage 节点，可能需要更新 ComfyUI',
+  'no-images-input': '生图服务上的文本编码节点不支持参考图，可能需要更新 ComfyUI',
+  unknown: '没能读到生图服务的节点信息，无法确认',
+}
+
+const LOOK_NAMES_MAX = 3
+const LOOK_NAME_CHARS = 12
+
+function referenceItem(ref: NonNullable<DrawDoctorReport['reference']>, sheet: string): DoctorItem {
+  if (ref.ok) return { mark: '✓', text: `出图会带上${sheet}` }
+  const why = ref.reason === 'bad-refs' ? `工作流里参考图的写法不对（${clip(ref.problem ?? '', 60)}）` : REFERENCE_WHY[ref.reason ?? 'unknown']
+  return { mark: '!', text: clip(`出图不会带${sheet}：${why}`) }
+}
+
+function characterItem(c: NonNullable<DrawDoctorReport['character']>, sheet: string, look: string): DoctorItem {
+  const extras = c.extras > 0 ? `${c.hasDefault ? '，' : '；'}另有 ${c.extras} 套${look}` : ''
+  let text = c.hasDefault ? `当前角色：有${sheet}${extras}` : `当前角色：还没有${sheet}（在「酒馆:筹备」里用 /aha 定妆 来定）${extras}`
+  if (c.missing.length > 0) {
+    const names = c.missing.slice(0, LOOK_NAMES_MAX).map((n) => shownName(n, LOOK_NAME_CHARS)).join('、')
+    text += `；其中 ${names}${c.missing.length > LOOK_NAMES_MAX ? ` 等 ${c.missing.length} 套` : ''} 的图片文件丢失`
+  }
+  return { mark: c.missing.length > 0 ? '!' : '', text: clip(text) }
+}
+
+export function drawDoctorItems(r: DrawDoctorReport, theme?: Theme): DoctorItem[] {
+  const sheet = theme?.concept('look_sheet') ?? '定妆图'
+  const look = theme?.concept('look') ?? '形象'
   const items: DoctorItem[] = []
   const problems = (): void => {
     const { shown, more } = capList(r.problems)
@@ -240,6 +269,8 @@ export function drawDoctorItems(r: DrawDoctorReport): DoctorItem[] {
     for (const f of unsure.shown) items.push({ mark: '?', text: `无法确认模型 ${clip(f)}` })
     if (unsure.more) items.push({ mark: '?', text: `无法确认模型${unsure.more}` })
   }
+  if (r.reference) items.push(referenceItem(r.reference, sheet))
+  if (r.character) items.push(characterItem(r.character, sheet, look))
   const t = r.trial
   if (t?.status === 'ok') items.push({ mark: '✓', text: `试出图成功，用时 ${t.seconds} 秒：${t.path}` })
   else if (t?.status === 'failed') items.push({ mark: '✗', text: `试出图失败（${DOCTOR_FAIL_TEXT[t.kind]}）` })
@@ -249,8 +280,8 @@ export function drawDoctorItems(r: DrawDoctorReport): DoctorItem[] {
 }
 
 /** 没有提问服务时的降级：全部项压成一行，用"；"连接。 */
-export function drawDoctorOneLine(r: DrawDoctorReport): string {
-  return drawDoctorItems(r)
+export function drawDoctorOneLine(r: DrawDoctorReport, theme?: Theme): string {
+  return drawDoctorItems(r, theme)
     .flatMap((i) => [`${i.mark ? `${i.mark} ` : ''}${i.text}`, ...(i.url ? [`下载地址：${i.url}`] : [])])
     .join('；')
 }
@@ -260,8 +291,8 @@ const SAFE_LINK = /^https?:\/\/[^\s()<>`]+$/
 const mdText = (s: string): string => s.replace(/[`*_\[\]<>|\\]/g, (c) => `\\${c}`)
 
 /** 卡片里的完整报告：Markdown 列表，一项一行，下载地址是可点击的链接。 */
-export function drawDoctorMarkdown(r: DrawDoctorReport): string {
-  return drawDoctorItems(r)
+export function drawDoctorMarkdown(r: DrawDoctorReport, theme?: Theme): string {
+  return drawDoctorItems(r, theme)
     .map((i) => {
       let line = `- ${i.mark ? `${i.mark} ` : ''}${mdText(i.text)}`
       if (i.url) line += SAFE_LINK.test(i.url) ? `\n  - [下载地址](${i.url})` : `\n  - 下载地址：${mdText(i.url)}`
