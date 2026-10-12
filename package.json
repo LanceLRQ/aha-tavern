@@ -56,7 +56,10 @@
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@deepseek-ai/dsh-typert-protocol": "0.2.0-rc.2",
     "@types/node": "^22.0.0",
+    "@types/pngjs": "^6.0.5",
     "esbuild": "^0.25.0",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0",
     "yaml": "^2.8.0"
