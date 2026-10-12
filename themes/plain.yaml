@@ -16,6 +16,8 @@ concepts:
   scenario: 情景
   show: 一场
   scene: 场景
+  look_sheet: 定妆图
+  look: 形象
 actions:
   init: 开店
   import: 导入

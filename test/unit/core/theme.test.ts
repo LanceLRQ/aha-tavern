@@ -14,7 +14,7 @@ describe('terms', () => {
   it('标识清单与规格 15.2、15.3 一致', () => {
     expect([...CONCEPT_IDS]).toEqual([
       'tavern', 'host', 'character', 'card', 'user', 'profile', 'world', 'house_rules',
-      'core_memory', 'recap', 'transcript', 'narrator', 'extra', 'scenario', 'show', 'scene',
+      'core_memory', 'recap', 'transcript', 'narrator', 'extra', 'scenario', 'show', 'scene', 'look_sheet', 'look',
     ])
     expect([...ACTION_IDS]).toEqual(['init', 'import', 'wrap'])
   })
@@ -27,6 +27,8 @@ describe('theme', () => {
     for (const id of CONCEPT_IDS) expect(theme.concept(id), id).toBeTruthy()
     for (const id of ACTION_IDS) expect(theme.action(id), id).toBeTruthy()
     expect(theme.concept('host')).toBe('掌柜')
+    expect(theme.concept('look_sheet')).toBe('定妆图')
+    expect(theme.concept('look')).toBe('形象')
     expect(theme.host().name).toBe('掌柜')
     expect(theme.persona().length).toBeGreaterThan(0)
   })
@@ -38,7 +40,7 @@ describe('theme', () => {
       tavern: '酒馆', host: '剧团长', character: '面具', card: '面具档案', user: '无名客',
       profile: '无名客档案', world: '剧本', house_rules: '酒馆宣言', core_memory: '光锥',
       recap: '忆泡', transcript: '忆质', narrator: '旁白', extra: 'NPC', scenario: '戏码',
-      show: '即兴巡演', scene: '一幕',
+      show: '即兴巡演', scene: '一幕', look_sheet: '扮相图', look: '扮相',
     }
     for (const [id, v] of Object.entries(concepts)) expect(theme.concept(id as never), id).toBe(v)
     expect(theme.action('init')).toBe('开张')

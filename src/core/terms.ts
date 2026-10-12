@@ -2,7 +2,7 @@
 
 export const CONCEPT_IDS = [
   'tavern', 'host', 'character', 'card', 'user', 'profile', 'world', 'house_rules',
-  'core_memory', 'recap', 'transcript', 'narrator', 'extra', 'scenario', 'show', 'scene',
+  'core_memory', 'recap', 'transcript', 'narrator', 'extra', 'scenario', 'show', 'scene', 'look_sheet', 'look',
 ] as const
 
 export const ACTION_IDS = ['init', 'import', 'wrap'] as const
