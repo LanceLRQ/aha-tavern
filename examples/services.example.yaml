@@ -8,6 +8,7 @@ image:
   endpoint: http://127.0.0.1:8188   # 必填：ComfyUI 的地址，没有这一项就是没配置
   workflow: qwen-image-2.1          # 内置工作流名，或工作流文件的绝对路径
   auto: true                        # 角色能否自己决定出图；false 时只响应用户要求
+  reference: true                   # 出图时带上角色的定妆图；false 则只用外貌文字
   style: 动漫风格插画，线条干净，光影柔和   # 拼在每个提示词最前面
   width: 832                        # 会向下取到 32 的倍数，不小于 256
   height: 1216
