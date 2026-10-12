@@ -200,8 +200,16 @@ const REFERENCE_WHY: Record<Exclude<ReferenceWhy, 'bad-refs'>, string> = {
 const LOOK_NAMES_MAX = 3
 const LOOK_NAME_CHARS = 12
 
+/** 这两种情况出图其实照样带定妆图（出图只看开关与工作流），所以不能写"不会带"，如实说后果。 */
+const REFERENCE_CONSEQUENCE: Partial<Record<ReferenceWhy, (sheet: string) => string>> = {
+  'no-load-image': (sheet) => `带${sheet}的出图会失败：${REFERENCE_WHY['no-load-image']}；可以先在设置里关掉“带上${sheet}”`,
+  'no-images-input': (sheet) => `${sheet}不会起作用：${REFERENCE_WHY['no-images-input']}；可以先在设置里关掉“带上${sheet}”`,
+}
+
 function referenceItem(ref: NonNullable<DrawDoctorReport['reference']>, sheet: string): DoctorItem {
   if (ref.ok) return { mark: '✓', text: `出图会带上${sheet}` }
+  const consequence = ref.reason ? REFERENCE_CONSEQUENCE[ref.reason] : undefined
+  if (consequence) return { mark: '!', text: clip(consequence(sheet)) }
   const why = ref.reason === 'bad-refs' ? `工作流里参考图的写法不对（${clip(ref.problem ?? '', 60)}）` : REFERENCE_WHY[ref.reason ?? 'unknown']
   return { mark: '!', text: clip(`出图不会带${sheet}：${why}`) }
 }

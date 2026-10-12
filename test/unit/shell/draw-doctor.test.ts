@@ -604,7 +604,7 @@ describe('参考图一项', () => {
     fake.objectInfo.mockResolvedValue(info)
     const r = await checkDrawing(deps(), { trial: false })
     expect(r.reference).toEqual({ ok: false, reason: 'no-load-image' })
-    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：生图服务上没有 LoadImage 节点，可能需要更新 ComfyUI')
+    expect(drawDoctorOneLine(r)).toContain('! 带定妆图的出图会失败：生图服务上没有 LoadImage 节点，可能需要更新 ComfyUI；可以先在设置里关掉“带上定妆图”')
     expect(fake.objectInfo).toHaveBeenCalledTimes(1)
   })
 
@@ -616,7 +616,7 @@ describe('参考图一项', () => {
     })
     const r = await checkDrawing(deps(), { trial: false })
     expect(r.reference).toEqual({ ok: false, reason: 'no-images-input' })
-    expect(drawDoctorOneLine(r)).toContain('! 出图不会带定妆图：生图服务上的文本编码节点不支持参考图，可能需要更新 ComfyUI')
+    expect(drawDoctorOneLine(r)).toContain('! 定妆图不会起作用：生图服务上的文本编码节点不支持参考图，可能需要更新 ComfyUI；可以先在设置里关掉“带上定妆图”')
   })
 
   it('多取的那次节点信息读不到：无法确认，原文不进报告', async () => {
