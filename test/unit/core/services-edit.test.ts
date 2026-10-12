@@ -179,6 +179,12 @@ describe('parseImageForm：入参校验', () => {
     expect(parseImageForm({ ...base, auto: 'maybe' }).ok).toBe(false)
   })
 
+  it('reference 必须是布尔值', () => {
+    expect(okI(parseImageForm({ ...base, reference: false })).set.reference).toBe(false)
+    expect(okI(parseImageForm({ ...base, reference: 'true' })).set.reference).toBe(true)
+    expect(parseImageForm({ ...base, reference: 'maybe' }).ok).toBe(false)
+  })
+
   it('数值范围', () => {
     expect(okI(parseImageForm({ ...base, width: 832, height: '1216', steps: 8, timeoutSeconds: 60 })).set).toMatchObject({
       width: 832, height: 1216, steps: 8, timeoutSeconds: 60,
@@ -244,11 +250,12 @@ describe('updateServicesFile：改写服务配置', () => {
 
   it('文件不存在时创建（含父目录），写出的内容能被读取逻辑读回', async () => {
     const f = path.join(dir, 'nested', 'services.yaml')
-    await updateServicesFile(f, 'image', { set: { endpoint: 'http://h:8188', width: 640, auto: false }, remove: [] })
+    await updateServicesFile(f, 'image', { set: { endpoint: 'http://h:8188', width: 640, auto: false, reference: false }, remove: [] })
     const r = await loadImageService(f)
     expect(r.configured && r.settings.endpoint).toBe('http://h:8188')
     expect(r.configured && r.settings.width).toBe(640)
     expect(r.configured && r.settings.auto).toBe(false)
+    expect(r.configured && r.settings.reference).toBe(false)
   })
 
   it('另一节不存在时新增，不动已有的一节', async () => {
@@ -455,13 +462,13 @@ describe('readServicesForm：给页面表单用的原始取值', () => {
   it('字符串化取值；布尔、数字、models 展平；不认识的键不返回', async () => {
     await fs.writeFile(
       file,
-      'voice:\n  endpoint: http://127.0.0.1:1\n  timeoutSeconds: 90\n  unknownField: x\nimage:\n  endpoint: http://h:1\n  auto: false\n  models:\n    unet: a.gguf\n',
+      'voice:\n  endpoint: http://127.0.0.1:1\n  timeoutSeconds: 90\n  unknownField: x\nimage:\n  endpoint: http://h:1\n  auto: false\n  reference: false\n  models:\n    unet: a.gguf\n',
       'utf8',
     )
     const f = await readServicesForm(file)
     expect(f.voice).toMatchObject({ endpoint: 'http://127.0.0.1:1', timeoutSeconds: '90', launch: '' })
     expect(f.voice).not.toHaveProperty('unknownField')
-    expect(f.image).toMatchObject({ endpoint: 'http://h:1', auto: 'false', unet: 'a.gguf', clip: '' })
+    expect(f.image).toMatchObject({ endpoint: 'http://h:1', auto: 'false', reference: 'false', unet: 'a.gguf', clip: '' })
   })
 
   it('YAML 写坏了：返回空表单并说明问题', async () => {

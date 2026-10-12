@@ -49,6 +49,10 @@ export const IMAGE_FIELDS: readonly FieldDef[] = [
     key: 'auto', label: '角色自己决定出图', kind: 'select',
     options: [{ value: '', label: '默认（是）' }, { value: 'true', label: '是' }, { value: 'false', label: '否，只在我要求时出图' }],
   },
+  {
+    key: 'reference', label: '出图时带上定妆图', hint: '角色定过妆之后，画出来的图会照定妆图来；每张多花几秒。', kind: 'select',
+    options: [{ value: '', label: '默认（带上）' }, { value: 'true', label: '带上' }, { value: 'false', label: '不带，只用外貌文字' }],
+  },
   { key: 'style', label: '画风', hint: '拼在每个提示词最前面。', kind: 'text' },
   { key: 'width', label: '宽', kind: 'number' },
   { key: 'height', label: '高', kind: 'number' },

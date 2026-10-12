@@ -242,11 +242,12 @@ describe('saveVoice / saveImage', () => {
   })
 
   it('生图：保存并读回，models 展平', async () => {
-    const r = await api.saveImage({ endpoint: 'http://h:8188', workflow: 'qwen-image-2.1-gguf', auto: false, unet: 'a.gguf', width: 640 })
+    const r = await api.saveImage({ endpoint: 'http://h:8188', workflow: 'qwen-image-2.1-gguf', auto: false, reference: false, unet: 'a.gguf', width: 640 })
     expect(r.ok).toBe(true)
     const img = await loadImageService(file)
     expect(img.configured && img.settings.workflow).toBe('qwen-image-2.1-gguf')
     expect(img.configured && img.settings.auto).toBe(false)
+    expect(img.configured && img.settings.reference).toBe(false)
     expect(img.configured && img.settings.models).toEqual({ unet: 'a.gguf' })
     expect(img.configured && img.settings.width).toBe(640)
   })

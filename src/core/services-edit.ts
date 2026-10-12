@@ -199,6 +199,7 @@ export function parseImageForm(input: unknown, opts: ParseOptions = {}): FormRes
     return BUILTIN_WORKFLOW.test(v) ? null : '应是内置工作流名或绝对路径'
   })
   form.bool('auto')
+  form.bool('reference')
   form.text('style', 'style', (v) => (v.length > 500 ? '太长（最多 500 字）' : null))
   form.int('width', 256, 4096)
   form.int('height', 256, 4096)
@@ -310,7 +311,7 @@ function checkPauseRelation(doc: YAML.Document, touched: (k: string) => boolean)
 // ---------- 读给表单用的原始取值 ----------
 
 const VOICE_KEYS = ['endpoint', 'launch', 'model', 'modelsDir', 'hfEndpoint', 'read', 'language', 'timeoutSeconds', ...PAUSE_KEYS] as const
-const IMAGE_KEYS = ['endpoint', 'workflow', 'auto', 'style', 'width', 'height', 'steps', 'timeoutSeconds'] as const
+const IMAGE_KEYS = ['endpoint', 'workflow', 'auto', 'reference', 'style', 'width', 'height', 'steps', 'timeoutSeconds'] as const
 const MODEL_KEYS = ['unet', 'clip', 'vae'] as const
 
 export interface ServicesForm {

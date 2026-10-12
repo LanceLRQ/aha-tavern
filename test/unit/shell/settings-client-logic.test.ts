@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { changedFields, guard, isActionResult, isSaveResult, isSettingsState, isStartResult, isTestResult, isVoiceStatus } from '../../../src/client/logic'
+import { IMAGE_FIELDS, changedFields, guard, isActionResult, isSaveResult, isSettingsState, isStartResult, isTestResult, isVoiceStatus } from '../../../src/client/logic'
 
 const CALL_FAILED = { ok: true, value: { ok: false, text: '操作出错，详情见日志。' } }
 
@@ -38,5 +38,15 @@ describe('changedFields', () => {
   })
   it('没有改动返回空对象', () => {
     expect(changedFields({ a: '1' }, { a: '1' })).toEqual({})
+  })
+})
+
+describe('生图字段定义', () => {
+  it('reference 紧跟在 auto 之后，是带默认项的下拉', () => {
+    const keys = IMAGE_FIELDS.map((f) => f.key)
+    expect(keys.indexOf('reference')).toBe(keys.indexOf('auto') + 1)
+    const def = IMAGE_FIELDS.find((f) => f.key === 'reference')!
+    expect(def.kind).toBe('select')
+    expect(def.options?.map((o) => o.value)).toEqual(['', 'true', 'false'])
   })
 })
