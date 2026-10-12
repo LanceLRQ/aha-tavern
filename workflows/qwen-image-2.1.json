@@ -138,6 +138,14 @@
       ]
     },
     "output": "9",
+    "refs": {
+      "encoder": "5",
+      "vae": [
+        "4",
+        0
+      ],
+      "max": 16
+    },
     "models": [
       {
         "slot": "unet",

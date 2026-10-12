@@ -15,6 +15,13 @@ export interface ModelNote {
   url?: string
 }
 
+/** 参考图能力：参考图交给哪个编码节点、用哪个 VAE 输出、最多几张。 */
+export interface RefsSpec {
+  encoder: string
+  vae: [node: string, output: number]
+  max: number
+}
+
 export interface Workflow {
   /** 内置名，或自带文件的路径。 */
   name: string
@@ -22,6 +29,10 @@ export interface Workflow {
   output: string
   slots: Partial<Record<SlotName, SlotRef>>
   notes: ModelNote[]
+  /** 支持参考图时才有；缺失或写错都没有。 */
+  refs?: RefsSpec
+  /** 说明块里写了 refs 但不合法时的原因（中文短语，不含文件内容）；此时 refs 为空。 */
+  refsProblem?: string
   /** 去掉说明块后的节点图。 */
   graph: Graph
 }
@@ -33,6 +44,8 @@ export interface FillValues {
   seed?: number
   steps?: number
   models?: ImageServiceSettings['models']
+  /** 参考图的服务端文件名；超过 refs.max 的部分被丢弃，工作流不支持时忽略。 */
+  refs?: string[]
 }
 
 export interface Requirements {
@@ -114,7 +127,42 @@ function validate(name: string, doc: unknown): Workflow {
       })
     }
   }
-  return { name, output: aha.output, slots, notes, graph }
+  const wf: Workflow = { name, output: aha.output, slots, notes, graph }
+  if (aha.refs !== undefined) {
+    const parsed = parseRefs(aha.refs, graph)
+    if (typeof parsed === 'string') wf.refsProblem = parsed
+    else wf.refs = parsed
+  }
+  return wf
+}
+
+const REFS_MAX_LIMIT = 16
+
+/** 校验 _aha.refs；合法返回规格，否则返回原因。 */
+function parseRefs(raw: unknown, graph: Graph): RefsSpec | string {
+  if (!isRecord(raw)) return 'refs 应是对象'
+  if (typeof raw.encoder !== 'string' || !isRecord(graph[raw.encoder])) return 'refs.encoder 没有指向存在的节点'
+  const vae = raw.vae
+  if (!Array.isArray(vae) || vae.length !== 2 || typeof vae[0] !== 'string' || !Number.isInteger(vae[1]) || (vae[1] as number) < 0) {
+    return 'refs.vae 应是 [节点编号, 输出序号]'
+  }
+  if (!isRecord(graph[vae[0]])) return 'refs.vae 指向不存在的节点'
+  const max = raw.max === undefined ? REFS_MAX_LIMIT : raw.max
+  if (typeof max !== 'number' || !Number.isInteger(max) || max < 1 || max > REFS_MAX_LIMIT) {
+    return `refs.max 应是 1 到 ${REFS_MAX_LIMIT} 的整数`
+  }
+  return { encoder: raw.encoder, vae: [vae[0], vae[1] as number], max }
+}
+
+/** 带这些参考图提交时实际会用几张（受 refs.max 限制；工作流不支持为 0）。 */
+export function refsUsed(wf: Workflow, refs: string[] | undefined): number {
+  return wf.refs && refs ? Math.min(refs.length, wf.refs.max) : 0
+}
+
+/** 带参考图时额外需要的节点类型，以及编码节点的类型；工作流不支持参考图返回 undefined。 */
+export function refsRequirementsOf(wf: Workflow): { nodeTypes: string[]; encoderType: string } | undefined {
+  if (!wf.refs) return undefined
+  return { nodeTypes: ['LoadImage'], encoderType: wf.graph[wf.refs.encoder]!.class_type }
 }
 
 /** 深拷贝后按位置填值，返回可提交的图（不含 _aha）；没有对应位置的值跳过。 */
@@ -131,7 +179,26 @@ export function fillWorkflow(wf: Workflow, values: FillValues): Graph {
   set('seed', values.seed)
   set('steps', values.steps)
   for (const slot of MODEL_SLOTS) set(slot, values.models?.[slot])
+  addRefs(wf, graph, values.refs)
   return graph
+}
+
+/** 给编码节点接上参考图：每张一个 LoadImage 节点；列表为空或不支持时什么都不做。 */
+function addRefs(wf: Workflow, graph: Graph, refs: string[] | undefined): void {
+  const count = refsUsed(wf, refs)
+  const spec = wf.refs
+  const encoder = spec && graph[spec.encoder]
+  if (!spec || !encoder || !refs || count === 0) return
+  delete encoder.inputs.images
+  for (let i = 1; i <= count; i++) {
+    const base = `aha_ref_${i}`
+    let id = base
+    for (let k = 2; id in graph; k++) id = `${base}_${k}`
+    graph[id] = { class_type: 'LoadImage', inputs: { image: refs[i - 1] } }
+    // 键名里的点是键的一部分，不是嵌套
+    encoder.inputs[`images.image_${i}`] = [id, 0]
+  }
+  encoder.inputs.vae = [...spec.vae]
 }
 
 /** 用到的节点类型（去重），以及每个模型位置最终的文件名与出处。 */

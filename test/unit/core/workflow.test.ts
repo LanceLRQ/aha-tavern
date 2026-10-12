@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { loadWorkflow, fillWorkflow, requirementsOf } from '../../../src/core/workflow'
+import { loadWorkflow, fillWorkflow, requirementsOf, refsUsed, refsRequirementsOf } from '../../../src/core/workflow'
 
 const builtinDir = path.resolve(__dirname, '../../../workflows')
 let tmp: string
@@ -225,5 +225,131 @@ describe('requirementsOf', () => {
     doc['1'].inputs.vae = 'v.safetensors'
     const wf = await loadWorkflow(await writeJson('m.json', doc), builtinDir)
     expect(requirementsOf(wf, {}).models).toEqual([{ slot: 'vae', file: 'v.safetensors', nodeType: 'A', input: 'vae' }])
+  })
+})
+
+/** 带参考图能力的最小工作流：编码节点 E、VAE 节点 V。 */
+const withRefs = (refs: unknown = { encoder: 'E', vae: ['V', 0], max: 3 }) => ({
+  _aha: { slots: { prompt: ['E', 'prompt'] }, output: '2', refs },
+  E: { class_type: 'Enc', inputs: { prompt: '', images: {} } },
+  V: { class_type: 'VaeLoad', inputs: {} },
+  '2': { class_type: 'B', inputs: {} },
+})
+
+describe('参考图：读取说明块', () => {
+  it.each(['qwen-image-2.1', 'qwen-image-2.1-gguf'])('内置 %s 读出 refs', async (name) => {
+    const wf = await loadWorkflow(name, builtinDir)
+    expect(wf.refs).toEqual({ encoder: '5', vae: ['4', 0], max: 16 })
+    expect(wf.refsProblem).toBeUndefined()
+  })
+
+  it('refs 缺失：两个字段都没有', async () => {
+    const wf = await loadWorkflow(await writeJson('m.json', minimal()), builtinDir)
+    expect(wf).not.toHaveProperty('refs')
+    expect(wf).not.toHaveProperty('refsProblem')
+  })
+
+  it('max 缺省为 16', async () => {
+    const wf = await loadWorkflow(await writeJson('m.json', withRefs({ encoder: 'E', vae: ['V', 0] })), builtinDir)
+    expect(wf.refs).toEqual({ encoder: 'E', vae: ['V', 0], max: 16 })
+  })
+
+  it.each([
+    ['refs 不是对象', 'abc'],
+    ['refs 是数组', []],
+    ['encoder 指向不存在的节点', { encoder: 'X', vae: ['V', 0] }],
+    ['encoder 不是字符串', { encoder: 5, vae: ['V', 0] }],
+    ['vae 不是二元组', { encoder: 'E', vae: ['V'] }],
+    ['vae 是字符串', { encoder: 'E', vae: 'V' }],
+    ['vae 序号不是整数', { encoder: 'E', vae: ['V', 'a'] }],
+    ['vae 节点不存在', { encoder: 'E', vae: ['X', 0] }],
+    ['max 为 0', { encoder: 'E', vae: ['V', 0], max: 0 }],
+    ['max 为 17', { encoder: 'E', vae: ['V', 0], max: 17 }],
+    ['max 为小数', { encoder: 'E', vae: ['V', 0], max: 2.5 }],
+    ['max 为字符串', { encoder: 'E', vae: ['V', 0], max: '3' }],
+  ])('写错：%s → 按不支持处理并给出原因，工作流仍可加载', async (_n, refs) => {
+    const wf = await loadWorkflow(await writeJson('m.json', withRefs(refs)), builtinDir)
+    expect(wf.refs).toBeUndefined()
+    expect(wf.refsProblem).toMatch(/\S/)
+    expect(wf.refsProblem).not.toContain('abc')
+    expect(fillWorkflow(wf, { prompt: 'p', refs: ['a.png'] })).toEqual(fillWorkflow(wf, { prompt: 'p' }))
+  })
+})
+
+describe('参考图：填值', () => {
+  const load = async (refs?: unknown) => loadWorkflow(await writeJson('m.json', withRefs(refs)), builtinDir)
+
+  it.each(['qwen-image-2.1', 'qwen-image-2.1-gguf'])('内置 %s：无参考图时与不传逐字段相同', async (name) => {
+    const wf = await loadWorkflow(name, builtinDir)
+    const base = fillWorkflow(wf, { prompt: 'p', seed: 1 })
+    expect(fillWorkflow(wf, { prompt: 'p', seed: 1, refs: [] })).toEqual(base)
+    expect(base['5']!.inputs.images).toEqual({})
+    expect(base['5']!.inputs).not.toHaveProperty('vae')
+    expect(Object.keys(base).some((k) => k.startsWith('aha_ref_'))).toBe(false)
+  })
+
+  it('一张：加 LoadImage 节点，扁平键，连 vae，删掉空 images', async () => {
+    const wf = await load()
+    const g = fillWorkflow(wf, { prompt: 'p', refs: ['a.png'] })
+    expect(g.aha_ref_1).toEqual({ class_type: 'LoadImage', inputs: { image: 'a.png' } })
+    expect(g.E!.inputs['images.image_1']).toEqual(['aha_ref_1', 0])
+    expect(g.E!.inputs.vae).toEqual(['V', 0])
+    expect(g.E!.inputs).not.toHaveProperty('images')
+    expect(g.E!.inputs.prompt).toBe('p')
+  })
+
+  it('多张：按顺序编号，不改原工作流', async () => {
+    const wf = await load()
+    const before = structuredClone(wf.graph)
+    const g = fillWorkflow(wf, { prompt: 'p', refs: ['a.png', 'b.png'] })
+    expect(g.aha_ref_2).toEqual({ class_type: 'LoadImage', inputs: { image: 'b.png' } })
+    expect(g.E!.inputs['images.image_2']).toEqual(['aha_ref_2', 0])
+    expect(wf.graph).toEqual(before)
+  })
+
+  it('节点编号冲突时换名', async () => {
+    const doc = withRefs() as Record<string, any>
+    doc.aha_ref_1 = { class_type: 'Other', inputs: {} }
+    doc.aha_ref_1_2 = { class_type: 'Other', inputs: {} }
+    const wf = await loadWorkflow(await writeJson('m.json', doc), builtinDir)
+    const g = fillWorkflow(wf, { prompt: 'p', refs: ['a.png', 'b.png'] })
+    expect(g.aha_ref_1).toEqual({ class_type: 'Other', inputs: {} })
+    const ids = Object.keys(g).filter((k) => g[k]!.class_type === 'LoadImage')
+    expect(ids).toHaveLength(2)
+    expect(new Set(ids).size).toBe(2)
+    expect(g.E!.inputs['images.image_1']).toEqual([ids[0], 0])
+    expect(g.E!.inputs['images.image_2']).toEqual([ids[1], 0])
+    expect(g[ids[0]!]!.inputs.image).toBe('a.png')
+    expect(g[ids[1]!]!.inputs.image).toBe('b.png')
+  })
+
+  it('超过 max 只用前 max 张，refsUsed 给出实际张数', async () => {
+    const wf = await load()
+    const g = fillWorkflow(wf, { prompt: 'p', refs: ['1', '2', '3', '4', '5'] })
+    expect(Object.keys(g).filter((k) => g[k]!.class_type === 'LoadImage')).toHaveLength(3)
+    expect(g.E!.inputs).not.toHaveProperty('images.image_4')
+    expect(refsUsed(wf, ['1', '2', '3', '4', '5'])).toBe(3)
+    expect(refsUsed(wf, ['1'])).toBe(1)
+    expect(refsUsed(wf, [])).toBe(0)
+    expect(refsUsed(wf, undefined)).toBe(0)
+  })
+
+  it('不支持参考图的工作流：refsUsed 为 0', async () => {
+    const wf = await loadWorkflow(await writeJson('m.json', minimal()), builtinDir)
+    expect(refsUsed(wf, ['a.png'])).toBe(0)
+  })
+})
+
+describe('参考图：额外依赖', () => {
+  it('支持时给出 LoadImage 与编码节点类型；不支持为 undefined', async () => {
+    const wf = await loadWorkflow('qwen-image-2.1', builtinDir)
+    expect(refsRequirementsOf(wf)).toEqual({ nodeTypes: ['LoadImage'], encoderType: 'TextEncodeQwenImage21' })
+    const plain = await loadWorkflow(await writeJson('m.json', minimal()), builtinDir)
+    expect(refsRequirementsOf(plain)).toBeUndefined()
+  })
+
+  it('requirementsOf 的返回值不含 LoadImage', async () => {
+    const wf = await loadWorkflow('qwen-image-2.1', builtinDir)
+    expect(requirementsOf(wf, {}).nodeTypes).not.toContain('LoadImage')
   })
 })
