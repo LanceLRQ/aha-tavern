@@ -91,6 +91,17 @@ export async function readPngBytes(file: string): Promise<Buffer | null> {
   return buf.length >= PNG_SIGNATURE.length && buf.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE) ? buf : null
 }
 
+/** 角色定妆现状的摘要：默认定妆图是否可用（文件在且文件头是 PNG）、图片文件在的额外形象名。读不出来时按没有。 */
+export async function summarizeLooks(charDir: string): Promise<{ hasDefault: boolean; extraNames: string[] }> {
+  try {
+    const state = await readLooks(charDir)
+    const hasDefault = state.default.exists && (await readPngBytes(state.default.file)) !== null
+    return { hasDefault, extraNames: state.extras.filter((l) => l.exists).map((l) => l.name) }
+  } catch {
+    return { hasDefault: false, extraNames: [] }
+  }
+}
+
 // ---------- 候选 ----------
 
 /** images 原图；draft 以某张候选为底；look 以已保存的形象为底；text 按外貌文字 */

@@ -7,13 +7,14 @@ import {
   listCharacters, MEMORY_FILE, saveCharacter, type CharacterCard, type CharacterEntry, type CharacterInput,
 } from '../core/card'
 import { countChars, writeMe, writeWorld } from '../core/docs'
+import { summarizeLooks } from '../core/looks'
 import { readVoice } from '../core/voice'
 import { memoryChars, readMemory, replaceSections, type Memory } from '../core/memory'
 import { isTavern } from '../core/tavern'
 import type { HostAgent } from './context'
 import type { Runtime } from './runtime'
 import { createConfirm, DeclineTracker, SessionGate, type AskFn, type Confirm } from './confirm'
-import { renderCard } from './setup-prompt'
+import { lookLabel, renderCard } from './setup-prompt'
 import { escapeClosingTag, flatText } from './steer'
 import { readonlyToolMessage } from './writable'
 import { LookSession, realLookDeps, registerLookTools, type LookDeps } from './look'
@@ -155,9 +156,10 @@ export async function listCharactersText(dir: string): Promise<SaveResult> {
     const entries = await listCharacters(dir)
     if (entries.length === 0) return { ok: true, message: 'characters: none' }
     const voices = await Promise.all(entries.map((e) => (e.ok ? readVoice(e.dir).then((v) => v.ok, () => false) : false)))
+    const looks = await Promise.all(entries.map((e) => (e.ok ? summarizeLooks(e.dir) : null)))
     const lines = entries.map((e, i) =>
       e.ok
-        ? `- id: ${e.card.id} | name: ${flatText(e.card.name, 'characters')} | tagline: ${e.card.tagline ? flatText(e.card.tagline, 'characters') : '(empty)'} | voice: ${voices[i] ? 'yes' : 'no'}`
+        ? `- id: ${e.card.id} | name: ${flatText(e.card.name, 'characters')} | tagline: ${e.card.tagline ? flatText(e.card.tagline, 'characters') : '(empty)'} | look: ${lookLabel(looks[i]!.hasDefault, looks[i]!.extraNames.length)} | voice: ${voices[i] ? 'yes' : 'no'}`
         : `- unreadable: ${entryProblem(e)}`)
     return { ok: true, message: `characters:\n${lines.join('\n')}` }
   } catch (e) {

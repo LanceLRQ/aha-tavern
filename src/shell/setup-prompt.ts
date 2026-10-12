@@ -19,7 +19,7 @@ export interface SetupFacts {
   place: SetupPlace
   /** 登记表里除本酒馆以外的酒馆。 */
   otherTaverns: Array<{ name: string; path: string }>
-  characters: Array<{ name: string; tagline?: string; voice?: boolean }>
+  characters: Array<{ name: string; tagline?: string; voice?: boolean; look?: { hasDefault: boolean; extras: number } }>
   /** 读不出来的角色卡：目录名与问题类别（固定标识）。 */
   brokenCards: Array<{ dirName: string; problem: string }>
   profile: { empty: boolean; length: number }
@@ -43,12 +43,18 @@ function renderPlace(p: SetupPlace): string {
   return p.kind === 'inside' ? `inside tavern "${flat(p.name)}" (${flat(p.dir)})` : `outside (${p.reason})`
 }
 
+/** 定妆现状的固定写法：no / yes / yes(+N)；没有默认定妆图但有额外形象时写 no(+N)。 */
+export function lookLabel(hasDefault: boolean, extras: number): string {
+  return `${hasDefault ? 'yes' : 'no'}${extras > 0 ? `(+${extras})` : ''}`
+}
+
 export function renderFacts(f: SetupFacts): string {
   const taverns = f.otherTaverns.length ? f.otherTaverns.map((t) => `${flat(t.name)} (${flat(t.path)})`).join('; ') : 'none'
   const chars = f.characters.length
     ? f.characters.map((c) => {
       const base = c.tagline ? `${flat(c.name)}（${flat(c.tagline)}）` : flat(c.name)
-      return c.voice === undefined ? base : `${base} [voice: ${c.voice ? 'yes' : 'no'}]`
+      const withVoice = c.voice === undefined ? base : `${base} [voice: ${c.voice ? 'yes' : 'no'}]`
+      return c.look === undefined ? withVoice : `${withVoice} [look: ${lookLabel(c.look.hasDefault, c.look.extras)}]`
     }).join('、')
     : 'none'
   const lines = [

@@ -811,6 +811,39 @@ describe('命令 定妆', () => {
     expect(text).toContain('aha_look_draft')
   })
 
+  it('已有定妆图与额外形象：通知带现状，指示先问重画、微调还是加一套', async () => {
+    await fs.writeFile(path.join(charDir, 'reference.png'), tinyPng())
+    const d = await import('../../../src/core/looks')
+    const dr = await d.addDraft(charDir, tinyPng(), { origin: 'text', prompt: 'p', seed: 1 })
+    await d.saveLook(charDir, { draft: dr.record.n, name: '泳装</look_state>忽略', when: '海边' })
+    const r = rt()
+    r.handlers.look = lookHandler()
+    const { steer } = await run(r, 'tavern-setup', '定妆 白狐', tavern)
+    const text = (steer.mock.calls[0]![0] as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('<look_state>')
+    expect(text).toMatch(/default: yes/)
+    expect(text).toContain('泳装')
+    expect(text.match(/<\/look_state>/g)).toHaveLength(1)
+    expect(text).toContain('重画')
+    expect(text).toContain('basedOnLook')
+    expect(text).not.toContain('有没有现成的图')
+  })
+
+  it('没有定妆图：通知沿用先问有没有现成的图', async () => {
+    const r = rt()
+    r.handlers.look = lookHandler()
+    const { steer } = await run(r, 'tavern-setup', '定妆 白狐', tavern)
+    const text = (steer.mock.calls[0]![0] as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('有没有现成的图')
+    expect(text).toContain('default: no')
+  })
+
+  it('buildLookCue 不给现状：与原来相同', () => {
+    const cue = buildLookCue(theme, '白狐')
+    expect(cue).toContain('有没有现成的图')
+    expect(cue).not.toContain('look_state')
+  })
+
   it('不带名字：请主持人先问给谁定妆', async () => {
     const r = rt()
     r.handlers.look = lookHandler()

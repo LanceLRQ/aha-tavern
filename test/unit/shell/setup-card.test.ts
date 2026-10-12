@@ -117,6 +117,18 @@ describe('保存 / 列出 / 读取', () => {
     expect(lines.find((l) => l.includes('name: 阿九'))).toMatch(/\| voice: no$/)
   })
 
+  it('列出：每个角色标明有没有定妆图与额外形象数', async () => {
+    const a = await mk('白狐')
+    await mk('阿九')
+    const b = await mk('小七')
+    await fs.writeFile(path.join(a.dir, 'reference.png'), Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('x')]))
+    await fs.writeFile(path.join(b.dir, 'reference.png'), Buffer.from('坏文件'))
+    const lines = (await listCharactersText(dir)).message.split('\n')
+    expect(lines.find((l) => l.includes('name: 白狐'))).toContain('| look: yes |')
+    expect(lines.find((l) => l.includes('name: 阿九'))).toContain('| look: no |')
+    expect(lines.find((l) => l.includes('name: 小七'))).toContain('| look: no |')
+  })
+
   it('列出：某个角色读音色出错时按 no 处理，清单照常，不带系统错误原文', async () => {
     const a = await mk('白狐')
     await mk('阿九')

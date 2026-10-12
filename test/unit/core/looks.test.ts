@@ -6,7 +6,7 @@ import YAML from 'yaml'
 import { CARD_FILE, readCharacter, saveCharacter, updateCharacterLooks } from '../../../src/core/card'
 import {
   DRAFTS_DIR, MAX_DRAFTS, REFERENCE_FILE, addDraft, clearDrafts, getDraft, listDrafts, readLooks, readPngBytes,
-  removeLook, resolveLook, saveLook, type DraftMeta,
+  removeLook, resolveLook, saveLook, summarizeLooks, type DraftMeta,
 } from '../../../src/core/looks'
 
 let root: string
@@ -289,5 +289,27 @@ describe('以已保存的形象为底的候选记录', () => {
     const list = await listDrafts(charDir)
     expect(list[0]!.basedOnLook).toBeUndefined()
     expect(list[1]).toMatchObject({ origin: 'look', basedOnLook: 'default', note: '便装' })
+  })
+})
+
+describe('summarizeLooks', () => {
+  it('没有任何定妆图：默认没有、额外为空', async () => {
+    expect(await summarizeLooks(charDir)).toEqual({ hasDefault: false, extraNames: [] })
+  })
+  it('默认定妆图必须是 PNG；文件头不对按没有', async () => {
+    await fs.writeFile(path.join(charDir, REFERENCE_FILE), Buffer.from('not a png'))
+    expect((await summarizeLooks(charDir)).hasDefault).toBe(false)
+    await fs.writeFile(path.join(charDir, REFERENCE_FILE), png(1))
+    expect((await summarizeLooks(charDir)).hasDefault).toBe(true)
+  })
+  it('额外形象只数文件在的', async () => {
+    const d1 = await addDraft(charDir, png(1), meta())
+    const d2 = await addDraft(charDir, png(2), meta())
+    await saveLook(charDir, { draft: d1.record.n, name: '泳装', when: '海边' })
+    await saveLook(charDir, { draft: d2.record.n, name: '居家', when: '在家' })
+    expect((await summarizeLooks(charDir)).extraNames).toEqual(['泳装', '居家'])
+    const looks = await cardLooks()
+    await fs.rm(path.join(charDir, 'looks', `${looks![0]!.id}.png`))
+    expect((await summarizeLooks(charDir)).extraNames).toEqual(['居家'])
   })
 })

@@ -80,6 +80,20 @@ describe('状态事实', () => {
     expect(t).toContain('阿九（猫） [voice: no]')
   })
 
+  it('角色带定妆状态时显示 look: no|yes|yes(+N)', () => {
+    const t = renderFacts({
+      ...base,
+      characters: [
+        { name: '白狐', look: { hasDefault: false, extras: 0 } },
+        { name: '阿九', voice: true, look: { hasDefault: true, extras: 0 } },
+        { name: '小七', look: { hasDefault: true, extras: 2 } },
+      ],
+    })
+    expect(t).toContain('白狐 [look: no]')
+    expect(t).toContain('阿九 [voice: yes] [look: yes]')
+    expect(t).toContain('小七 [look: yes(+2)]')
+  })
+
   it('空档案与无角色写成 empty / none', () => {
     const t = renderFacts(base)
     expect(t).toContain('profile: empty')
