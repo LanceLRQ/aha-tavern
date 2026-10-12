@@ -221,6 +221,85 @@ describe('三种起点的提示词与参考图', () => {
 
 const seqReset = () => { generate.mockClear(); uploadImage.mockClear() }
 
+describe('以已保存的形象为底（basedOnLook）', () => {
+  const SENTENCE = '按下面的要求修改这张设定图，其余保持不变。'
+  async function saveDefault(): Promise<Buffer> {
+    await draft()
+    await call('aha_look_save', { character: '白狐', candidate: 1 })
+    ask.mockClear()
+    session.onStep(withCwd(tavern), 40, [])
+    return generatedPngs[0]!
+  }
+
+  it('default：提示词逐字，一个参考图节点，上传的是定妆图字节，记录 origin 与 basedOnLook', async () => {
+    const saved = await saveDefault()
+    const out = await draft({ basedOnLook: 'default', note: '换成便装' })
+    expect((await lastSubmitted()).prompt).toBe('按下面的要求修改这张设定图，其余保持不变。换成便装')
+    expect((await lastSubmitted()).refs).toHaveLength(1)
+    expect(Buffer.from(uploadImage.mock.calls.at(-1)![0]).equals(saved)).toBe(true)
+    expect(await listDrafts(charDir)).toMatchObject([{ n: 1, origin: 'look', basedOnLook: 'default', note: '换成便装' }])
+    expect(out).toContain('look candidate 1 drawn')
+    expect(out).not.toContain('side and back views')
+    expect(SENTENCE).toBeTruthy()
+  })
+
+  it('形象名与形象编号都能解析', async () => {
+    await draft()
+    await call('aha_look_save', { character: '白狐', candidate: 1, name: '夏装', when: '夏天' })
+    const look = (await readLooks(charDir)).extras[0]!
+    const bytes = generatedPngs[0]!
+    session.onStep(withCwd(tavern), 41, [])
+    await draft({ basedOnLook: '夏装', note: '加围巾' })
+    expect((await lastSubmitted()).prompt).toBe('按下面的要求修改这张设定图，其余保持不变。加围巾')
+    expect(Buffer.from(uploadImage.mock.calls.at(-1)![0]).equals(bytes)).toBe(true)
+    expect((await listDrafts(charDir))[0]).toMatchObject({ origin: 'look', basedOnLook: look.id })
+    session.onStep(withCwd(tavern), 42, [])
+    expect(await draft({ basedOnLook: look.id, note: '去掉围巾' })).toContain('drawn')
+  })
+
+  it('三者互斥、缺 note', async () => {
+    for (const args of [
+      { basedOnLook: 'default', images: ['/a.png'], note: 'x' },
+      { basedOnLook: 'default', basedOn: 1, note: 'x' },
+      { basedOnLook: 'default', images: ['/a.png'], basedOn: 1, note: 'x' },
+    ]) expect(await draft(args)).toBe(DRAFT_TEXT.both)
+    expect(await draft({ basedOnLook: 'default' })).toBe(DRAFT_TEXT.noteNeeded)
+    expect(await draft({ basedOnLook: '  ', note: 'x' })).toBe(DRAFT_TEXT.basedOnLook)
+    expect(generate).not.toHaveBeenCalled()
+    expect(await draft()).toContain('drawn')
+  })
+
+  it('形象不存在、文件不是 PNG：固定短语，不出图，不占名额', async () => {
+    expect(await draft({ basedOnLook: 'default', note: 'x' })).toBe(LOOK_TEXT.noSuchLook)
+    expect(await draft({ basedOnLook: '没有', note: 'x' })).toBe(LOOK_TEXT.noSuchLook)
+    await fs.writeFile(path.join(charDir, 'reference.png'), 'not a png')
+    const out = await draft({ basedOnLook: 'default', note: 'x' })
+    expect(out).toBe(LOOK_TEXT.noSuchLook)
+    expect(out).not.toContain('没有')
+    expect(generate).not.toHaveBeenCalled()
+    expect(await draft()).toContain('drawn')
+  })
+
+  it('工作流不支持参考图：与 basedOn 同一条返回', async () => {
+    await saveDefault()
+    const wf = JSON.parse(await fs.readFile(path.join(workflowDir, 'qwen-image-2.1.json'), 'utf8'))
+    delete wf._aha.refs
+    const f = path.join(root, 'nr.json')
+    await fs.writeFile(f, JSON.stringify(wf))
+    settings = { ...settings, workflow: f }
+    generate.mockClear()
+    expect(await draft({ basedOnLook: 'default', note: 'x' })).toBe(LOOK_TEXT.noRefs)
+    expect(generate).not.toHaveBeenCalled()
+  })
+
+  it('出图失败不占名额', async () => {
+    await saveDefault()
+    generate.mockRejectedValueOnce(new ComfyError('timeout'))
+    expect(await draft({ basedOnLook: 'default', note: 'x' })).toContain('failed: timeout')
+    expect(await draft({ basedOnLook: 'default', note: 'x' })).toContain('drawn')
+  })
+})
+
 describe('参数校验：不合法的组合都不出图、不占本轮名额', () => {
   const cases: Array<[string, Record<string, unknown>, string]> = [
     ['images 与 basedOn 同时给', { images: ['/a.png'], basedOn: 1, note: 'x' }, DRAFT_TEXT.both],
@@ -692,7 +771,7 @@ describe('工具描述', () => {
     expect(defs.aha_look_draft!.description).toContain('不要调用')
     expect(defs.aha_look_save!.description).toContain('明确说这张可以之后才调用')
     expect(defs.aha_look_remove!.description).toContain('明确要删')
-    expect(Object.keys(defs.aha_look_draft!.parameters.properties)).toEqual(['character', 'images', 'basedOn', 'note'])
+    expect(Object.keys(defs.aha_look_draft!.parameters.properties)).toEqual(['character', 'images', 'basedOn', 'basedOnLook', 'note'])
     expect(defs.aha_look_draft!.parameters.required).toEqual(['character'])
   })
 })

@@ -281,3 +281,13 @@ describe('角色卡 looks 栏随卡文字保存', () => {
     expect(doc.looks).toHaveLength(1)
   })
 })
+
+describe('以已保存的形象为底的候选记录', () => {
+  it('origin 为 look 并记下是哪一套；旧记录读出来不带该字段', async () => {
+    await addDraft(charDir, png(1), meta())
+    await addDraft(charDir, png(2), meta({ origin: 'look', basedOnLook: 'default', note: '便装' }))
+    const list = await listDrafts(charDir)
+    expect(list[0]!.basedOnLook).toBeUndefined()
+    expect(list[1]).toMatchObject({ origin: 'look', basedOnLook: 'default', note: '便装' })
+  })
+})

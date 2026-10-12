@@ -93,7 +93,8 @@ export async function readPngBytes(file: string): Promise<Buffer | null> {
 
 // ---------- 候选 ----------
 
-export type DraftOrigin = 'images' | 'draft' | 'text'
+/** images 原图；draft 以某张候选为底；look 以已保存的形象为底；text 按外貌文字 */
+export type DraftOrigin = 'images' | 'draft' | 'look' | 'text'
 
 export interface DraftMeta {
   origin: DraftOrigin
@@ -102,6 +103,8 @@ export interface DraftMeta {
   seed: number
   /** 起点为候选时，是基于哪一张 */
   basedOn?: number
+  /** 起点为已保存的形象时，是哪一套：'default' 或形象编号 */
+  basedOnLook?: string
 }
 
 export interface DraftRecord {
@@ -112,6 +115,7 @@ export interface DraftRecord {
   prompt: string
   seed: number
   basedOn?: number
+  basedOnLook?: string
 }
 
 const draftsDir = (charDir: string) => path.join(charDir, DRAFTS_DIR)
@@ -119,7 +123,7 @@ const draftsLog = (charDir: string) => path.join(draftsDir(charDir), DRAFTS_LOG_
 const draftName = (n: number) => `${String(n).padStart(3, '0')}.png`
 const draftFile = (charDir: string, n: number) => path.join(draftsDir(charDir), draftName(n))
 
-const ORIGINS = new Set<string>(['images', 'draft', 'text'])
+const ORIGINS = new Set<string>(['images', 'draft', 'look', 'text'])
 
 function parseDraft(line: string): DraftRecord | null {
   try {
@@ -135,6 +139,7 @@ function parseDraft(line: string): DraftRecord | null {
       seed: typeof v.seed === 'number' ? v.seed : 0,
     }
     if (Number.isInteger(v.basedOn) && (v.basedOn as number) > 0) rec.basedOn = v.basedOn as number
+    if (typeof v.basedOnLook === 'string' && v.basedOnLook !== '') rec.basedOnLook = v.basedOnLook
     return rec
   } catch {
     return null
@@ -220,6 +225,7 @@ export async function addDraft(
       prompt: meta.prompt,
       seed: meta.seed,
       ...(meta.basedOn !== undefined ? { basedOn: meta.basedOn } : {}),
+      ...(meta.basedOnLook !== undefined ? { basedOnLook: meta.basedOnLook } : {}),
     }
     const all = [...records, record]
     const evict = all.length > MAX_DRAFTS ? all.slice(0, all.length - MAX_DRAFTS) : []

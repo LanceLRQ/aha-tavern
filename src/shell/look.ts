@@ -110,7 +110,8 @@ export const DRAFT_TEXT = {
   readonlyDraft: 'look not drawn: tavern data is newer than this plugin (read-only)',
   images: `error: images must be an array of 1 to ${MAX_LOOK_IMAGES} non-empty strings, look not drawn`,
   basedOn: 'error: basedOn must be a positive integer, look not drawn',
-  both: 'error: give either images or basedOn, not both; look not drawn',
+  both: 'error: give only one of images, basedOn and basedOnLook; look not drawn',
+  basedOnLook: 'error: basedOnLook must be a non-empty string, look not drawn',
   noteType: 'error: note must be a string, look not drawn',
   noteLong: (n: number) => `error: note is ${n} chars, limit ${NOTE_MAX}, look not drawn`,
   noteNeeded: 'error: note is required when basedOn is given (say what to change), look not drawn',
@@ -124,6 +125,7 @@ export const DRAFT_TEXT = {
 export function parseDraftArgs(args: Record<string, unknown>): { ok: true; start: DraftStart; note: string } | { ok: false; message: string } {
   const bad = (message: string): { ok: false; message: string } => ({ ok: false, message })
   const { images, basedOn } = args
+  const hasLook = args.basedOnLook !== undefined && args.basedOnLook !== null
   const hasImages = images !== undefined && images !== null
   const hasBased = basedOn !== undefined && basedOn !== null
   let paths: string[] = []
@@ -133,15 +135,16 @@ export function parseDraftArgs(args: Record<string, unknown>): { ok: true; start
     paths = (images as string[]).map((x) => x.trim())
   }
   if (hasBased && (typeof basedOn !== 'number' || !Number.isInteger(basedOn) || basedOn <= 0)) return bad(DRAFT_TEXT.basedOn)
-  if (hasImages && hasBased) return bad(DRAFT_TEXT.both)
+  if (hasLook && (typeof args.basedOnLook !== 'string' || args.basedOnLook.trim() === '')) return bad(DRAFT_TEXT.basedOnLook)
+  if ([hasImages, hasBased, hasLook].filter(Boolean).length > 1) return bad(DRAFT_TEXT.both)
   let note = ''
   if (args.note !== undefined && args.note !== null) {
     if (typeof args.note !== 'string') return bad(DRAFT_TEXT.noteType)
     note = args.note.trim()
     if (chars(note) > NOTE_MAX) return bad(DRAFT_TEXT.noteLong(chars(note)))
   }
-  if (hasBased && note === '') return bad(DRAFT_TEXT.noteNeeded)
-  const start: DraftStart = hasImages ? { kind: 'images', paths } : hasBased ? { kind: 'draft', basedOn: basedOn as number } : { kind: 'text' }
+  if ((hasBased || hasLook) && note === '') return bad(DRAFT_TEXT.noteNeeded)
+  const start: DraftStart = hasImages ? { kind: 'images', paths } : hasLook ? { kind: 'look', look: (args.basedOnLook as string).trim() } : hasBased ? { kind: 'draft', basedOn: basedOn as number } : { kind: 'text' }
   return { ok: true, start, note }
 }
 
@@ -341,7 +344,9 @@ export function registerLookTools(ctx: Context | ToolHost, deps: LookDeps): void
     name: LOOK_DRAFT,
     description: '给某个 character 画一张定妆候选图（同一个角色的正面、侧面、背面三视图并排）。'
       + '只在 user 想给某个 character 定妆（或改定妆）时调用，一轮最多一次；user 没提定妆就不要调用。'
-      + '起点三选一：user 给了图就传 images；要以某张候选为底小改就传 basedOn（同时必须给 note）；都不给就按 card 的 appearance 画（appearance 为空时返回原因）。'
+      + '起点四选一：user 给了图就传 images；要以某张候选为底小改就传 basedOn（同时必须给 note）；'
+      + '要在已经定好的形象上改（加一套只是换了衣服或状态的新形象，或微调已保存的定妆图）就传 basedOnLook（同时必须给 note）；'
+      + '都不给就按 card 的 appearance 画（appearance 为空时返回原因）。'
       + 'note 写 user 点名的特征与修改要求，每次给完整的一段（改写，不是只写新增的），不超过 400 字。'
       + '返回里有候选编号和一行图片：先写这一轮的回复，把那一行原样单独放在回复最后，再问 user 就用这张还是要改哪里。'
       + '没有画图能力（服务没配置、连不上、工作流不支持参考图）时返回原因，如实转告 user，并请 user 敲 /aha 自检 生图。'
@@ -353,6 +358,7 @@ export function registerLookTools(ctx: Context | ToolHost, deps: LookDeps): void
         description: `user 给的图片路径，1 到 ${MAX_LOOK_IMAGES} 个，绝对路径或 ~/ 开头，PNG 或 JPG；不要自己编路径，没给就不要传`,
       },
       basedOn: { type: 'integer', description: '以第几张候选为底继续改（候选编号来自之前的返回）；与 images 不能同时给，给了就必须有 note' },
+      basedOnLook: { type: 'string', description: '以已保存的形象为底：default 是默认形象，否则写形象名（或形象编号）；与 images、basedOn 不能同时给，给了就必须有 note，note 只写与它不同的地方' },
       note: { type: 'string', description: `要点名的特征与修改要求，完整的一段，不超过 ${NOTE_MAX} 字；没有可不给` },
     },
     output: { schema: { type: 'string' }, render: outText },

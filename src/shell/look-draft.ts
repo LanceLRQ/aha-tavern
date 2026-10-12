@@ -3,7 +3,7 @@
 // 返回值是给主持人看的文字：英文固定短语，不带服务端原文，也不带用户给的路径。
 import { ComfyError, type ComfyClient } from '../core/comfy'
 import { prepareImage, type ImagePrepFailure } from '../core/image-prep'
-import { addDraft, getDraft, readPngBytes, type DraftOrigin } from '../core/looks'
+import { addDraft, getDraft, readPngBytes, resolveLook, type DraftOrigin } from '../core/looks'
 import type { ImageServiceResult } from '../core/services'
 import { fillWorkflow, loadWorkflow } from '../core/workflow'
 import { failKindOf, hostOf, imageLine, PROBE_TIMEOUT_MS, type DrawFailKind } from './draw'
@@ -38,6 +38,7 @@ export type DraftStart =
   | { kind: 'text' }
   | { kind: 'images'; paths: string[] }
   | { kind: 'draft'; basedOn: number }
+  | { kind: 'look'; look: string }
 
 /** 拼提示词：文字起点是 画风 / 外貌 / 句子 三段换行连接（空的跳过）；其余起点只有句子。note 直接接在句子后面。 */
 export function lookPrompt(start: DraftStart, p: { style: string; appearance: string; note: string }): string {
@@ -48,6 +49,7 @@ export function lookPrompt(start: DraftStart, p: { style: string; appearance: st
     case 'images':
       return (start.paths.length > 1 ? SHEET_FROM_MANY_IMAGES : SHEET_FROM_ONE_IMAGE) + note
     case 'draft':
+    case 'look':
       return SHEET_FROM_DRAFT + note
   }
 }
@@ -66,6 +68,7 @@ export const LOOK_TEXT = {
   noRefs: `unavailable: the current image workflow cannot take reference pictures, so it cannot start from pictures or from a candidate; `
     + `draw from the card's appearance text instead (omit images and basedOn), or ${HOW_TO_CHECK}`,
   noSuchCandidate: (n: number) => `error: no candidate numbered ${n}, look not drawn; omit basedOn or use a number from an earlier result`,
+  noSuchLook: 'error: no saved look matches that name, look not drawn; omit basedOnLook, or ask the user which look to start from',
   tooManyRefs: (max: number) => `error: the current image workflow takes at most ${max} reference pictures, look not drawn; give fewer images`,
 } as const
 
@@ -177,6 +180,7 @@ export async function runDraft(env: DraftEnv, p: DraftInput): Promise<DraftOutco
 
   // 起点材料：原图逐张预处理，任一张被拒就整体返回；候选读字节
   let refs: Uint8Array[] = []
+  let lookId: string | undefined
   if (p.start.kind === 'images') {
     for (const [i, file] of p.start.paths.entries()) {
       const r = await prepareImage(file, { homeDir: env.homeDir })
@@ -188,6 +192,12 @@ export async function runDraft(env: DraftEnv, p: DraftInput): Promise<DraftOutco
     const bytes = d ? await readPngBytes(d.file) : null
     if (!bytes) return no(LOOK_TEXT.noSuchCandidate(p.start.basedOn))
     refs = [bytes]
+  } else if (p.start.kind === 'look') {
+    const r = await resolveLook(p.charDir, p.start.look)
+    const bytes = r.ok ? await readPngBytes(r.file) : null
+    if (!r.ok || !bytes) return no(LOOK_TEXT.noSuchLook)
+    refs = [bytes]
+    lookId = r.look
   }
 
   const { width, height } = sheetSize(s.width, s.height)
@@ -223,9 +233,10 @@ export async function runDraft(env: DraftEnv, p: DraftInput): Promise<DraftOutco
       log.warn(`会话 ${p.session}：定妆出的图不是 PNG（${image.ext}），不存为候选`)
       return no(lookFailText('other'))
     }
-    const origin: DraftOrigin = p.start.kind === 'images' ? 'images' : p.start.kind === 'draft' ? 'draft' : 'text'
+    const origin: DraftOrigin = p.start.kind === 'text' ? 'text' : p.start.kind
     const saved = await addDraft(p.charDir, image.bytes, {
       origin, prompt, seed, ...(p.note !== '' ? { note: p.note } : {}), ...(p.start.kind === 'draft' ? { basedOn: p.start.basedOn } : {}),
+      ...(lookId !== undefined ? { basedOnLook: lookId } : {}),
     })
     if (/[\r\n]/.test(saved.file)) throw new Error('图片路径含换行符')
     log.info(`会话 ${p.session}：定妆候选 n=${saved.record.n} ${now() - started}ms ${summary}`)
