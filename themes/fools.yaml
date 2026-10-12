@@ -16,8 +16,8 @@ concepts:
   scenario: 戏码
   show: 即兴巡演
   scene: 一幕
-  look_sheet: 扮相图
-  look: 扮相
+  look_sheet: 定妆图
+  look: 形象
 actions:
   init: 开张
   import: 跃迁

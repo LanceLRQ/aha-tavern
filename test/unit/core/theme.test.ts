@@ -40,7 +40,7 @@ describe('theme', () => {
       tavern: '酒馆', host: '剧团长', character: '面具', card: '面具档案', user: '无名客',
       profile: '无名客档案', world: '剧本', house_rules: '酒馆宣言', core_memory: '光锥',
       recap: '忆泡', transcript: '忆质', narrator: '旁白', extra: 'NPC', scenario: '戏码',
-      show: '即兴巡演', scene: '一幕', look_sheet: '扮相图', look: '扮相',
+      show: '即兴巡演', scene: '一幕', look_sheet: '定妆图', look: '形象',
     }
     for (const [id, v] of Object.entries(concepts)) expect(theme.concept(id as never), id).toBe(v)
     expect(theme.action('init')).toBe('开张')

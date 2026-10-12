@@ -679,7 +679,11 @@ describe('参考图一项', () => {
   })
 
   it('称呼取自主题', async () => {
-    const { theme } = await loadTheme({ name: 'fools', builtinDir: themeDir })
+    // 内置两套主题对这两个称呼的叫法相同，这里换成别的叫法来验证确实取自主题
+    const { theme: base } = await loadTheme({ name: 'fools', builtinDir: themeDir })
+    const theme: typeof base = Object.assign(Object.create(base), {
+      concept: (id: Parameters<typeof base.concept>[0]) => (id === 'look_sheet' ? '妆照' : id === 'look' ? '造型' : base.concept(id)),
+    })
     const r = await checkDrawing(deps({ currentLooks: async () => makeLooks({ extras: [{ name: 'a', exists: true }] }) }), { trial: false })
     const t = drawDoctorOneLine(r, theme)
     expect(t).toContain(`出图会带上${theme.concept('look_sheet')}`)

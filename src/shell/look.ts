@@ -114,7 +114,7 @@ export const DRAFT_TEXT = {
   basedOnLook: 'error: basedOnLook must be a non-empty string, look not drawn',
   noteType: 'error: note must be a string, look not drawn',
   noteLong: (n: number) => `error: note is ${n} chars, limit ${NOTE_MAX}, look not drawn`,
-  noteNeeded: 'error: note is required when basedOn is given (say what to change), look not drawn',
+  noteNeeded: 'error: note is required when basedOn or basedOnLook is given (say what to change), look not drawn',
   noAppearance: 'error: this character has no appearance text, look not drawn; '
     + 'ask the user to describe the appearance (then save it on the card) or to give pictures (images)',
   alreadyDrew: 'already drew a look candidate this turn; show it to the user and wait for the reply',

@@ -69,8 +69,8 @@ describe('定妆图的卡片', () => {
   })
   it('愚者主题下取愚者的称呼', () => {
     expect(q({ kind: 'look-save', name: '白狐', look: '夏装', replaces: false }, fools).question)
-      .toBe('把刚才那张扮相图保存为「白狐」的扮相「夏装」？')
-    expect(q({ kind: 'look-remove', name: '白狐' }, fools).header).toBe('扮相图')
+      .toBe('把刚才那张定妆图保存为「白狐」的形象「夏装」？')
+    expect(q({ kind: 'look-remove', name: '白狐' }, fools).header).toBe('定妆图')
   })
 })
 
