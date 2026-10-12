@@ -202,10 +202,11 @@ export function planCardCommand(theme: Theme, entries: CharacterEntry[], args: s
 
 /** 用户消息带图时追加给主持人的提示（给模型看，故用英文；三个选项原文与规则 11 一致）。 */
 export const PICTURE_CUE =
-  'The user attached a picture. If this is about making or changing a character: follow rule 11. '
-  + 'If the user message does not describe the persona (personality, identity, way of speaking), do NOT draft yet: '
+  'The user attached a picture. If the user wants a new character made from it, follow the 带图建 card rule: '
+  + 'when the message says nothing about the persona (personality, identity, way of speaking), do not write the card yet; '
   + 'first call the ask tool once with exactly these three options: “我来说几句”, “照图发挥”, “只填外貌”. '
-  + 'If the persona is described, draft directly.'
+  + 'When the persona is given, write the card directly. '
+  + 'If the picture is for changing an existing character or for a look sheet, do not ask that question.'
 
 /** 本步新到的消息里，是否有用户自己发的、带图片块的消息；插件自己的通知不算。形状不对一律当没有。 */
 export function hasUserPicture(messages: unknown): boolean {

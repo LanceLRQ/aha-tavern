@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import hostSetupText from '../../../src/prompts/host-setup.md'
 import { loadTheme, type Theme } from '../../../src/core/theme'
 import {
   appendPictureCue, buildDocCue, buildOpeningCue, buildSetupPrompt, hasUserPicture, PICTURE_CUE, renderFacts, renderGlossary, type SetupFacts,
@@ -200,6 +201,10 @@ describe('带图提示', () => {
   it('PICTURE_CUE 含三个选项原文，不含附件细节', () => {
     for (const o of ['“我来说几句”', '“照图发挥”', '“只填外貌”']) expect(PICTURE_CUE).toContain(o)
     for (const bad of ['sha256', 'Normalized copy', 'attachments/']) expect(PICTURE_CUE).not.toContain(bad)
+    expect(PICTURE_CUE).not.toContain('rule 11')
+    expect(PICTURE_CUE).not.toContain('draft')
+    expect(PICTURE_CUE).toContain('带图建 card')
+    expect(hostSetupText.split('\n').some((l) => /^\d+\. /.test(l) && l.includes('带图建 card：'))).toBe(true)
   })
   it('hasUserPicture：只认用户消息里的图片块', () => {
     expect(hasUserPicture([user([{ type: 'text', text: 'x' }, img])])).toBe(true)
@@ -213,7 +218,8 @@ describe('带图提示', () => {
     expect(appendPictureCue(reject)).toBe(reject)
     const bad = { kind: 'enter' }
     expect(appendPictureCue(bad)).toBe(bad)
-    const out = appendPictureCue({ kind: 'enter', messages: ['a'] }) as { messages: any[] }
+    const out = appendPictureCue({ kind: 'enter', messages: ['a'], startsRequestSeries: true }) as { messages: any[]; startsRequestSeries?: boolean }
+    expect(out.startsRequestSeries).toBe(true)
     expect(out.messages).toHaveLength(2)
     expect(out.messages[0]).toBe('a')
   })

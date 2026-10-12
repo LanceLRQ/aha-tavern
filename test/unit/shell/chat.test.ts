@@ -897,7 +897,8 @@ describe('提示词文字', () => {
       expect(rule11).toContain('看不清的不猜')
       expect(rule11).toContain('提醒 user 补')
       expect(rule11).toContain('平时衣着')
-      expect(rule11).toContain('选只填外貌：只写 name 和 appearance，其余栏留空，不照规则 5 补全')
+      expect(rule11).toContain('选只填外貌：只写 name 和 appearance，persona 只写“尚未设定”，其余栏留空，不照规则 5 补全')
+      expect(rule11).toContain('改已有 character 不问')
       expect(rule11).toContain('已有定妆图（列表里 look 不是 no）时不主动提')
       expect(rule11).toContain('先别动笔，必须用提问工具问一次')
       expect(hostSetupText).toContain('只给了图、没说人设的除外，先照规则 11 问一次')
@@ -911,8 +912,8 @@ describe('提示词文字', () => {
     it('最后一条仍是做完后提示新开单聊', () => {
       expect(rules[rules.length - 1]).toMatch(/^12\. 做完后提示 user 新开「酒馆:单聊」/)
     })
-    it('新规则不超过 400 字', () => {
-      expect([...rule11].length).toBeLessThanOrEqual(440)
+    it('新规则不超过 470 字', () => {
+      expect([...rule11].length).toBeLessThanOrEqual(470)
     })
     it('不写死宿主图片说明的格式', () => {
       for (const s of ['sha256', 'Normalized copy', 'attachments/']) {
