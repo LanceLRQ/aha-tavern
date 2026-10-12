@@ -10,6 +10,8 @@ export type ComfyErrorKind =
   | 'timeout'
   | 'cancelled'
   | 'no-output'
+  | 'missing-ref'
+  | 'upload-failed'
 
 const DETAIL_MAX = 2000
 
@@ -36,6 +38,19 @@ export interface ComfyClientOptions {
   stopTimeoutMs?: number
 }
 
+export interface UploadOptions {
+  /** 默认 UPLOAD_TIMEOUT_MS。 */
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+export interface ObjectInfoOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
+  /** 为真时连非列表型的输入也保留输入名（值为空数组）；默认丢弃。 */
+  allInputs?: boolean
+}
+
 export interface GenerateOptions {
   /** 工作流里产出图片的节点编号。 */
   outputNode: string
@@ -54,7 +69,9 @@ export type ObjectInfo = Record<string, Record<string, string[]>>
 
 export interface ComfyClient {
   probe(timeoutMs: number): Promise<string>
-  objectInfo(opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<ObjectInfo>
+  objectInfo(opts?: ObjectInfoOptions): Promise<ObjectInfo>
+  /** 上传一张图到服务端 input 目录，返回服务端实际使用的文件名。 */
+  uploadImage(data: Uint8Array, filename: string, opts?: UploadOptions): Promise<string>
   generate(graph: Record<string, unknown>, opts: GenerateOptions): Promise<GeneratedImage>
   /** 打断服务端任务；给出 promptId 时新版服务只打断这一个。失败不抛。 */
   interrupt(promptId?: string): Promise<void>
@@ -63,6 +80,8 @@ export interface ComfyClient {
 const CLIENT_ID = 'aha-tavern'
 const POLL_FAIL_LIMIT = 3
 const DEFAULT_STOP_TIMEOUT_MS = 3000
+/** 上传一张图的默认超时。 */
+export const UPLOAD_TIMEOUT_MS = 60_000
 
 interface CallResult {
   status: number
@@ -104,6 +123,22 @@ function classifyRejection(text: string): ComfyErrorKind {
     const errors = isRecord(ne) && Array.isArray(ne.errors) ? ne.errors : []
     if (errors.some((x) => isRecord(x) && x.type === 'value_not_in_list')) return 'missing-model'
   }
+  // 参考图在服务端不存在：LoadImage 节点的 image 输入校验失败（不看英文措辞）
+  for (const ne of nodeErrors) {
+    if (!isRecord(ne) || ne.class_type !== 'LoadImage') continue
+    const errors = Array.isArray(ne.errors) ? ne.errors : []
+    if (
+      errors.some(
+        (x) =>
+          isRecord(x) &&
+          x.type === 'custom_validation_failed' &&
+          isRecord(x.extra_info) &&
+          x.extra_info.input_name === 'image',
+      )
+    ) {
+      return 'missing-ref'
+    }
+  }
   const top = isRecord(body.error) ? body.error : {}
   if (top.type === 'missing_node_type') return 'missing-node'
   if (top.type === 'invalid_prompt' && typeof top.message === 'string' && top.message.includes('does not exist')) {
@@ -141,7 +176,7 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
   async function call(
     method: string,
     path: string,
-    o: { body?: unknown; signal?: AbortSignal; timeoutMs?: number; binary?: boolean } = {},
+    o: { body?: unknown; form?: FormData; signal?: AbortSignal; timeoutMs?: number; binary?: boolean } = {},
   ): Promise<CallResult> {
     const ctl = new AbortController()
     let timedOut = false
@@ -159,7 +194,10 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
       const res = await doFetch(`${base}${path}`, {
         method,
         signal: ctl.signal,
-        ...(o.body !== undefined
+        // 表单体不手写 Content-Type，边界由运行时生成
+        ...(o.form !== undefined
+          ? { body: o.form }
+          : o.body !== undefined
           ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(o.body) }
           : {}),
       })
@@ -216,7 +254,7 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
     return typeof system.comfyui_version === 'string' ? system.comfyui_version : 'unknown'
   }
 
-  async function objectInfo(o: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<ObjectInfo> {
+  async function objectInfo(o: ObjectInfoOptions = {}): Promise<ObjectInfo> {
     let res: CallResult
     try {
       res = await call('GET', '/object_info', { timeoutMs: o.timeoutMs, signal: o.signal })
@@ -235,11 +273,26 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
         for (const [name, spec] of Object.entries(group)) {
           const list = optionsOf(spec)
           if (list) inputs[name] = list
+          else if (o.allInputs) inputs[name] = []
         }
       }
       out[type] = inputs
     }
     return out
+  }
+
+  async function uploadImage(data: Uint8Array, filename: string, o: UploadOptions = {}): Promise<string> {
+    const form = new FormData()
+    form.append('image', new Blob([data as BlobPart], { type: 'image/png' }), filename)
+    // 一律覆盖，并以服务端返回的名字为准
+    form.append('overwrite', 'true')
+    const res = await call('POST', '/upload/image', { form, signal: o.signal, timeoutMs: o.timeoutMs ?? UPLOAD_TIMEOUT_MS })
+    if (!res.ok) throw new ComfyError('upload-failed', `HTTP ${res.status} ${res.text}`)
+    const body = parseJson(res.text)
+    if (!isRecord(body) || typeof body.name !== 'string' || body.name === '') {
+      throw new ComfyError('upload-failed', `unexpected body: ${res.text}`)
+    }
+    return body.name
   }
 
   async function generate(graph: Record<string, unknown>, o: GenerateOptions): Promise<GeneratedImage> {
@@ -351,5 +404,5 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
     return { bytes: res.bytes, ext: extOf(img.filename) }
   }
 
-  return { probe, objectInfo, generate, interrupt }
+  return { probe, objectInfo, uploadImage, generate, interrupt }
 }

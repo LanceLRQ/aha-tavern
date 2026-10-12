@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ComfyError, createComfyClient, type ComfyErrorKind } from '../../../src/core/comfy'
+import { ComfyError, UPLOAD_TIMEOUT_MS, createComfyClient, type ComfyErrorKind } from '../../../src/core/comfy'
 
 type Handler = (req: { method: string; path: string; body?: string; signal?: AbortSignal }) => Response | Promise<Response>
 
@@ -559,5 +559,159 @@ describe('generate：收尾边界', () => {
     const c = createComfyClient({ endpoint: ENDPOINT, fetch: f, ...fakeClock() })
     const err = await kindOf(c.generate(GRAPH, { outputNode: '9', timeoutMs: 100_000, pollMs: 10 }))
     expect(err.kind).toBe('failed')
+  })
+})
+
+describe('uploadImage', () => {
+  const PNG = new Uint8Array([137, 80, 78, 71, 1, 2, 3])
+
+  /** 记录收到的表单。 */
+  function uploadFetch(respond: () => Response | Promise<Response>) {
+    const seen: Array<{ method: string; path: string; form?: FormData; headers?: unknown }> = []
+    const f = (async (input: unknown, init?: RequestInit) => {
+      const u = new URL(String(input))
+      seen.push({
+        method: init?.method ?? 'GET',
+        path: u.pathname,
+        form: init?.body instanceof FormData ? init.body : undefined,
+        headers: init?.headers,
+      })
+      void init?.signal
+      return respond()
+    }) as unknown as typeof fetch
+    return { f, seen }
+  }
+
+  it('发 multipart：image 带文件名与内容，overwrite=true；返回服务端给的名字', async () => {
+    const { f, seen } = uploadFetch(() => json({ name: 'renamed (1).png', subfolder: '', type: 'input' }))
+    const name = await createComfyClient({ endpoint: ENDPOINT, fetch: f }).uploadImage(PNG, 'ref.png')
+    expect(name).toBe('renamed (1).png')
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.method).toBe('POST')
+    expect(seen[0]!.path).toBe('/upload/image')
+    const file = seen[0]!.form!.get('image') as File
+    expect(file.name).toBe('ref.png')
+    expect(file.type).toBe('image/png')
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(PNG)
+    expect(seen[0]!.form!.get('overwrite')).toBe('true')
+    // 不能手写 Content-Type，边界由运行时生成
+    expect(seen[0]!.headers).toBeUndefined()
+  })
+
+  it('超时归 timeout', async () => {
+    const { f } = fakeFetch({ 'POST /upload/image': hang })
+    const err = await kindOf(createComfyClient({ endpoint: ENDPOINT, fetch: f }).uploadImage(PNG, 'a.png', { timeoutMs: 20 }))
+    expect(err.kind).toBe('timeout')
+  })
+
+  it('默认超时为 60 秒', () => {
+    expect(UPLOAD_TIMEOUT_MS).toBe(60_000)
+  })
+
+  it('取消归 cancelled；已取消的信号不发请求', async () => {
+    const ctl = new AbortController()
+    const { f } = fakeFetch({ 'POST /upload/image': hang })
+    setTimeout(() => ctl.abort(), 10)
+    const err = await kindOf(createComfyClient({ endpoint: ENDPOINT, fetch: f }).uploadImage(PNG, 'a.png', { signal: ctl.signal }))
+    expect(err.kind).toBe('cancelled')
+    const { f: f2, seen } = uploadFetch(() => json({ name: 'x.png' }))
+    const err2 = await kindOf(createComfyClient({ endpoint: ENDPOINT, fetch: f2 }).uploadImage(PNG, 'a.png', { signal: ctl.signal }))
+    expect(err2.kind).toBe('cancelled')
+    expect(seen).toHaveLength(0)
+  })
+
+  it('连不上归 unreachable', async () => {
+    const f = (async () => {
+      throw new TypeError('down')
+    }) as unknown as typeof fetch
+    const err = await kindOf(createComfyClient({ endpoint: ENDPOINT, fetch: f }).uploadImage(PNG, 'a.png'))
+    expect(err.kind).toBe('unreachable')
+  })
+
+  it('HTTP 500 归 upload-failed，原文只在 detail', async () => {
+    const { f } = uploadFetch(() => new Response('disk full secret', { status: 500 }))
+    const err = await kindOf(createComfyClient({ endpoint: ENDPOINT, fetch: f }).uploadImage(PNG, 'a.png'))
+    expect(err.kind).toBe<ComfyErrorKind>('upload-failed')
+    expect(err.detail).toContain('disk full secret')
+    expect(err.message).not.toContain('disk full')
+  })
+
+  it.each([
+    ['缺 name', { subfolder: '' }],
+    ['name 不是字符串', { name: 5 }],
+    ['name 为空', { name: '' }],
+    ['不是对象', ['x']],
+  ])('返回体不对（%s）归 upload-failed', async (_n, body) => {
+    const { f } = uploadFetch(() => json(body))
+    const err = await kindOf(createComfyClient({ endpoint: ENDPOINT, fetch: f }).uploadImage(PNG, 'a.png'))
+    expect(err.kind).toBe('upload-failed')
+  })
+
+  it('返回体不是 JSON 归 upload-failed', async () => {
+    const { f } = uploadFetch(() => new Response('ok'))
+    const err = await kindOf(createComfyClient({ endpoint: ENDPOINT, fetch: f }).uploadImage(PNG, 'a.png'))
+    expect(err.kind).toBe('upload-failed')
+  })
+})
+
+describe('generate：参考图不存在', () => {
+  const run = (body: unknown, status = 400) => {
+    const { f } = fakeFetch({ 'POST /prompt': () => json(body, status) })
+    const c = createComfyClient({ endpoint: ENDPOINT, fetch: f, ...fakeClock() })
+    return kindOf(c.generate(GRAPH, { outputNode: '9', timeoutMs: 1000, pollMs: 10 }))
+  }
+  const body = (nodeErrors: unknown) => ({
+    error: { type: 'prompt_outputs_failed_validation', message: 'Prompt outputs failed validation', details: '', extra_info: {} },
+    node_errors: nodeErrors,
+  })
+
+  it('LoadImage 的 image 输入校验失败归 missing-ref，不依赖措辞', async () => {
+    const err = await run(
+      body({
+        aha_ref_1: {
+          class_type: 'LoadImage',
+          dependent_outputs: ['9'],
+          errors: [
+            { type: 'custom_validation_failed', message: 'x', details: '图片文件无效 xxx.png', extra_info: { input_name: 'image' } },
+          ],
+        },
+      }),
+    )
+    expect(err.kind).toBe<ComfyErrorKind>('missing-ref')
+    expect(err.detail).toContain('xxx.png')
+  })
+
+  it('其他节点的同类错误、LoadImage 的其他输入、其他错误类型都不算', async () => {
+    const mk = (cls: string, type: string, input: string) =>
+      body({ n: { class_type: cls, errors: [{ type, extra_info: { input_name: input } }] } })
+    expect((await run(mk('Other', 'custom_validation_failed', 'image'))).kind).toBe('rejected')
+    expect((await run(mk('LoadImage', 'custom_validation_failed', 'upload'))).kind).toBe('rejected')
+    expect((await run(mk('LoadImage', 'required_input_missing', 'image'))).kind).toBe('rejected')
+  })
+
+  it('并存的模型缺失仍归 missing-model', async () => {
+    const err = await run(
+      body({
+        a: { class_type: 'UnetLoaderGGUF', errors: [{ type: 'value_not_in_list' }] },
+        b: { class_type: 'LoadImage', errors: [{ type: 'custom_validation_failed', extra_info: { input_name: 'image' } }] },
+      }),
+    )
+    expect(err.kind).toBe('missing-model')
+  })
+})
+
+describe('objectInfo：全部输入名', () => {
+  it('默认丢弃非列表型；all 为真时保留全部输入名，非列表型给空数组', async () => {
+    const { f } = fakeFetch({
+      'GET /object_info': () =>
+        json({
+          TextEncodeQwenImage21: {
+            input: { required: { prompt: ['STRING', {}], images: ['COMFY_AUTOGROW_V3', { template: {} }] }, optional: { clip: [['a']] } },
+          },
+        }),
+    })
+    const c = createComfyClient({ endpoint: ENDPOINT, fetch: f })
+    expect((await c.objectInfo()).TextEncodeQwenImage21).toEqual({ clip: ['a'] })
+    expect((await c.objectInfo({ allInputs: true })).TextEncodeQwenImage21).toEqual({ prompt: [], images: [], clip: ['a'] })
   })
 })
