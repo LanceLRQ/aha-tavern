@@ -9,7 +9,7 @@ import {
   cardAmbiguousReceipt, cardAskReceipt, cardBrokenReceipt, cardEditReceipt, cardNewNamedReceipt,
   type Reply, type WebSearchStatus,
 } from './receipts'
-import { escapeClosingTag, flatText } from './steer'
+import { escapeClosingTag, flatText, makeNotice } from './steer'
 
 export type SetupPlace =
   | { kind: 'outside'; reason: OutsideReason }
@@ -198,4 +198,28 @@ export function planCardCommand(theme: Theme, entries: CharacterEntry[], args: s
       }
     }
   }
+}
+
+/** 用户消息带图时追加给主持人的提示（给模型看，故用英文；三个选项原文与规则 11 一致）。 */
+export const PICTURE_CUE =
+  'The user attached a picture. If this is about making or changing a character: follow rule 11. '
+  + 'If the user message does not describe the persona (personality, identity, way of speaking), do NOT draft yet: '
+  + 'first call the ask tool once with exactly these three options: “我来说几句”, “照图发挥”, “只填外貌”. '
+  + 'If the persona is described, draft directly.'
+
+/** 本步新到的消息里，是否有用户自己发的、带图片块的消息；插件自己的通知不算。形状不对一律当没有。 */
+export function hasUserPicture(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false
+  return messages.some((m) => {
+    const msg = m as { source?: { kind?: unknown }; content?: unknown } | null
+    if (!msg || msg.source?.kind !== 'user') return false
+    return Array.isArray(msg.content) && msg.content.some((b) => (b as { type?: unknown } | null)?.type === 'image')
+  })
+}
+
+/** 在 next() 的决定上追加带图提示；只处理 enter，其余原样返回同一对象。 */
+export function appendPictureCue<D>(decision: D): D {
+  const d = decision as { kind?: unknown; messages?: unknown } | null
+  if (!d || d.kind !== 'enter' || !Array.isArray(d.messages)) return decision
+  return { ...d, messages: [...d.messages, makeNotice(PICTURE_CUE, '带图的消息')] } as D
 }

@@ -13,7 +13,7 @@ import {
 } from './context'
 import { failureReceipt, initDoneReceipt, initNeedsWorkspaceReceipt } from './receipts'
 import type { Runtime } from './runtime'
-import { buildDocCue, buildOpeningCue, buildSetupPrompt, planCardCommand, type SetupFacts } from './setup-prompt'
+import { appendPictureCue, buildDocCue, buildOpeningCue, buildSetupPrompt, hasUserPicture, planCardCommand, type SetupFacts } from './setup-prompt'
 import { DeclineTracker, SessionGate, type AskFn } from './confirm'
 import { importHandler } from './importing'
 import { LookSession, lookHandler } from './look'
@@ -280,7 +280,13 @@ export function installSetup(ctx: Context, rt: Runtime): void {
         rt.log.warn(`定妆的轮次记账出错：${(e as Error).message}`)
       }
       await ensure(payload.agent, 'pre-step')
-      return next()
+      const decision = await next()
+      try {
+        return hasUserPicture(payload.messages) ? appendPictureCue(decision) : decision
+      } catch (e) {
+        rt.log.warn(`追加带图提示出错：${(e as Error).message}`)
+        return decision
+      }
     })
     // 通知类事件，不带 next：回复流喂给漏贴图片行的核对
     c.on('agent/assistant-stream', (payload: { agent: SetupAgent; frame: unknown }) => {

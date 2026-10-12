@@ -8,8 +8,8 @@ import { readRegistry, registerTavern } from '../../../src/core/registry'
 import { createTavern, isTavern, openTavern } from '../../../src/core/tavern'
 import type { CommandContext, HostAgent, Invocation } from '../../../src/shell/context'
 import type { Runtime } from '../../../src/shell/runtime'
-import { initHandler, SetupSections } from '../../../src/shell/setup'
-import type { SetupFacts } from '../../../src/shell/setup-prompt'
+import { initHandler, installSetup, SetupSections } from '../../../src/shell/setup'
+import { PICTURE_CUE, type SetupFacts } from '../../../src/shell/setup-prompt'
 import { voiceRuntimeStubs } from './helpers/runtime'
 
 const builtinDir = path.resolve(__dirname, '../../../themes')
@@ -300,5 +300,75 @@ describe('initHandler', () => {
     const inv = invOf('/x', sections, vi.fn())
     const r = await initHandler(sections)({ ...inv, context: { ...inv.context, cwd: undefined } })
     expect(r.text).toContain('工作区')
+  })
+})
+
+describe('installSetup 的 pre-step：消息带图', () => {
+  const img = { type: 'image', attachment: {} }
+  const text = { type: 'text', text: 'hi' }
+  const userMsg = (...content: unknown[]) => ({ source: { kind: 'user' }, content })
+  const setup = () => {
+    const handlers: Record<string, (...a: any[]) => any> = {}
+    const c: any = {
+      agentPresets: { composedPreset: () => 'tavern-setup' },
+      userQuestions: { ask: async () => ({}) },
+      tools: { register: () => undefined },
+      on: (ev: string, fn: (...a: any[]) => any) => { handlers[ev] = fn },
+      inject: (_k: string[], cb: (c: unknown) => void) => cb(c),
+    }
+    installSetup(c as never, rtOf())
+    return (payload: Record<string, unknown>, decision: unknown) => {
+      const next = vi.fn(async () => decision)
+      return handlers['agent/pre-step']!({ agent: agent(), turn: 1, ...payload }, next).then((res: unknown) => ({ res, next }))
+    }
+  }
+
+  it('用户消息带图：末尾多一条通知，原顺序不变，next 只调一次', async () => {
+    const run = setup()
+    const orig = [userMsg(text, img), userMsg(text)]
+    const { res, next } = await run({ messages: orig }, { kind: 'enter', messages: orig })
+    const out = (res as { messages: any[] }).messages
+    expect(out).toHaveLength(3)
+    expect(out.slice(0, 2)).toEqual(orig)
+    const n = out[2]
+    expect(n.source.kind).toBe('aha-tavern')
+    expect(n.source.form).toBe('notice')
+    expect(n.content[0].text).toBe(PICTURE_CUE)
+    expect(next).toHaveBeenCalledTimes(1)
+  })
+
+  it('不带图：返回 next 的同一个对象', async () => {
+    const run = setup()
+    const d = { kind: 'enter', messages: [userMsg(text)] }
+    const { res } = await run({ messages: d.messages }, d)
+    expect(res).toBe(d)
+  })
+
+  it('只有插件自己的通知带图：不追加', async () => {
+    const run = setup()
+    const msgs = [{ source: { kind: 'aha-tavern' }, content: [img] }]
+    const d = { kind: 'enter', messages: msgs }
+    expect((await run({ messages: msgs }, d)).res).toBe(d)
+  })
+
+  it('next 返回 reject：原样返回', async () => {
+    const run = setup()
+    const d = { kind: 'reject' }
+    expect((await run({ messages: [userMsg(img)] }, d)).res).toBe(d)
+  })
+
+  it('一步多条用户消息、一条带图：只追加一条', async () => {
+    const run = setup()
+    const msgs = [userMsg(text), userMsg(img), userMsg(text, img)]
+    const { res } = await run({ messages: msgs }, { kind: 'enter', messages: msgs })
+    expect((res as { messages: unknown[] }).messages).toHaveLength(4)
+  })
+
+  it('content 不是数组、messages 缺失：不抛错、不追加', async () => {
+    const run = setup()
+    const d = { kind: 'enter', messages: [{ source: { kind: 'user' }, content: 'x' }] }
+    expect((await run({ messages: d.messages }, d)).res).toBe(d)
+    const d2 = { kind: 'enter', messages: [] }
+    expect((await run({ messages: undefined }, d2)).res).toBe(d2)
   })
 })
