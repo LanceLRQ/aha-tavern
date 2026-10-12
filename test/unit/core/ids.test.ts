@@ -12,3 +12,14 @@ describe('ids', () => {
     expect(s.size).toBe(2000)
   })
 })
+
+describe('形象编号', () => {
+  it('格式与校验', async () => {
+    const { newLookId, isLookId } = await import('../../../src/core/ids')
+    expect(newLookId()).toMatch(/^l_[0-9a-z]{8}$/)
+    expect(isLookId(newLookId())).toBe(true)
+    for (const bad of ['l_ABCDEFGH', 'l_abc', 'l_abcdefghi', 'c_abcdefgh', '../x', '', 5, null]) {
+      expect(isLookId(bad)).toBe(false)
+    }
+  })
+})

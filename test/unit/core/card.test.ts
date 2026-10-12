@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import YAML from 'yaml'
 import {
-  saveCharacter, listCharacters, readCharacter, matchCharacterName, CARD_FILE,
+  saveCharacter, listCharacters, readCharacter, matchCharacterName, serializeCard, CARD_FILE,
 } from '../../../src/core/card'
 import { isAhaError } from '../../../src/core/errors'
 
@@ -208,5 +209,67 @@ describe('第 1 轮修复', () => {
     expect(rs.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
     const rej = rs.find((r) => r.status === 'rejected') as PromiseRejectedResult
     expect(isAhaError(rej.reason, 'character-exists')).toBe(true)
+  })
+})
+
+describe('looks 栏', () => {
+  const L = (n: string, over: Record<string, unknown> = {}) => ({ id: `l_${n.padEnd(8, 'a').slice(0, 8)}`, name: `形象${n}`, when: '场合', ...over })
+  const readWith = async (looks: unknown) => {
+    await fs.rm(path.join(dir, 'characters', '阿青'), { recursive: true, force: true })
+    const created = await mk('阿青')
+    const file = path.join(created.dir, CARD_FILE)
+    const doc = YAML.parse(await fs.readFile(file, 'utf8'))
+    doc.looks = looks
+    await fs.writeFile(file, YAML.stringify(doc))
+    return readCharacter(dir, '阿青')
+  }
+
+  it('只有默认形象的卡序列化与以前逐字节相同', () => {
+    const card = { id: 'c_aaaaaaaa', name: '阿青', persona: '人设', tagline: '简介' }
+    const expected = YAML.stringify({ id: 'c_aaaaaaaa', name: '阿青', tagline: '简介', persona: '人设' })
+    expect(serializeCard(card)).toBe(expected)
+    expect(serializeCard({ ...card, looks: [] })).toBe(expected)
+  })
+
+  it('合法的 looks 读写往返', async () => {
+    const e = await readWith([L('1'), L('2', { when: '' })])
+    expect(e?.ok && e.card.looks).toEqual([L('1'), L('2', { when: '' })])
+  })
+
+  it('不合法的条目丢掉那一条，其余保留，整张卡仍可读', async () => {
+    const e = await readWith([
+      L('1'),
+      { id: 'bad', name: 'x', when: 'y' },            // 编号不对
+      L('3', { name: '   ' }),                         // 名字为空
+      L('4', { name: 'a'.repeat(21) }),                // 名字太长
+      L('5', { name: 'default' }),                     // 保留字
+      L('6', { when: 'w'.repeat(101) }),               // when 太长
+      L('7', { when: 5 }),                             // when 不是字符串
+      L('8', { name: '形象1' }),                       // 名字重复，留第一条
+      'oops', null, 42,
+      L('9'),
+    ])
+    expect(e?.ok).toBe(true)
+    expect(e?.ok && e.card.looks).toEqual([L('1'), L('9')])
+  })
+
+  it('整栏不是数组按没有；超过 8 条只留前 8 条', async () => {
+    for (const v of ['x', { a: 1 }, 5, null]) {
+      const e = await readWith(v)
+      expect(e?.ok && e.card.looks).toBeUndefined()
+    }
+    const e = await readWith(Array.from({ length: 10 }, (_, i) => L(String(i))))
+    expect(e?.ok && e.card.looks?.map((l) => l.name)).toEqual(Array.from({ length: 8 }, (_, i) => `形象${i}`))
+  })
+
+  it('saveCharacter 带 looks 时规范化后写入，不带时沿用盘上的', async () => {
+    const created = await mk('阿青', { looks: [L('1'), { id: 'bad', name: 'x', when: '' }] })
+    expect(created.card.looks).toEqual([L('1')])
+    await saveCharacter(dir, { id: created.card.id, name: '阿青', persona: '新人设' })
+    const e = await readCharacter(dir, '阿青')
+    expect(e?.ok && e.card.looks).toEqual([L('1')])
+    await saveCharacter(dir, { id: created.card.id, name: '阿青', persona: '新人设', looks: [] })
+    const e2 = await readCharacter(dir, '阿青')
+    expect(e2?.ok && e2.card.looks).toBeUndefined()
   })
 })

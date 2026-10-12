@@ -4,10 +4,24 @@ import path from 'node:path'
 import YAML from 'yaml'
 import { AhaError } from './errors'
 import { atomicWrite, modifyFile, pathExists, safeDirName } from './fsx'
-import { newCharacterId } from './ids'
+import { isLookId, newCharacterId } from './ids'
 
 export const CARD_FILE = 'character.yaml'
 export const MEMORY_FILE = 'memory.md'
+
+/** 额外形象的名字、使用场合的长度上限（按字符数），以及一个角色最多几套额外形象。 */
+export const LOOK_NAME_MAX = 20
+export const LOOK_WHEN_MAX = 100
+export const MAX_LOOKS = 8
+/** 默认形象在名字位置上的保留写法，额外形象不能叫这个名字。 */
+export const DEFAULT_LOOK = 'default'
+
+/** 额外形象在角色卡里的一条：图片文件是 looks/<id>.png。 */
+export interface CardLook {
+  id: string
+  name: string
+  when: string
+}
 
 export interface CharacterCard {
   id: string
@@ -17,6 +31,8 @@ export interface CharacterCard {
   greeting?: string
   persona: string
   voice?: string
+  /** 额外形象；只有默认形象时没有这一栏 */
+  looks?: CardLook[]
   /** 导入来源记录；本模块原样保留，不校验内部字段 */
   origin?: unknown
 }
@@ -45,8 +61,53 @@ const charactersRoot = (tavernDir: string) => path.join(tavernDir, 'characters')
 
 const asText = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
 
+const charCount = (s: string): number => [...s].length
+
+/** 形象名规则：去首尾空白后不为空、不超过 20 字、不是保留字 default。返回规范化的名字，不合规为 null。 */
+export function normalizeLookName(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const name = v.trim()
+  if (!name || charCount(name) > LOOK_NAME_MAX || name.toLowerCase() === DEFAULT_LOOK) return null
+  return name
+}
+
+/** 使用场合规则：字符串且不超过 100 字（去首尾空白）。返回规范化的文字，不合规为 null。 */
+export function normalizeLookWhen(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const when = v.trim()
+  return charCount(when) > LOOK_WHEN_MAX ? null : when
+}
+
+/**
+ * 整理 looks 一栏：逐条校验，不合法的丢掉，名字重复的留第一条，编号重复的留第一条，最多留 8 条。
+ * 整栏不是数组时当作没有。绝不抛异常：这一栏有问题不能让整张卡读不出来。
+ */
+export function sanitizeLooks(v: unknown): CardLook[] {
+  if (!Array.isArray(v)) return []
+  const out: CardLook[] = []
+  const names = new Set<string>()
+  const ids = new Set<string>()
+  for (const item of v) {
+    if (out.length >= MAX_LOOKS) break
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+    const o = item as Record<string, unknown>
+    if (!isLookId(o.id) || ids.has(o.id)) continue
+    const name = normalizeLookName(o.name)
+    if (name === null || names.has(name)) continue
+    const when = normalizeLookWhen(o.when)
+    if (when === null) continue
+    names.add(name)
+    ids.add(o.id)
+    out.push({ id: o.id, name, when })
+  }
+  return out
+}
+
 async function readEntry(tavernDir: string, dirName: string): Promise<CharacterEntry> {
-  const dir = path.join(charactersRoot(tavernDir), dirName)
+  return readEntryAt(path.join(charactersRoot(tavernDir), dirName), dirName)
+}
+
+async function readEntryAt(dir: string, dirName: string): Promise<CharacterEntry> {
   const file = path.join(dir, CARD_FILE)
   const bad = (problem: CardProblem, detail = ''): CharacterEntry => ({
     ok: false, dir, dirName, file, problem, detail,
@@ -75,6 +136,8 @@ async function readEntry(tavernDir: string, dirName: string): Promise<CharacterE
     const v = asText(obj[k])
     if (v) card[k] = v
   }
+  const looks = sanitizeLooks(obj.looks)
+  if (looks.length) card.looks = looks
   if (obj.origin !== undefined && obj.origin !== null) card.origin = obj.origin
   return { ok: true, dir, dirName, card }
 }
@@ -121,6 +184,8 @@ function validateInput(input: CharacterInput): CharacterCard {
     const v = asText(input[k])
     if (v) card[k] = v
   }
+  const looks = sanitizeLooks(input.looks)
+  if (looks.length) card.looks = looks
   if (input.origin !== undefined && input.origin !== null) card.origin = input.origin
   return card
 }
@@ -131,13 +196,16 @@ export function serializeCard(card: CharacterCard): string {
   for (const k of ['tagline', 'appearance', 'greeting', 'persona', 'voice'] as const) {
     if (card[k] !== undefined) out[k] = card[k]
   }
+  if (card.looks && card.looks.length) {
+    out.looks = card.looks.map((l) => ({ id: l.id, name: l.name, when: l.when }))
+  }
   if (card.origin !== undefined) out.origin = card.origin
   return YAML.stringify(out)
 }
 
 /**
  * 保存一张卡。无 id 为新建：生成编号、建目录，同名目录已存在则抛 character-exists。
- * 有 id 为修改：保留编号，名字变了则目录跟着改名；未给 origin 时沿用原有的。
+ * 有 id 为修改：保留编号，名字变了则目录跟着改名；未给 origin、looks 时沿用原有的。
  * 只写规格定义的栏目：手工加的未知顶层字段与注释不会保留。
  * 新建时若同名目录里是缺编号（missing-id）的手写卡，视为认领，补发编号写入。
  * 只写 character.yaml，不触碰同目录的 memory.md、参考图、音色文件。
@@ -182,6 +250,8 @@ export async function saveCharacter(
     throw new AhaError('character-not-found', `找不到编号为 ${input.id} 的角色`)
   }
   if (card.origin === undefined && existing.card.origin !== undefined) card.origin = existing.card.origin
+  // 调用方没给 looks（只改文字的路径）时沿用盘上的，免得改一句人设就把形象冲掉
+  if (input.looks === undefined && existing.card.looks !== undefined) card.looks = existing.card.looks
 
   let dir = existing.dir
   let dirName = existing.dirName
@@ -197,6 +267,32 @@ export async function saveCharacter(
   }
   await modifyFile(path.join(dir, CARD_FILE), () => serializeCard(card))
   return { card, dir, dirName }
+}
+
+/** 读某个角色目录里角色卡的 looks 一栏；卡读不出来返回 null。 */
+export async function readCharacterLooks(charDir: string): Promise<CardLook[] | null> {
+  const e = await readEntryAt(charDir, path.basename(charDir))
+  return e.ok ? (e.card.looks ?? []) : null
+}
+
+/**
+ * 在锁内读出角色卡的 looks，交给 mutate 得到新的一栏，再写回；其他栏原样保留（经 serializeCard 重写，规则同 saveCharacter）。
+ * mutate 抛错则不写。卡读不出来抛 card-invalid。返回写入后的 looks。
+ */
+export async function updateCharacterLooks(
+  charDir: string, mutate: (current: CardLook[]) => CardLook[],
+): Promise<CardLook[]> {
+  let result: CardLook[] = []
+  await modifyFile(path.join(charDir, CARD_FILE), async () => {
+    const e = await readEntryAt(charDir, path.basename(charDir))
+    if (!e.ok) throw new AhaError('card-invalid', `角色卡读不出来（${e.problem}），不能改形象`)
+    result = sanitizeLooks(mutate(e.card.looks ?? []))
+    const next: CharacterCard = { ...e.card }
+    if (result.length) next.looks = result
+    else delete next.looks
+    return serializeCard(next)
+  })
+  return result
 }
 
 export type NameMatch =
