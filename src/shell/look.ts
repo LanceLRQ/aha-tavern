@@ -105,6 +105,9 @@ export const DRAFT_TEXT = {
   notTavern: 'error: this workspace is not a tavern yet, look not drawn',
   notReady: 'error: session not ready',
   character: 'error: character must be a non-empty string, look not drawn',
+  characterForSave: 'error: character must be a non-empty string, look not saved',
+  characterForRemove: 'error: character must be a non-empty string, nothing removed',
+  readonlyDraft: 'look not drawn: tavern data is newer than this plugin (read-only)',
   images: `error: images must be an array of 1 to ${MAX_LOOK_IMAGES} non-empty strings, look not drawn`,
   basedOn: 'error: basedOn must be a positive integer, look not drawn',
   both: 'error: give either images or basedOn, not both; look not drawn',
@@ -157,8 +160,7 @@ async function draftTool(deps: LookDeps, exec: unknown, args: unknown): Promise<
   try {
     const dir = await deps.tavernDirOf(agent)
     if (!dir) return DRAFT_TEXT.notTavern
-    const ro = await readonlyToolMessage(dir, log)
-    if (ro) return ro.replace('not saved', 'look not drawn')
+    if (await readonlyToolMessage(dir, log)) return DRAFT_TEXT.readonlyDraft
     const a = isRecord(args) ? args : {}
     if (typeof a.character !== 'string' || a.character.trim() === '') return DRAFT_TEXT.character
     const found = await resolveCharacter(dir, a.character)
@@ -229,7 +231,7 @@ async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<s
     const ro = await readonlyToolMessage(dir, log)
     if (ro) return ro
     const a = isRecord(args) ? args : {}
-    if (typeof a.character !== 'string' || a.character.trim() === '') return DRAFT_TEXT.character.replace('look not drawn', 'look not saved')
+    if (typeof a.character !== 'string' || a.character.trim() === '') return DRAFT_TEXT.characterForSave
     const found = await resolveCharacter(dir, a.character)
     if (!found.ok) return found.message
     const entry = found.entry
@@ -274,6 +276,7 @@ async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<s
 
 export const REMOVE_TEXT = {
   notTavern: 'error: this workspace is not a tavern yet, nothing removed',
+  readonly: 'nothing removed: tavern data is newer than this plugin (read-only)',
   name: 'error: name must be a string, nothing removed',
   noDefault: 'nothing to remove: this character has no default look sheet',
   noNamed: (names: string[]) => `nothing to remove: this character has no look with that name; ${names.length ? `existing: ${names.join(', ')}` : 'it has no named looks'}`,
@@ -289,10 +292,9 @@ async function removeTool(deps: LookDeps, exec: unknown, args: unknown): Promise
   const go = async (): Promise<string> => {
     const dir = await deps.tavernDirOf(agent)
     if (!dir) return REMOVE_TEXT.notTavern
-    const ro = await readonlyToolMessage(dir, log)
-    if (ro) return ro.replace('not saved', 'nothing removed')
+    if (await readonlyToolMessage(dir, log)) return REMOVE_TEXT.readonly
     const a = isRecord(args) ? args : {}
-    if (typeof a.character !== 'string' || a.character.trim() === '') return DRAFT_TEXT.character.replace('look not drawn', 'nothing removed')
+    if (typeof a.character !== 'string' || a.character.trim() === '') return DRAFT_TEXT.characterForRemove
     const found = await resolveCharacter(dir, a.character)
     if (!found.ok) return found.message
     const entry = found.entry
@@ -379,7 +381,7 @@ export function registerLookTools(ctx: Context | ToolHost, deps: LookDeps): void
       + '只在 user 明确要删时调用；调用后界面会弹卡片请 user 确认。没有可删的会直接返回说明。',
     parameters: {
       character: characterParam,
-      name: { type: 'string', description: '要删的形象名；不给就是删默认定妆图' },
+      name: { type: 'string', description: '要删的形象名（也可以写形象编号）；不给就是删默认定妆图' },
     },
     output: { schema: { type: 'string' }, render: outText },
     execute: (args, exec) => removeTool(deps, exec, args),

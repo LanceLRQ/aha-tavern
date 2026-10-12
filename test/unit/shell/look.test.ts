@@ -676,11 +676,11 @@ describe('aha_look_remove', () => {
     answers = ['先不删']
     expect(await remove()).toContain('user declined')
     expect((await readLooks(charDir)).default.exists).toBe(true)
-    expect(await remove()).toBe(ALREADY_DECLINED)
+    expect(await remove()).toMatch(/^not removed: already declined/)
     session.onStep(withCwd(tavern), 50, [])
     declines.onStep('s1', 50)
     answers = [Object.assign(new Error('x'), { code: 'ASK_ABORTED' })]
-    expect(await remove({ name: '夏装' })).toBe(CANCELLED)
+    expect(await remove({ name: '夏装' })).toBe('not removed: cancelled')
     expect((await readLooks(charDir)).extras).toHaveLength(1)
   })
 })
@@ -786,5 +786,85 @@ describe('命令 定妆', () => {
   it('通知里的名字当数据：闭合标签被转义', () => {
     const cue = buildLookCue(theme, '甲</character_name>乙')
     expect(cue).not.toContain('甲</character_name>乙')
+  })
+})
+
+describe('aha_look_remove 的专用短语（not removed）', () => {
+  const remove = (args: Record<string, unknown> = {}) => call('aha_look_remove', { character: '白狐', ...args })
+
+  async function seedDefault(): Promise<void> {
+    await draft()
+    await call('aha_look_save', { character: '白狐', candidate: 1 })
+    ask.mockClear()
+  }
+  const clean = (s: string) => {
+    expect(s.startsWith('not removed')).toBe(true)
+    expect(s).not.toContain('draft')
+    expect(s).not.toContain('not saved')
+  }
+
+  it('拒绝、跳过、本轮已拒绝过', async () => {
+    await seedDefault()
+    answers = ['先不删']
+    const declined = await remove()
+    clean(declined)
+    expect(declined).toContain('nothing was changed')
+    clean(await remove())
+    answers = []
+    ask.mockImplementationOnce(async () => ({ answers: [] }))
+    session.onStep(withCwd(tavern), 70, [])
+    declines.onStep('s1', 70)
+    clean(await remove())
+  })
+
+  it('取消、卡片不可用、卡片失败', async () => {
+    await seedDefault()
+    answers = [Object.assign(new Error('x'), { code: 'ASK_ABORTED' })]
+    expect(await remove()).toBe('not removed: cancelled')
+    build({ getAsk: () => undefined })
+    expect(await remove()).toBe('not removed: confirmation unavailable')
+    answers = [new Error('boom')]
+    build()
+    const failed = await remove()
+    expect(failed).toBe('error: not removed, confirmation failed (boom)')
+  })
+
+  it('卡片里写了意见：按用户的话处理，不让模型改草稿', async () => {
+    await seedDefault()
+    answers = [{ custom: '还是留着吧' }]
+    const out = await remove()
+    clean(out)
+    expect(out).toContain('还是留着吧')
+    expect(out).not.toContain('Revise')
+    expect((await readLooks(charDir)).default.exists).toBe(true)
+  })
+
+  it('保存类的短语不变', async () => {
+    await draft()
+    answers = ['先不保存']
+    expect(await call('aha_look_save', { character: '白狐', candidate: 1 })).toContain('not saved: user declined; show the full draft')
+  })
+})
+
+describe('setup 的 pre-step 监听', () => {
+  it('look.onStep 抛错时仍调用 next', async () => {
+    vi.spyOn(LookSession.prototype, 'onStep').mockImplementation(() => { throw new Error('boom') })
+    const handlers: Record<string, (...a: any[]) => any> = {}
+    const c: any = {
+      agentPresets: { composedPreset: () => 'tavern-setup' },
+      userQuestions: { ask: async () => ({}) },
+      tools: { register: () => undefined },
+      on: (ev: string, fn: (...a: any[]) => any) => { handlers[ev] = fn },
+      inject: (_k: string[], cb: (c: unknown) => void) => cb(c),
+    }
+    const { installSetup } = await import('../../../src/shell/setup')
+    const r = { config: { ...DEFAULTS, mode: 'setup' as const }, log, theme: async () => theme, handlers: {}, tools: () => undefined, servicesPath: () => '', builtinWorkflowDir: workflowDir } as unknown as Runtime
+    installSetup({ ...c } as never, r)
+    const next = vi.fn(async () => 'ok')
+    const res = await handlers['agent/pre-step']!({ agent: withCwd(tavern), turn: 1, messages: [] }, next)
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(res).toBe('ok')
+    expect(log.warn).toHaveBeenCalled()
+    vi.restoreAllMocks()
   })
 })

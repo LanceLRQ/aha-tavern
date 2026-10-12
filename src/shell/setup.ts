@@ -271,7 +271,11 @@ export function installSetup(ctx: Context, rt: Runtime): void {
     })
     c.on('agent/pre-step', async (payload: { agent: SetupAgent; turn?: number; messages?: readonly unknown[] }, next: () => Promise<unknown>) => {
       declines.onStep(payload.agent.id, payload.turn)
-      look.onStep(payload.agent, payload.turn, (payload.messages ?? []) as never)
+      try {
+        look.onStep(payload.agent, payload.turn, (payload.messages ?? []) as never)
+      } catch (e) {
+        rt.log.warn(`定妆的轮次记账出错：${(e as Error).message}`)
+      }
       await ensure(payload.agent, 'pre-step')
       return next()
     })
