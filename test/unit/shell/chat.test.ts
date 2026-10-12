@@ -882,6 +882,7 @@ describe('提示词文字', () => {
     const rule11 = rules.find((l) => l.startsWith('11. '))?.trim() ?? ''
     const rule2 = rules.find((l) => l.startsWith('2. '))?.trim() ?? ''
     it('有带图建 card 一条，含三个固定选项与关键要求', () => {
+      expect(rule11).not.toBe('')
       expect(rule11).toContain('带图建 card')
       expect(rule11).toContain('“我来说几句”')
       expect(rule11).toContain('“照图发挥”')
@@ -892,6 +893,12 @@ describe('提示词文字', () => {
       expect(rule11).toContain('next')
       expect(rule11).toContain('逐字照抄')
       expect(rule11).toContain('每样只问一次')
+      expect(rule11).toContain('不写姿势、表情、背景、画风')
+      expect(rule11).toContain('看不清的不猜')
+      expect(rule11).toContain('提醒 user 补')
+      expect(rule11).toContain('平时衣着')
+      expect(rule11).toContain('选只填外貌：只写 name 和 appearance，其余栏留空，不照规则 5 补全')
+      expect(rule11).toContain('已有定妆图（列表里 look 不是 no）时不主动提')
     })
     it('规则 2 的例外引用与新规则编号一致，且不超过 60 字', () => {
       const m = rule2.match(/唯一的例外见规则 (\d+)[^。]*。/)
@@ -902,8 +909,8 @@ describe('提示词文字', () => {
     it('最后一条仍是做完后提示新开单聊', () => {
       expect(rules[rules.length - 1]).toMatch(/^12\. 做完后提示 user 新开「酒馆:单聊」/)
     })
-    it('新规则不超过 350 字', () => {
-      expect([...rule11].length).toBeLessThanOrEqual(350)
+    it('新规则不超过 400 字', () => {
+      expect([...rule11].length).toBeLessThanOrEqual(400)
     })
     it('不写死宿主图片说明的格式', () => {
       for (const s of ['sha256', 'Normalized copy', 'attachments/']) {
