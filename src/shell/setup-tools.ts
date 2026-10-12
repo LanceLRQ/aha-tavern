@@ -178,10 +178,17 @@ export async function readCardText(dir: string, id: unknown): Promise<SaveResult
 
 /** 保存后给模型的后续提示。 */
 export const NEW_CARD_NEXT =
-  'next: ask the user once how this character should address them and what their relationship is (the user may skip); '
-  + 'record the answer with aha_set_relation; then suggest opening a new session in mode 「酒馆:单聊」 to chat.'
+  'next: (1) ask the user once how this character should address them and what their relationship is (the user may skip), '
+  + 'record it with aha_set_relation; '
+  + '(2) only if the user gave a picture of this character in this conversation, ask once whether to make its look sheet from that picture, '
+  + 'and if yes call aha_look_draft with images set to the path in the image note, copied exactly; '
+  + '(3) when all is done, suggest opening a new session in mode 「酒馆:单聊」 to chat.'
 const CHANGED_WHILE_WAITING = 'not saved: card changed while waiting; read it again'
 export const EDIT_CARD_NEXT = 'next: card updated; the id is unchanged. Tell the user the change is saved.'
+/** 修改角色卡时改了外貌栏，附在 EDIT_CARD_NEXT 后面。 */
+export const CARD_LOOK_HINT =
+  'If the user gave a picture in this conversation and this character has no look sheet yet, '
+  + 'ask once whether to make one from that picture (aha_look_draft, images = the path in the image note).'
 
 /** 保存一张卡：无 id 新建，有 id 修改（未给出的栏沿用原值，给空串表示清空）。 */
 export async function saveCardText(dir: string, args: unknown, confirm?: Confirm): Promise<SaveResult> {
@@ -205,18 +212,23 @@ export async function saveCardText(dir: string, args: unknown, confirm?: Confirm
     })
     if (no) return no
     let input = preview
+    let oldAppearance = ''
     if (parsed.id) {
       // 等待期间卡可能被改动：用户同意后重新按编号读，基于最新的卡合并
       const latest = await findCard(dir, parsed.id)
       if (isFail(latest)) return { ok: false, message: 'not saved: character no longer exists' }
       if (latest.card.name !== oldName) return { ok: false, message: CHANGED_WHILE_WAITING }
+      oldAppearance = latest.card.appearance ?? ''
       input = { ...latest.card, ...parsed.fields, id: latest.card.id }
     }
     const saved = await saveCharacter(dir, input)
     const head = created
       ? `card created (dir: ${flatText(saved.dirName, 'card')})`
       : `card updated (was: ${flatText(oldName ?? '', 'card')}; dir: ${flatText(saved.dirName, 'card')})`
-    return { ok: true, message: `${head}\n${material('card', renderCard(saved.card))}\n${created ? NEW_CARD_NEXT : EDIT_CARD_NEXT}` }
+    const next = created
+      ? NEW_CARD_NEXT
+      : (saved.card.appearance ?? '') !== oldAppearance ? `${EDIT_CARD_NEXT} ${CARD_LOOK_HINT}` : EDIT_CARD_NEXT
+    return { ok: true, message: `${head}\n${material('card', renderCard(saved.card))}\n${next}` }
   } catch (e) {
     return fail(`card not saved (${(e as Error).message})`)
   }

@@ -12,7 +12,7 @@ import type { Runtime } from '../../../src/shell/runtime'
 import { cardHandler } from '../../../src/shell/setup'
 import { planCardCommand } from '../../../src/shell/setup-prompt'
 import {
-  CARD_LIMITS, listCharactersText, parseCardArgs, readCardText, readMemoryText, registerSetupTools,
+  CARD_LIMITS, CARD_LOOK_HINT, EDIT_CARD_NEXT, listCharactersText, parseCardArgs, readCardText, readMemoryText, registerSetupTools,
   rewriteMemoryText, saveCardText, setRelationText,
 } from '../../../src/shell/setup-tools'
 
@@ -60,6 +60,40 @@ describe('保存 / 列出 / 读取', () => {
     expect(r.message).toContain('persona:\n话少')
     expect(r.message).toContain('aha_set_relation')
     expect(r.message).toContain('酒馆:单聊')
+  })
+
+  it('新建：提示顺序是称呼关系、定妆、单聊', async () => {
+    const r = await saveCardText(dir, { name: '白狐', persona: '话少' })
+    const m = r.message
+    const iRel = m.indexOf('aha_set_relation')
+    const iLook = m.indexOf('aha_look_draft')
+    const iChat = m.indexOf('酒馆:单聊')
+    expect(iRel).toBeGreaterThan(-1)
+    expect(iLook).toBeGreaterThan(iRel)
+    expect(iChat).toBeGreaterThan(iLook)
+    expect(m).toContain('the path in the image note')
+  })
+
+  it('修改：没改外貌栏，回执以 EDIT_CARD_NEXT 结尾且不含定妆提示', async () => {
+    const a = await mk('白狐', { appearance: '白发' })
+    const r = await saveCardText(dir, { id: a.card.id, tagline: '新简介' })
+    expect(r.message.endsWith(EDIT_CARD_NEXT)).toBe(true)
+    expect(r.message).not.toContain(CARD_LOOK_HINT)
+  })
+
+  it('修改：外貌栏传了与原值相同的内容，不含定妆提示', async () => {
+    const a = await mk('白狐', { appearance: '白发' })
+    const r = await saveCardText(dir, { id: a.card.id, appearance: '白发' })
+    expect(r.message.endsWith(EDIT_CARD_NEXT)).toBe(true)
+    expect(r.message).not.toContain(CARD_LOOK_HINT)
+  })
+
+  it('修改：改了外貌栏，回执含定妆提示；清空外貌栏也算', async () => {
+    const a = await mk('白狐', { appearance: '白发' })
+    const r = await saveCardText(dir, { id: a.card.id, appearance: '黑发' })
+    expect(r.message.endsWith(`${EDIT_CARD_NEXT} ${CARD_LOOK_HINT}`)).toBe(true)
+    const r2 = await saveCardText(dir, { id: a.card.id, appearance: '' })
+    expect(r2.message).toContain(CARD_LOOK_HINT)
   })
 
   it('修改：编号不变，未给的栏沿用，改名目录跟着改', async () => {

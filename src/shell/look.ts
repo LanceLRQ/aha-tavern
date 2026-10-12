@@ -7,6 +7,7 @@ import os from 'node:os'
 import { DEFAULT_LOOK, listCharacters, matchCharacterName, MAX_LOOKS, normalizeLookName, normalizeLookWhen } from '../core/card'
 import { createComfyClient } from '../core/comfy'
 import { loadImageService } from '../core/services'
+import { readVoice } from '../core/voice'
 import { getDraft, readLooks, removeLook, saveLook, summarizeLooks, type SaveLookFailure } from '../core/looks'
 import { createConfirm, DeclineTracker, SessionGate, type AskFn } from './confirm'
 import type { CommandHandler, HostAgent } from './context'
@@ -219,9 +220,23 @@ const SAVE_FAILURE: Record<SaveLookFailure, string> = {
 }
 
 /** 保存成功后给主持人的说明。 */
-export const savedText = (look: string, replaced: boolean): string =>
+export const savedText = (look: string, replaced: boolean, opts: { voiceHint?: boolean } = {}): string =>
   `look saved (${look === DEFAULT_LOOK ? 'default' : `named "${flatText(look, 'look')}"`}, replaced: ${replaced}). `
   + 'Tell the user: pictures drawn in later chats will follow this look sheet.'
+  + (opts.voiceHint ? ` ${LOOK_VOICE_HINT}` : '')
+
+/** 保存默认形象且角色还没有声音时附的提示。 */
+export const LOOK_VOICE_HINT =
+  'This character has no voice yet: ask the user once whether to give it one now (aha_voice_design); the user may skip.'
+
+/** 读取出错按有声音处理，不打扰用户。 */
+const lacksVoice = async (dir: string): Promise<boolean> => {
+  try {
+    return !(await readVoice(dir)).ok
+  } catch {
+    return false
+  }
+}
 
 async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<string> {
   const agent = agentOf(exec)
@@ -264,7 +279,8 @@ async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<s
 
     const r = await saveLook(entry.dir, { draft: n, ...(name !== undefined ? { name } : {}), ...(when ? { when } : {}) })
     if (!r.ok) return r.imageReplaced ? SAVE_TEXT.imageReplaced : SAVE_FAILURE[r.reason]
-    return savedText(name ?? DEFAULT_LOOK, r.replaced)
+    const voiceHint = name === undefined && await lacksVoice(entry.dir)
+    return savedText(name ?? DEFAULT_LOOK, r.replaced, { voiceHint })
   }
   try {
     const msg = await deps.gate.run(agent.id, go)

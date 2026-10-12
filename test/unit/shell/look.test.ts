@@ -17,7 +17,7 @@ import { ALREADY_DECLINED, CANCELLED, DeclineTracker, LOOK_SAVE_PHRASES, outcome
 import type { HostAgent } from '../../../src/shell/context'
 import { imageLine } from '../../../src/shell/draw'
 import {
-  buildLookCue, DRAFT_TEXT, LookSession, lookHandler, parseDraftArgs, registerLookTools, REMOVE_TEXT, SAVE_TEXT, type LookDeps,
+  buildLookCue, DRAFT_TEXT, LOOK_VOICE_HINT, LookSession, lookHandler, parseDraftArgs, registerLookTools, REMOVE_TEXT, SAVE_TEXT, type LookDeps,
 } from '../../../src/shell/look'
 import { LOOK_TEXT, lookPrompt, sheetSize } from '../../../src/shell/look-draft'
 import { RefUploader } from '../../../src/shell/ref-upload'
@@ -628,6 +628,24 @@ describe('aha_look_save', () => {
     expect(out).toContain('look saved (default, replaced: false)')
     expect(out).not.toContain('cleared')
     expect(out).toContain('pictures drawn in later chats will follow this look sheet')
+  })
+
+  it('默认形象且角色没有声音：附配声音提示', async () => {
+    await draft()
+    const out = await save()
+    expect(out.endsWith(` ${LOOK_VOICE_HINT}`)).toBe(true)
+  })
+
+  it('默认形象但角色已有声音：不附配声音提示', async () => {
+    await fs.writeFile(path.join(charDir, 'voice_ref.wav'), Buffer.alloc(8))
+    await fs.writeFile(path.join(charDir, 'voice_ref.txt'), '你好')
+    await draft()
+    expect(await save()).not.toContain(LOOK_VOICE_HINT)
+  })
+
+  it('保存额外形象：不附配声音提示', async () => {
+    await draft()
+    expect(await save({ name: '夏装', when: '夏天' })).not.toContain(LOOK_VOICE_HINT)
   })
 
   it('已有默认形象时卡片写明会替换', async () => {
