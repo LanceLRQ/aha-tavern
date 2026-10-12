@@ -112,6 +112,7 @@ export function registerChatTools(ctx: Context, deps: ChatToolDeps): void {
     parameters: {
       scene: { type: 'string', description: '这一刻的画面，最多 600 字；redo 为 true 且沿用上一张画面时可缺，改动画面时给改写后的完整描述' },
       orientation: { type: 'string', enum: ['portrait', 'landscape', 'square'], description: '构图方向，缺省 portrait；redo 时缺省沿用上一张的方向' },
+      look: { type: 'string', description: '可缺。用哪一套形象；只有画图规范里列出了形象名时才填' },
       redo: { type: 'boolean', description: '重新生成上一张：不给 scene 时沿用上一张的画面，给了就用新的画面；方向沿用上一张，换种子' },
     },
     output: { schema: { type: 'string' }, render: text },

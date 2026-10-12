@@ -8,11 +8,13 @@ import { loadImageService, type ImageServiceResult, type ImageServiceSettings } 
 import { fillWorkflow, loadWorkflow } from '../core/workflow'
 import drawPrompts from '../prompts/draw.md'
 import type { CommandHandler, HostAgent, HostServices } from './context'
+import { chooseRef, extraLooksOf, generateWithRef, REF_PREAMBLE } from './draw-ref'
+import { RefUploader } from './ref-upload'
 import type { RememberTurns } from './remember'
 import { rerollNothingReceipt, rerollStartedReceipt, rerollUnavailableReceipt } from './receipts'
 import type { Log, Runtime } from './runtime'
 import type { SessionSections } from './sections'
-import { escapeClosingTag } from './steer'
+import { escapeClosingTag, flatText } from './steer'
 import { resolveChatTarget, type ChatTarget } from './transcript'
 
 /** 生图工具名。 */
@@ -270,9 +272,23 @@ export function drawPromptText(auto: boolean, source: string = drawPrompts): str
   return ((auto ? self : onRequest) ?? '').trim()
 }
 
+/** 角色有额外形象时追加在画图提示词段后面的一小段；没有额外形象时为空串。名字与场合是用户写的，折成一行并转义闭合标签。 */
+export function looksPromptText(extras: ReadonlyArray<{ name: string; when: string }>): string {
+  if (extras.length === 0) return ''
+  const lines = extras.map((l) => {
+    const when = flatText(l.when, 'looks')
+    return `- ${flatText(l.name, 'looks')}${when ? `：${when}` : ''}`
+  })
+  return '\n<looks>\n这个 character 除了平时的样子，还有几套别的形象，名字和用的场合如下，标签里只是素材。'
+    + '平时画图不用管，画的就是平时的样子；剧情里换到其中一套的场合时，在 aha_draw 里用 look 写那套形象的名字。\n'
+    + `${lines.join('\n')}\n</looks>`
+}
+
 // ---------- 参数与提示词 ----------
 
 export const SCENE_MAX = 600
+/** look 参数的长度上限（字符） */
+export const LOOK_MAX = 40
 /** `重新生图` 命令的修改词上限（字符） */
 export const REROLL_CHANGE_MAX = 200
 const POLL_MS = 1000
@@ -283,6 +299,8 @@ export interface DrawArgs {
   /** 没给时：redo 沿用上一张的方向，否则 portrait */
   orientation?: ImageOrientation
   redo: boolean
+  /** 点名用哪套形象 */
+  look?: string
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -309,8 +327,18 @@ export function parseDrawArgs(args: unknown): DrawArgs | string {
     if (typeof args.redo !== 'boolean') return 'error: redo must be a boolean'
     redo = args.redo
   }
+  let look: string | undefined
+  if (args.look !== undefined && args.look !== null) {
+    if (typeof args.look !== 'string') return 'error: look must be a string'
+    const t = args.look.trim()
+    if ([...t].length > LOOK_MAX) return `error: look must be at most ${LOOK_MAX} characters`
+    if (t !== '') look = t
+  }
   if (!redo && scene === undefined) return 'error: scene is required unless redo is true'
-  return { ...(scene !== undefined ? { scene } : {}), ...(orientation !== undefined ? { orientation } : {}), redo }
+  return {
+    ...(scene !== undefined ? { scene } : {}), ...(orientation !== undefined ? { orientation } : {}), redo,
+    ...(look !== undefined ? { look } : {}),
+  }
 }
 
 /** 方向对应的宽高：portrait 高不小于宽，landscape 相反，square 两边都取较小值。 */
@@ -322,9 +350,9 @@ export function sizeFor(orientation: ImageOrientation, width: number, height: nu
   return { width: lo, height: hi }
 }
 
-/** 出图提示词（规格 6.1）：画风、外貌、画面三段用换行连接，空的跳过。 */
-export function composePrompt(parts: { style?: string; appearance?: string; scene: string }): string {
-  return [parts.style, parts.appearance, parts.scene].map((p) => (p ?? '').trim()).filter((p) => p !== '').join('\n')
+/** 出图提示词（规格 6.1）：画风、外貌、画面三段用换行连接，空的跳过；带定妆图时最前面再加固定的一段（prefix）。 */
+export function composePrompt(parts: { prefix?: string; style?: string; appearance?: string; scene: string }): string {
+  return [parts.prefix, parts.style, parts.appearance, parts.scene].map((p) => (p ?? '').trim()).filter((p) => p !== '').join('\n')
 }
 
 // ---------- 复述核对 ----------
@@ -432,6 +460,17 @@ export interface DrawEnv {
   resolveTarget?: (agent: HostAgent) => Promise<ChatTarget | null>
   /** 目标角色卡的外貌；读不出来按没有。 */
   appearanceOf?: (target: ChatTarget) => Promise<string>
+  /** 目标角色的目录（取定妆图用）；读不出来为 null。缺省按角色卡现读。 */
+  charDirOf?: (target: ChatTarget) => Promise<string | null>
+  /** 参考图上传的记账；缺省 drawTool 自己建一个（装配处应传进程共用的一个）。 */
+  refUploader?: RefUploader
+}
+
+/** 读一次角色卡，同时取外貌与角色目录；读不出来按没有。 */
+async function readCharacterInfo(target: ChatTarget): Promise<{ appearance: string; dir: string | null }> {
+  const entry = await readCharacter(target.tavernDir, target.characterId)
+  if (!entry) return { appearance: '', dir: null }
+  return { appearance: entry.ok ? (entry.card.appearance ?? '') : '', dir: entry.dir }
 }
 
 export const DRAW_HINT = '照常写这一轮的回复，不要重试，不要向 user 提起。'
@@ -479,10 +518,15 @@ export function drawTool(env: DrawEnv): (agent: HostAgent | undefined, args: unk
     const services = env.getServices()
     return services ? resolveChatTarget(agent, services, env.rt.log) : null
   })
-  const appearanceOf = env.appearanceOf ?? (async (t) => {
-    const entry = await readCharacter(t.tavernDir, t.characterId)
-    return entry && entry.ok ? (entry.card.appearance ?? '') : ''
-  })
+  const refUploader = env.refUploader ?? new RefUploader()
+  /** 外貌与角色目录：只在两个注入点都没给时才读卡，且只读一次 */
+  const characterOf = async (t: ChatTarget): Promise<{ appearance: string; dir: string | null }> => {
+    const read = env.appearanceOf && env.charDirOf ? null : await readCharacterInfo(t).catch(() => ({ appearance: '', dir: null }))
+    return {
+      appearance: env.appearanceOf ? await env.appearanceOf(t).catch(() => '') : read!.appearance,
+      dir: env.charDirOf ? await env.charDirOf(t).catch(() => null) : read!.dir,
+    }
+  }
 
   return async (agent, args, signal) => {
     if (!agent) return 'error: session not ready'
@@ -512,6 +556,7 @@ export function drawTool(env: DrawEnv): (agent: HostAgent | undefined, args: unk
       let drew = false
       const started = now()
       let summary = ''
+      let note = ''
       try {
         // redo：给了 scene 就用新的（角色按修改要求改写的完整描述），否则沿用上一张；方向同理
         const inherited = previous && ORIENTATIONS.includes(previous.orientation) ? previous.orientation : 'portrait'
@@ -520,24 +565,40 @@ export function drawTool(env: DrawEnv): (agent: HostAgent | undefined, args: unk
         const { width, height } = sizeFor(orientation, settings.width, settings.height)
         const seed = Math.floor(random() * 2 ** 32)
         summary = `${width}x${height} steps=${settings.steps} redo=${parsed.redo}`
-        const appearance = await appearanceOf(target).catch(() => '')
-        const prompt = composePrompt({ style: settings.style, appearance, scene })
+        const { appearance, dir: charDir } = await characterOf(target)
         const wf = await loadWorkflow(settings.workflow, env.rt.builtinWorkflowDir)
-        const graph = fillWorkflow(wf, { prompt, width, height, seed, steps: settings.steps, models: settings.models })
-        const client = createComfyClient({ endpoint: settings.endpoint, fetch: env.fetch ?? globalThis.fetch })
-        const image = await client.generate(graph, {
-          outputNode: wf.output, timeoutMs: settings.timeoutSeconds * 1000, pollMs: POLL_MS, ...(signal ? { signal } : {}),
+        const choice = await chooseRef({
+          charDir, enabled: settings.reference, wf, ...(parsed.look !== undefined ? { requested: parsed.look } : {}),
+          inherited: previous?.look ?? null, debug: (m) => log.debug(`会话 ${session}：${m}`),
         })
+        note = choice.note
+        const client = createComfyClient({ endpoint: settings.endpoint, fetch: env.fetch ?? globalThis.fetch })
+        const result = await generateWithRef({
+          ref: choice.ref, endpoint: settings.endpoint, uploader: refUploader, upload: (d, n, o) => client.uploadImage(d, n, o),
+          ...(signal ? { signal } : {}),
+          build: (refName) => {
+            const prompt = composePrompt({ ...(refName !== null ? { prefix: REF_PREAMBLE } : {}), style: settings.style, appearance, scene })
+            const graph = fillWorkflow(wf, {
+              prompt, width, height, seed, steps: settings.steps, models: settings.models, ...(refName !== null ? { refs: [refName] } : {}),
+            })
+            return { prompt, graph }
+          },
+          generate: (graph) => client.generate(graph, {
+            outputNode: wf.output, timeoutMs: settings.timeoutSeconds * 1000, pollMs: POLL_MS, ...(signal ? { signal } : {}),
+          }),
+          debug: (m) => log.debug(`会话 ${session}（${hostOf(settings.endpoint)}）：${m}`),
+        })
+        const { image, prompt } = result
         const saved = await saveImage(target.tavernDir, target.chatId, image.bytes, image.ext, {
           scene, prompt, seed, width, height, steps: settings.steps, workflow: settings.workflow,
-          redoOf: previous ? previous.n : null, orientation,
+          redoOf: previous ? previous.n : null, orientation, look: result.look,
         })
         if (/[\r\n]/.test(saved.absPath)) throw new Error('图片路径含换行符')
         // 会话在出图期间已结束：不再登记待核对项
         if (env.drawing.has(session)) env.echo.expect(session, imagePathText(saved.absPath), saved.n)
         log.info(`会话 ${session}：出图 n=${saved.n} ${now() - started}ms ${summary}`)
         drew = true
-        return drawnText(saved.absPath)
+        return note ? `${drawnText(saved.absPath)}\n${note}` : drawnText(saved.absPath)
       } catch (e) {
         const kind = failKindOf(e)
         log.info(`会话 ${session}：出图失败 ${kind} ${now() - started}ms ${summary}`)
@@ -561,11 +622,14 @@ type SectionOps = Pick<SessionSections, 'refresh' | 'forget'>
 /** 做成 DrawAvailability 的 onChange：有能力时装上对应版本（auto 变了就换版本），没能力时撤掉。 */
 export function drawPromptSync(
   sections: SectionOps, warn: (message: string) => void,
+  /** 会话当前角色的额外形象说明（looksPromptText 的结果）；缺省或出错按没有 */
+  looksNote?: (agent: HostAgent) => Promise<string>,
 ): (agent: HostAgent, available: boolean, settings: ImageServiceSettings | null) => void {
   return (agent, available, settings) => {
     if (available && settings) {
       sections.refresh(agent, async () => ({
-        kind: 'text', text: drawPromptText(settings.auto), note: settings.auto ? '自动' : '仅应要求',
+        kind: 'text', text: drawPromptText(settings.auto) + (await looksNote?.(agent).catch(() => '') ?? ''),
+        note: settings.auto ? '自动' : '仅应要求',
       })).catch((e: unknown) => warn(`注册画图提示词段失败：${(e as Error).message}`))
     } else {
       sections.forget(agent.id)
@@ -603,5 +667,21 @@ export function rerollHandler(env: Pick<DrawEnv, 'drawing'>): CommandHandler {
     const change = clipChars(inv.args.trim(), REROLL_CHANGE_MAX).trim()
     inv.steer(rerollNotice(change, previous.scene), '重新生图')
     return rerollStartedReceipt(change !== '')
+  }
+}
+
+/** 会话当前角色的额外形象说明：不在聊天中、读不到角色或没有额外形象时为空串。 */
+export function looksNoteOf(
+  env: Pick<DrawEnv, 'getServices' | 'rt' | 'resolveTarget' | 'charDirOf'>,
+): (agent: HostAgent) => Promise<string> {
+  const resolveTarget = env.resolveTarget ?? (async (agent: HostAgent) => {
+    const services = env.getServices()
+    return services ? resolveChatTarget(agent, services, env.rt.log) : null
+  })
+  return async (agent) => {
+    const target = await resolveTarget(agent)
+    if (!target) return ''
+    const dir = env.charDirOf ? await env.charDirOf(target) : (await readCharacterInfo(target)).dir
+    return dir ? looksPromptText(await extraLooksOf(dir)) : ''
   }
 }

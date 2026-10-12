@@ -30,7 +30,8 @@ import { flatText, makeNotice } from './steer'
 import { registerChatTools, type StartArgs } from './chat-tools'
 import { createMemoryEnv, onChatStep, RememberTurns, rememberHandler, rememberTool, reviewTool } from './remember'
 import { recallTool } from './recall'
-import { defaultDrawDeps, drawPromptSync, DrawAvailability, DrawEcho, drawTool, rerollHandler } from './draw'
+import { defaultDrawDeps, drawPromptSync, DrawAvailability, DrawEcho, drawTool, looksNoteOf, rerollHandler, type DrawEnv } from './draw'
+import { RefUploader } from './ref-upload'
 import { createSpeaking } from './speak'
 import { resolveChatTarget, TranscriptRecorder, type ChatTarget } from './transcript'
 import { isReadonly } from './writable'
@@ -741,6 +742,7 @@ export function installChat(ctx: Context, rt: Runtime): void {
   })
   const memoryEnv = createMemoryEnv(rt, () => services)
   // 画图提示词段：有画图能力时装上（auto 决定版本），没有时撤掉
+  const drawLooks: Pick<DrawEnv, 'rt' | 'getServices'> = { rt, getServices: () => services }
   const drawSections = new SessionSections(rt.log, hostSectionRegister(DRAW_SECTION_NAME, DRAW_SECTION_ORDER), '画图提示词段')
   const drawing = new DrawAvailability({
     log: rt.log,
@@ -750,12 +752,12 @@ export function installChat(ctx: Context, rt: Runtime): void {
       const cc = await buildContext(agent, services, rt.log)
       return { chatting: cc.state === 'chatting', readonly: isReadonly(cc.tavern) }
     },
-    onChange: drawPromptSync(drawSections, (m) => rt.log.warn(m)),
+    onChange: drawPromptSync(drawSections, (m) => rt.log.warn(m), looksNoteOf(drawLooks)),
   })
   rt.drawing = drawing
   const drawTurns = new RememberTurns()
   const drawEcho = new DrawEcho(rt.log)
-  const draw = drawTool({ rt, getServices: () => services, drawing, turns: drawTurns, echo: drawEcho })
+  const draw = drawTool({ rt, getServices: () => services, drawing, turns: drawTurns, echo: drawEcho, refUploader: new RefUploader() })
   registerChatTools(ctx, {
     start: startTool(env), remember: rememberTool(memoryEnv), review: reviewTool(memoryEnv), recall: recallTool(memoryEnv), draw,
   })
