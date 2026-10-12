@@ -737,6 +737,14 @@ describe('当前角色一项', () => {
     expect(text).toContain('当前角色：有定妆图，另有 2 套形象')
   })
 
+  it('默认定妆图文件不是有效的图片：提示重新定妆', async () => {
+    const looks = { ...makeLooks(), defaultInvalid: true }
+    const { r, text } = await chara(looks as never)
+    expect(r.character).toEqual({ hasDefault: false, extras: 0, missing: [], defaultInvalid: true })
+    expect(text).toContain('! 当前角色：定妆图文件不是有效的图片，需要重新定妆')
+    expect(text).not.toContain('还没有定妆图')
+  })
+
   it('还没有定妆图：指路', async () => {
     const { r, text } = await chara(makeLooks({ hasDefault: false }))
     expect(r.character).toEqual({ hasDefault: false, extras: 0, missing: [] })
@@ -809,7 +817,7 @@ describe('doctorHandler：当前角色', () => {
     const charDir = path.join(tavern, 'characters', '甲')
     await fs.mkdir(path.join(charDir, 'looks'), { recursive: true })
     await fs.writeFile(path.join(tavern, 'aha-tavern.yaml'), 'dataVersion: 1\n')
-    await fs.writeFile(path.join(charDir, 'reference.png'), 'x')
+    await fs.writeFile(path.join(charDir, 'reference.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x78]))
     const { theme } = await loadTheme({ name: 'plain', builtinDir: themeDir })
     const mk = (mode: 'setup' | 'chat', record: unknown): Invocation => ({
       agent, args: '生图', label: '/aha 自检', theme, services: {} as any,

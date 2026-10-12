@@ -91,6 +91,13 @@ export async function readPngBytes(file: string): Promise<Buffer | null> {
   return buf.length >= PNG_SIGNATURE.length && buf.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE) ? buf : null
 }
 
+/** readLooks 的结果再加一项：默认定妆图文件在、但文件头不是 PNG（出图时会被静默跳过，自检要能看到）。 */
+export async function readLooksChecked(charDir: string): Promise<LooksState & { defaultInvalid: boolean }> {
+  const state = await readLooks(charDir)
+  const defaultInvalid = state.default.exists && (await readPngBytes(state.default.file)) === null
+  return { ...state, defaultInvalid }
+}
+
 /** 角色定妆现状的摘要：默认定妆图是否可用（文件在且文件头是 PNG）、图片文件在的额外形象名。读不出来时按没有。 */
 export async function summarizeLooks(charDir: string): Promise<{ hasDefault: boolean; extraNames: string[] }> {
   try {

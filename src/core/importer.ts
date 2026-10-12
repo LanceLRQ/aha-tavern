@@ -11,6 +11,7 @@ import { AhaError } from './errors'
 import { atomicWrite, pathExists, safeDirName } from './fsx'
 import { isLookId, newCharacterId } from './ids'
 import { assertWritable, openTavern, type TavernInfo } from './tavern'
+import { LOOKS_DIR } from './looks'
 import { VOICE_AUDIO_FILE, VOICE_TEXT_FILE } from './voice'
 
 /** 单个附带文件的大小上限。 */
@@ -191,8 +192,6 @@ async function stageAttachments(
   return { staged, skipped }
 }
 
-/** 额外形象的目录名；与 looks.ts 里的 LOOKS_DIR 一致（那边会 import card，这里不反向依赖，免得循环）。 */
-const LOOKS_DIR_NAME = 'looks'
 const isLookFile = (name: string): boolean => name.endsWith('.png') && isLookId(name.slice(0, -4))
 
 interface StagedLooks {
@@ -209,7 +208,7 @@ interface StagedLooks {
 async function stageLooks(srcDir: string, dstDir: string, maxBytes: number, skipped: SkippedFile[]): Promise<StagedLooks> {
   const tmpDir = path.join(dstDir, `.looks-${randomBytes(4).toString('hex')}.tmp`)
   await fs.mkdir(tmpDir)
-  const srcLooks = path.join(srcDir, LOOKS_DIR_NAME)
+  const srcLooks = path.join(srcDir, LOOKS_DIR)
   let entries: import('node:fs').Dirent[] = []
   if (!(await isSymlink(srcLooks))) {
     entries = await fs.readdir(srcLooks, { withFileTypes: true }).catch(() => [])
@@ -217,7 +216,7 @@ async function stageLooks(srcDir: string, dstDir: string, maxBytes: number, skip
   let count = 0
   for (const e of entries) {
     if (!e.isFile() || !isLookFile(e.name)) continue
-    const label = `${LOOKS_DIR_NAME}/${e.name}`
+    const label = `${LOOKS_DIR}/${e.name}`
     try {
       const from = path.join(srcLooks, e.name)
       if ((await fs.lstat(from)).size > maxBytes) {
@@ -235,14 +234,14 @@ async function stageLooks(srcDir: string, dstDir: string, maxBytes: number, skip
 
 /** 让临时目录成为 looks/：目标原有的 looks/ 先清掉（新建时本来就没有）。 */
 async function commitLooks(staged: StagedLooks, dstDir: string, skipped: SkippedFile[]): Promise<void> {
-  const target = path.join(dstDir, LOOKS_DIR_NAME)
+  const target = path.join(dstDir, LOOKS_DIR)
   try {
     await fs.rm(target, { recursive: true, force: true })
     if (staged.count > 0) await fs.rename(staged.tmpDir, target)
     else await fs.rm(staged.tmpDir, { recursive: true, force: true })
   } catch (err) {
     await fs.rm(staged.tmpDir, { recursive: true, force: true })
-    skipped.push({ name: `${LOOKS_DIR_NAME}/`, reason: 'failed', ...codeOf(err) })
+    skipped.push({ name: `${LOOKS_DIR}/`, reason: 'failed', ...codeOf(err) })
   }
 }
 

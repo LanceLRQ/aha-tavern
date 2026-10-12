@@ -41,7 +41,11 @@ export interface DrawDoctorReport {
   /** 出图会不会带定妆图；不满足不算自检未通过。服务、工作流、节点信息有问题时不检查。 */
   reference?: { ok: boolean; reason?: ReferenceWhy; /** reason 为 bad-refs 时工作流自己给出的原因 */ problem?: string }
   /** 单聊里当前角色的定妆图与额外形象；筹备或还没选定角色时没有。 */
-  character?: { hasDefault: boolean; extras: number; /** 图片文件丢失的额外形象名 */ missing: string[] }
+  character?: {
+    hasDefault: boolean; extras: number; /** 图片文件丢失的额外形象名 */ missing: string[]
+    /** 默认定妆图文件在，但不是有效的 PNG */
+    defaultInvalid?: boolean
+  }
   /** 没请求试出图时为 undefined。 */
   trial?:
     | { status: 'ok'; seconds: number; path: string }
@@ -59,7 +63,7 @@ export interface DrawDoctorDeps {
   random(): number
   log: Pick<Log, 'debug'>
   /** 当前聊天的角色有哪些形象；不在单聊或还没选定角色返回 null。缺省表示没有这一项。 */
-  currentLooks?(): Promise<LooksState | null>
+  currentLooks?(): Promise<(LooksState & { defaultInvalid?: boolean }) | null>
 }
 
 export interface DrawDoctorOptions {
@@ -123,8 +127,9 @@ export async function checkDrawing(deps: DrawDoctorDeps, opts: DrawDoctorOptions
       const looks = await deps.currentLooks()
       if (looks) {
         report.character = {
-          hasDefault: looks.default.exists, extras: looks.extras.length,
+          hasDefault: looks.default.exists && !looks.defaultInvalid, extras: looks.extras.length,
           missing: looks.extras.filter((l) => !l.exists).map((l) => l.name),
+          ...(looks.defaultInvalid ? { defaultInvalid: true } : {}),
         }
       }
     } catch (e) {

@@ -4,7 +4,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import os from 'node:os'
-import { listCharacters, matchCharacterName, MAX_LOOKS, normalizeLookName, normalizeLookWhen } from '../core/card'
+import { DEFAULT_LOOK, listCharacters, matchCharacterName, MAX_LOOKS, normalizeLookName, normalizeLookWhen } from '../core/card'
 import { createComfyClient } from '../core/comfy'
 import { loadImageService } from '../core/services'
 import { getDraft, readLooks, removeLook, saveLook, summarizeLooks, type SaveLookFailure } from '../core/looks'
@@ -21,7 +21,7 @@ import type { Runtime } from './runtime'
 import { renderGlossary } from './setup-prompt'
 import { flatText } from './steer'
 import { AttemptCollector, userRecordsOf, type StreamFrameLike, type UserMessageLike } from './transcript'
-import { fail, resolveCharacter } from './voice-tools'
+import { resolveCharacter } from './voice-tools'
 import { readonlyToolMessage } from './writable'
 
 export const LOOK_DRAFT = 'aha_look_draft'
@@ -107,7 +107,6 @@ export const DRAFT_TEXT = {
   character: 'error: character must be a non-empty string, look not drawn',
   characterForSave: 'error: character must be a non-empty string, look not saved',
   characterForRemove: 'error: character must be a non-empty string, nothing removed',
-  readonlyDraft: 'look not drawn: tavern data is newer than this plugin (read-only)',
   images: `error: images must be an array of 1 to ${MAX_LOOK_IMAGES} non-empty strings, look not drawn`,
   basedOn: 'error: basedOn must be a positive integer, look not drawn',
   both: 'error: give only one of images, basedOn and basedOnLook; look not drawn',
@@ -163,7 +162,8 @@ async function draftTool(deps: LookDeps, exec: unknown, args: unknown): Promise<
   try {
     const dir = await deps.tavernDirOf(agent)
     if (!dir) return DRAFT_TEXT.notTavern
-    if (await readonlyToolMessage(dir, log)) return DRAFT_TEXT.readonlyDraft
+    const ro = await readonlyToolMessage(dir, log)
+    if (ro) return ro
     const a = isRecord(args) ? args : {}
     if (typeof a.character !== 'string' || a.character.trim() === '') return DRAFT_TEXT.character
     const found = await resolveCharacter(dir, a.character)
@@ -219,8 +219,8 @@ const SAVE_FAILURE: Record<SaveLookFailure, string> = {
 }
 
 /** 保存成功后给主持人的说明。 */
-export const savedText = (look: 'default' | string, replaced: boolean): string =>
-  `look saved (${look === 'default' ? 'default' : `named "${flatText(look, 'look')}"`}, replaced: ${replaced}). `
+export const savedText = (look: string, replaced: boolean): string =>
+  `look saved (${look === DEFAULT_LOOK ? 'default' : `named "${flatText(look, 'look')}"`}, replaced: ${replaced}). `
   + 'Tell the user: pictures drawn in later chats will follow this look sheet.'
 
 async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<string> {
@@ -264,7 +264,7 @@ async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<s
 
     const r = await saveLook(entry.dir, { draft: n, ...(name !== undefined ? { name } : {}), ...(when ? { when } : {}) })
     if (!r.ok) return r.imageReplaced ? SAVE_TEXT.imageReplaced : SAVE_FAILURE[r.reason]
-    return savedText(name ?? 'default', r.replaced)
+    return savedText(name ?? DEFAULT_LOOK, r.replaced)
   }
   try {
     const msg = await deps.gate.run(agent.id, go)
@@ -278,7 +278,6 @@ async function saveTool(deps: LookDeps, exec: unknown, args: unknown): Promise<s
 
 export const REMOVE_TEXT = {
   notTavern: 'error: this workspace is not a tavern yet, nothing removed',
-  readonly: 'nothing removed: tavern data is newer than this plugin (read-only)',
   name: 'error: name must be a string, nothing removed',
   noDefault: 'nothing to remove: this character has no default look sheet',
   noNamed: (names: string[]) => `nothing to remove: this character has no look with that name; ${names.length ? `existing: ${names.join(', ')}` : 'it has no named looks'}`,
@@ -294,7 +293,8 @@ async function removeTool(deps: LookDeps, exec: unknown, args: unknown): Promise
   const go = async (): Promise<string> => {
     const dir = await deps.tavernDirOf(agent)
     if (!dir) return REMOVE_TEXT.notTavern
-    if (await readonlyToolMessage(dir, log)) return REMOVE_TEXT.readonly
+    const ro = await readonlyToolMessage(dir, log)
+    if (ro) return ro
     const a = isRecord(args) ? args : {}
     if (typeof a.character !== 'string' || a.character.trim() === '') return DRAFT_TEXT.characterForRemove
     const found = await resolveCharacter(dir, a.character)
@@ -302,7 +302,7 @@ async function removeTool(deps: LookDeps, exec: unknown, args: unknown): Promise
     const entry = found.entry
     if (a.name !== undefined && a.name !== null && typeof a.name !== 'string') return REMOVE_TEXT.name
     const key = typeof a.name === 'string' ? a.name.trim() : ''
-    const isDefault = key === '' || key === 'default'
+    const isDefault = key === '' || key === DEFAULT_LOOK
 
     const state = await readLooks(entry.dir)
     const hit = isDefault ? undefined : (state.extras.find((l) => l.name === key) ?? state.extras.find((l) => l.id === key))
@@ -313,7 +313,7 @@ async function removeTool(deps: LookDeps, exec: unknown, args: unknown): Promise
     const no = await confirm({ kind: 'look-remove', name: entry.card.name, ...(hit ? { look: hit.name } : {}) })
     if (no) return no
 
-    const r = await removeLook(entry.dir, isDefault ? 'default' : hit!.id)
+    const r = await removeLook(entry.dir, isDefault ? DEFAULT_LOOK : hit!.id)
     if (!r.ok) return r.reason === 'not-found' ? (isDefault ? REMOVE_TEXT.noDefault : REMOVE_TEXT.noNamed([])) : REMOVE_TEXT.writeFailed
     return `look removed (${isDefault ? 'default' : `named "${flatText(hit!.name, 'look')}"`}). Tell the user: pictures drawn in later chats ${isDefault ? 'no longer use a look sheet for this character' : 'can no longer use that look'}.`
   }

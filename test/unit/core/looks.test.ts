@@ -6,7 +6,7 @@ import YAML from 'yaml'
 import { CARD_FILE, readCharacter, saveCharacter, updateCharacterLooks } from '../../../src/core/card'
 import {
   DRAFTS_DIR, MAX_DRAFTS, REFERENCE_FILE, addDraft, clearDrafts, getDraft, listDrafts, readLooks, readPngBytes,
-  removeLook, resolveLook, saveLook, summarizeLooks, type DraftMeta,
+  readLooksChecked, removeLook, resolveLook, saveLook, summarizeLooks, type DraftMeta,
 } from '../../../src/core/looks'
 
 let root: string
@@ -311,5 +311,17 @@ describe('summarizeLooks', () => {
     const looks = await cardLooks()
     await fs.rm(path.join(charDir, 'looks', `${looks![0]!.id}.png`))
     expect((await summarizeLooks(charDir)).extraNames).toEqual(['居家'])
+  })
+})
+
+describe('readLooksChecked', () => {
+  it('默认定妆图文件头不是 PNG：defaultInvalid 为真；是 PNG 或不存在为假', async () => {
+    expect((await readLooksChecked(charDir)).defaultInvalid).toBe(false)
+    await fs.writeFile(path.join(charDir, REFERENCE_FILE), Buffer.from('not a png'))
+    const bad = await readLooksChecked(charDir)
+    expect(bad.defaultInvalid).toBe(true)
+    expect(bad.default.exists).toBe(true)
+    await fs.writeFile(path.join(charDir, REFERENCE_FILE), png(1))
+    expect((await readLooksChecked(charDir)).defaultInvalid).toBe(false)
   })
 })

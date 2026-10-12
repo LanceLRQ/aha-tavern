@@ -63,11 +63,14 @@ const asText = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
 
 const charCount = (s: string): number => [...s].length
 
-/** 形象名规则：去首尾空白后不为空、不超过 20 字、不是保留字 default。返回规范化的名字，不合规为 null。 */
+/** 换行、制表等控制字符：形象名与使用场合都是单行文字。 */
+const CONTROL_CHAR = /\p{Cc}/u
+
+/** 形象名规则：去首尾空白后不为空、不超过 20 字、不是保留字 default、不含控制字符。返回规范化的名字，不合规为 null。 */
 export function normalizeLookName(v: unknown): string | null {
   if (typeof v !== 'string') return null
   const name = v.trim()
-  if (!name || charCount(name) > LOOK_NAME_MAX || name.toLowerCase() === DEFAULT_LOOK) return null
+  if (!name || charCount(name) > LOOK_NAME_MAX || name.toLowerCase() === DEFAULT_LOOK || CONTROL_CHAR.test(name)) return null
   return name
 }
 
@@ -75,7 +78,7 @@ export function normalizeLookName(v: unknown): string | null {
 export function normalizeLookWhen(v: unknown): string | null {
   if (typeof v !== 'string') return null
   const when = v.trim()
-  return charCount(when) > LOOK_WHEN_MAX ? null : when
+  return charCount(when) > LOOK_WHEN_MAX || CONTROL_CHAR.test(when) ? null : when
 }
 
 /**

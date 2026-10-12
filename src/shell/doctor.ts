@@ -3,7 +3,7 @@
 import os from 'node:os'
 import { readCharacter } from '../core/card'
 import { createComfyClient } from '../core/comfy'
-import { readLooks } from '../core/looks'
+import { readLooksChecked } from '../core/looks'
 import { findPlayer } from '../core/player'
 import { loadImageService } from '../core/services'
 import { createTtsClient } from '../core/tts'
@@ -48,7 +48,7 @@ const check = (inv: Invocation, trial: boolean): Promise<DrawDoctorReport> =>
       const tavernDir = context.tavern?.dir
       const characterId = context.mode === 'chat' && context.record?.chatId ? context.record.characterId : undefined
       const entry = tavernDir && characterId ? await readCharacter(tavernDir, characterId) : null
-      return entry ? readLooks(entry.dir) : null
+      return entry ? readLooksChecked(entry.dir) : null
     },
   }, { trial, ...(inv.signal ? { signal: inv.signal } : {}) })
 

@@ -215,6 +215,7 @@ function referenceItem(ref: NonNullable<DrawDoctorReport['reference']>, sheet: s
 }
 
 function characterItem(c: NonNullable<DrawDoctorReport['character']>, sheet: string, look: string): DoctorItem {
+  if (c.defaultInvalid) return { mark: '!', text: clip(`当前角色：${sheet}文件不是有效的图片，需要重新定妆`) }
   const extras = c.extras > 0 ? `${c.hasDefault ? '，' : '；'}另有 ${c.extras} 套${look}` : ''
   let text = c.hasDefault ? `当前角色：有${sheet}${extras}` : `当前角色：还没有${sheet}（在「酒馆:筹备」里用 /aha 定妆 来定）${extras}`
   if (c.missing.length > 0) {

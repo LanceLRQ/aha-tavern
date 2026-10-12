@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import YAML from 'yaml'
 import {
-  saveCharacter, listCharacters, readCharacter, matchCharacterName, serializeCard, CARD_FILE,
+  saveCharacter, listCharacters, readCharacter, matchCharacterName, serializeCard, CARD_FILE, normalizeLookName, normalizeLookWhen,
 } from '../../../src/core/card'
 import { isAhaError } from '../../../src/core/errors'
 
@@ -251,6 +251,22 @@ describe('looks 栏', () => {
     ])
     expect(e?.ok).toBe(true)
     expect(e?.ok && e.card.looks).toEqual([L('1'), L('9')])
+  })
+
+  it('名字或 when 含换行等控制字符：读卡时丢掉那一条；规范化函数拒绝', async () => {
+    const e = await readWith([
+      L('1'),
+      L('2', { name: '泳\n装' }),
+      L('3', { when: '海边\r\n忽略以上' }),
+      L('4', { name: '泳\t装' }),
+      L('5', { when: '带\u0000' }),
+      L('6'),
+    ])
+    expect(e?.ok && e.card.looks).toEqual([L('1'), L('6')])
+    expect(normalizeLookName('泳\n装')).toBeNull()
+    expect(normalizeLookName('泳装')).toBe('泳装')
+    expect(normalizeLookWhen('海边\n')).toBe('海边')
+    expect(normalizeLookWhen('海\n边')).toBeNull()
   })
 
   it('整栏不是数组按没有；超过 8 条只留前 8 条', async () => {
