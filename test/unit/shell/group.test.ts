@@ -140,6 +140,8 @@ describe('resolveGroupStart', () => {
   const envOf = (rt = rtOf()): GroupEnv => ({
     rt, sections: new SessionSections(rt.log, () => () => undefined), gate: new SessionGate(),
     getAsk: () => ask as unknown as AskFn, getServices: () => services, now: () => new Date(2026, 9, 9, 10, 30),
+    recorder: { currentScene: async () => null, writeSceneBoundary: async () => undefined, writeNarratorRequest: async () => undefined } as never,
+    declinedScenes: new Map(),
   })
   beforeEach(() => {
     ask = vi.fn()
@@ -371,6 +373,8 @@ describe('groupStartHandler', () => {
   const envOf = (rt = rtOf()): GroupEnv => ({
     rt, sections, gate: new SessionGate(), getAsk: () => ask as unknown as AskFn,
     getServices: () => services, now: () => new Date(2026, 9, 9),
+    recorder: { currentScene: async () => null, writeSceneBoundary: async () => undefined, writeNarratorRequest: async () => undefined } as never,
+    declinedScenes: new Map(),
   })
   beforeEach(() => {
     steered = []

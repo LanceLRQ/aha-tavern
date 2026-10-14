@@ -38,6 +38,10 @@ export function parseGroupStartArgs(args: unknown): GroupStartArgs | string {
 export interface GroupToolDeps {
   /** 开场（群聊）：返回给模型的文字。 */
   start(agent: HostAgent | undefined, args: GroupStartArgs, signal?: AbortSignal): Promise<string>
+  /** 换场：确认卡片后写梗概、场景分界与人员进出。 */
+  scene(agent: HostAgent | undefined, args: unknown, signal?: AbortSignal): Promise<string>
+  /** 收场：写最后一段梗概与标题，更新往事索引行。 */
+  wrap(agent: HostAgent | undefined, args: unknown): Promise<string>
 }
 
 interface ToolHost {
@@ -67,5 +71,36 @@ export function registerGroupTools(ctx: Context, deps: GroupToolDeps): void {
       if (typeof parsed === 'string') return parsed
       return deps.start(agentOf(exec), parsed, signalOf(exec))
     },
+  }))
+
+  host.tools.register(defineTool({
+    name: 'aha_scene',
+    description: '提议换一个 scene：地点或时间明显变化时用（去了后院、到了第二天）；同一个地方聊得再久也不提议。'
+      + 'summary 写刚结束 scene 的梗概，title 给新 scene 起标题，场景一还没标题时在 ending_title 里给它起一个；'
+      + 'user 说了谁来谁走就填 join / leave（名字）。会弹出确认卡片，切不切由 user 决定；user 选了不换，本 scene 内不再提议。'
+      + '确认换场后按返回的指示，在同一轮回复里接着写新 scene 的开场（【旁白】开头）。其他返回是失败原因，照常继续当前 scene，不要重试。',
+    parameters: {
+      summary: { type: 'string', required: true, description: '刚结束的 scene 的梗概，两三句' },
+      title: { type: 'string', required: true, description: '新 scene 的标题，几个字' },
+      ending_title: { type: 'string', description: '刚结束 scene 的标题；场景一还没有标题时给它起一个' },
+      scenario: { type: 'string', description: 'user 说的新 scene 的情景（如有）' },
+      join: { type: 'array', items: { type: 'string' }, description: '新加入的 character 名单（如有）' },
+      leave: { type: 'array', items: { type: 'string' }, description: '离开的 character 名单（如有）' },
+    },
+    output: { schema: { type: 'string' }, render: text },
+    execute: (args, exec) => deps.scene(agentOf(exec), args, signalOf(exec)),
+  }))
+
+  host.tools.register(defineTool({
+    name: 'aha_wrap',
+    description: '收场：user 要求收场时调用。summary 写最后一个 scene 的梗概，title 给这一场 show 起个标题。'
+      + '收场后 user 仍可以继续聊；再次收场会覆盖最后一段梗概和标题。',
+    parameters: {
+      summary: { type: 'string', required: true, description: '最后一个 scene 的梗概，两三句' },
+      title: { type: 'string', required: true, description: '这一场 show 的标题，一句话' },
+      ending_title: { type: 'string', description: '最后一个 scene 的标题（如它还没有）' },
+    },
+    output: { schema: { type: 'string' }, render: text },
+    execute: (args, exec) => deps.wrap(agentOf(exec), args),
   }))
 }

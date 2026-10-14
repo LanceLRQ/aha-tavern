@@ -10,6 +10,7 @@ import { atomicWrite, modifyFile, pathExists, safeDirName } from './fsx'
 import { isChatId, newChatId } from './ids'
 import { countChars } from './docs'
 import type { ChatKind } from './memory'
+import { parseSummaryText, renderSummaryText } from './summary'
 
 export const CHATS_DIR = 'chats'
 export const CHAT_LOG_FILE = 'chat.jsonl'
@@ -245,6 +246,41 @@ export async function writeSummary(
 ): Promise<void> {
   await writeSummaryFile(tavernDir, chatId, input.summary)
   await setChatTitle(tavernDir, chatId, input.title)
+}
+
+// ---------- 群聊：按场景分段的梗概与 meta 补丁（二期规格 §8、§10） ----------
+
+export async function readShowSummary(
+  tavernDir: string, chatId: string,
+): Promise<import('./summary').ShowSummary> {
+  const dir = await requireChatDir(tavernDir, chatId)
+  let text: string
+  try {
+    text = await fs.readFile(path.join(dir, CHAT_SUMMARY_FILE), 'utf8')
+  } catch {
+    return { title: null, scenes: [] }
+  }
+  return parseSummaryText(text)
+}
+
+export async function writeShowSummary(
+  tavernDir: string, chatId: string, show: import('./summary').ShowSummary,
+): Promise<void> {
+  const dir = await requireChatDir(tavernDir, chatId)
+  await atomicWrite(path.join(dir, CHAT_SUMMARY_FILE), renderSummaryText(show))
+}
+
+/** 只改 meta.yaml 的指定栏（带锁读改写）；群聊换场时更新在场名单用。 */
+export async function patchChatMeta(
+  tavernDir: string,
+  chatId: string,
+  patch: Partial<Pick<ChatMeta, 'scenario' | 'present' | 'participants' | 'title'>>,
+): Promise<void> {
+  const dir = await requireChatDir(tavernDir, chatId)
+  await modifyFile(path.join(dir, CHAT_META_FILE), (current) => {
+    if (current === null) throw new AhaError('chat-invalid', `聊天元数据缺失：${chatId}`)
+    return YAML.stringify({ ...parseMeta(current, chatId), ...patch })
+  })
 }
 
 export type RecallResult =

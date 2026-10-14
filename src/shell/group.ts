@@ -31,6 +31,7 @@ import { flatText, makeNotice } from './steer'
 import { registerGroupTools, type GroupStartArgs } from './group-tools'
 import { GroupTranscriptRecorder, resolveGroupTarget } from './group-transcript'
 import { narratorHandler } from './group-commands'
+import { sceneHandler, sceneTool, wrapHandler, wrapTool } from './group-scene'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:group'
@@ -142,39 +143,9 @@ export function interpretGroupConfirm(answer: unknown): ConfirmAnswer {
   return { kind: 'cancel' }
 }
 
-export type NameResolve =
-  | { kind: 'ok'; entries: GoodEntry[] }
-  | { kind: 'none'; name: string }
-  | { kind: 'ambiguous'; name: string; candidates: CharacterEntry[] }
-  /** 名字对上的是坏卡：交给回执说明是哪个目录、什么问题 */
-  | { kind: 'bad-card'; entry: BadEntry }
-
-/** 逐个名字匹配（与单聊同规则，含包含档），保序去重；对上坏卡时单独说明。 */
-export function matchGroupNames(entries: readonly CharacterEntry[], names: readonly string[]): NameResolve {
-  const out: GoodEntry[] = []
-  const seen = new Set<string>()
-  for (const name of names) {
-    const m = matchCharacterName([...entries], name, { contains: true })
-    switch (m.kind) {
-      case 'exact':
-      case 'prefix':
-      case 'contains': {
-        const e = m.entry
-        if (!e.ok) return { kind: 'bad-card', entry: e }
-        if (!seen.has(e.card.id)) {
-          seen.add(e.card.id)
-          out.push(e)
-        }
-        break
-      }
-      case 'ambiguous':
-        return { kind: 'ambiguous', name, candidates: m.candidates }
-      case 'none':
-        return { kind: 'none', name }
-    }
-  }
-  return { kind: 'ok', entries: out }
-}
+export type { NameResolve } from './group-common'
+export { matchGroupNames } from './group-common'
+import { matchGroupNames } from './group-common'
 
 // ---------- 初始化 ----------
 
@@ -426,6 +397,10 @@ export interface GroupEnv {
   now(): Date
   /** 已记过日志的降级原因（会话 + 原因），同一原因只记一次 */
   warned?: Set<string>
+  /** 对话落盘：换场写分界、收场读当前场景都用它 */
+  recorder: GroupTranscriptRecorder
+  /** 每个会话里用户已拒绝换场的场景号：同一场景内不再问（规格 §8.1） */
+  declinedScenes: Map<string, Set<number>>
 }
 
 /** 开局阶段（含门外）掌柜段用的状态事实；读取失败降级为空。 */
@@ -778,24 +753,31 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   const sections = new SessionSections(rt.log, hostSectionRegister(SECTION_NAME, SECTION_ORDER), '群聊提示词段')
   let services: HostServices | undefined
   let ask: AskFn | undefined
-  const env: GroupEnv = {
-    rt, sections, gate: new SessionGate(), getAsk: () => ask, getServices: () => services, now: () => new Date(),
-  }
-  rt.cards = { gate: env.gate, getAsk: () => ask }
   const host = ctx as unknown as GroupHost
   host.inject(['userQuestions'], (c) => {
     const uq = (c as unknown as { userQuestions: { ask: AskFn } }).userQuestions
     ask = (req) => uq.ask(req)
   })
-  registerGroupTools(ctx, { start: groupStartTool(env) })
-  rt.handlers.start = groupStartHandler(env)
   // 对话逐段落盘：用户的话取自入步消息，回复按行首标记拆分（规格 §6、§10）。
   // resolve 在事件里才会被调，那时 services 已由下面的 inject 赋上。
   const recorder = new GroupTranscriptRecorder({
     resolve: (agent) => (services ? resolveGroupTarget(agent, services, rt) : Promise.resolve(null)),
     log: rt.log,
   })
+  const env: GroupEnv = {
+    rt, sections, gate: new SessionGate(), getAsk: () => ask, getServices: () => services, now: () => new Date(),
+    recorder, declinedScenes: new Map(),
+  }
+  rt.cards = { gate: env.gate, getAsk: () => ask }
+  const rebuild = async (agent: HostAgent): Promise<void> => {
+    if (!services) return
+    await sections.refresh(agent, groupPlan(env, agent, services, await rt.theme()))
+  }
+  registerGroupTools(ctx, { start: groupStartTool(env), scene: sceneTool(env, { rebuild }), wrap: wrapTool(env) })
+  rt.handlers.start = groupStartHandler(env)
   rt.handlers.narrator = narratorHandler({ recorder })
+  rt.handlers.scene = sceneHandler()
+  rt.handlers.wrap = wrapHandler()
   host.inject(['agentPresets'], (c) => {
     services = c
     const ensure = async (agent: HostAgent, via: string): Promise<void> => {
@@ -821,6 +803,7 @@ export function installGroup(ctx: Context, rt: Runtime): void {
       sections.forget(payload.agent.id)
       clearGroupWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
+      env.declinedScenes.delete(payload.agent.id)
     })
     rt.log.info('群聊外壳已装配（created / pre-step / disposed 监听）')
   })
