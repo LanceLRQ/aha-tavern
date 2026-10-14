@@ -26,6 +26,7 @@ import {
 import type { GoodEntry } from '../../../src/shell/chat'
 import { buildGatherPrompt, buildGroupPrompt, buildGroupStartCue, renderCharactersSection } from '../../../src/shell/group-prompt'
 import { parseGroupStartArgs } from '../../../src/shell/group-tools'
+import { narratorHandler } from '../../../src/shell/group-commands'
 
 const builtinDir = path.resolve(__dirname, '../../../themes')
 let theme: Theme
@@ -492,5 +493,36 @@ describe('群聊提示词与工具参数', () => {
   it('提示词文件与规则段：群聊规则提到回复格式', () => {
     expect(houseRulesGroupText).toContain('【旁白】')
     expect(houseRulesGroupText).toContain('不替 user 说话')
+  })
+})
+
+// ---------- 旁白命令（#8l8e） ----------
+
+describe('narratorHandler', () => {
+  const agent: HostAgent = { id: 's1', ctx: {}, session: { get header() { return { cwd: dir } } } }
+  const run = async (args: string) => {
+    const steered: string[] = []
+    const wrote: string[] = []
+    const handler = narratorHandler({ recorder: { writeNarratorRequest: async (_a: unknown, text: string) => { wrote.push(text) } } as never })
+    const reply = await handler({
+      agent, services: { agentPresets: { composedPreset: () => 'tavern-group' } } as never, rt: rtOf(), theme,
+      context: null as never, args, label: '/aha 旁白', steer: (t: string) => { steered.push(t) },
+    })
+    return { reply, steered, wrote }
+  }
+  it('不带参数：说明用法，不转告不落盘', async () => {
+    const r = await run('')
+    expect(r.reply.text).toContain('/aha 旁白')
+    expect(r.steered).toHaveLength(0)
+    expect(r.wrote).toHaveLength(0)
+  })
+  it('带要求：先落盘旁白要求，再转告模型；通知只给旁白、声明场景内有效', async () => {
+    const r = await run('让气氛紧张一点')
+    expect(r.wrote).toEqual(['让气氛紧张一点'])
+    expect(r.steered).toHaveLength(1)
+    expect(r.steered[0]).toContain('让气氛紧张一点')
+    expect(r.steered[0]).toContain('narrator_request')
+    expect(r.steered[0]).toContain('当前场景内持续有效')
+    expect(r.reply.text).toContain('已转告旁白')
   })
 })

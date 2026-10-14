@@ -30,6 +30,7 @@ import { hostSectionRegister, SessionSections, type SectionPlan } from './sectio
 import { flatText, makeNotice } from './steer'
 import { registerGroupTools, type GroupStartArgs } from './group-tools'
 import { GroupTranscriptRecorder, resolveGroupTarget } from './group-transcript'
+import { narratorHandler } from './group-commands'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:group'
@@ -788,6 +789,13 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   })
   registerGroupTools(ctx, { start: groupStartTool(env) })
   rt.handlers.start = groupStartHandler(env)
+  // 对话逐段落盘：用户的话取自入步消息，回复按行首标记拆分（规格 §6、§10）。
+  // resolve 在事件里才会被调，那时 services 已由下面的 inject 赋上。
+  const recorder = new GroupTranscriptRecorder({
+    resolve: (agent) => (services ? resolveGroupTarget(agent, services, rt) : Promise.resolve(null)),
+    log: rt.log,
+  })
+  rt.handlers.narrator = narratorHandler({ recorder })
   host.inject(['agentPresets'], (c) => {
     services = c
     const ensure = async (agent: HostAgent, via: string): Promise<void> => {
@@ -797,10 +805,6 @@ export function installGroup(ctx: Context, rt: Runtime): void {
         rt.log.error(`注册群聊提示词段失败（${via}）：${(e as Error).stack ?? e}`)
       }
     }
-    // 对话逐段落盘：用户的话取自入步消息，回复按行首标记拆分（规格 §6、§10）
-    const recorder = new GroupTranscriptRecorder({
-      resolve: (agent) => resolveGroupTarget(agent, c, rt), log: rt.log,
-    })
     // 新建与恢复会话时就注册（恢复的场景中会话在这里还原五段）；pre-step 兜底，且必须 return next()
     c.on('agent/created', (payload: { agent: HostAgent }) => {
       void ensure(payload.agent, 'created')
