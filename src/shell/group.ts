@@ -30,6 +30,7 @@ import { hostSectionRegister, SessionSections, type SectionPlan } from './sectio
 import { flatText, makeNotice } from './steer'
 import { registerGroupTools, type GroupStartArgs } from './group-tools'
 import { GroupTranscriptRecorder, resolveGroupTarget } from './group-transcript'
+import { createGroupSpeaking } from './group-speak'
 import { narratorHandler } from './group-commands'
 import { sceneHandler, sceneTool, wrapHandler, wrapTool } from './group-scene'
 import { groupRememberHandler, groupRememberTool, groupRecallTool, groupReviewTool, onGroupMemoryStep, type GroupMemoryEnv } from './group-memory'
@@ -763,9 +764,12 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   })
   // 对话逐段落盘：用户的话取自入步消息，回复按行首标记拆分（规格 §6、§10）。
   // resolve 在事件里才会被调，那时 services 已由下面的 inject 赋上。
+  // 每段回复拆分落盘后同步交给自动朗读（开着才念，规格 §13.1）。
+  const speaking = createGroupSpeaking(rt, () => services)
   const recorder = new GroupTranscriptRecorder({
     resolve: (agent) => (services ? resolveGroupTarget(agent, services, rt) : Promise.resolve(null)),
     log: rt.log,
+    onReply: (agent, lines) => speaking.auto.onReply(agent.id, lines),
   })
   const env: GroupEnv = {
     rt, sections, gate: new SessionGate(), getAsk: () => ask, getServices: () => services, now: () => new Date(),
@@ -791,6 +795,10 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   rt.handlers.scene = sceneHandler()
   rt.handlers.wrap = wrapHandler()
   rt.handlers.remember = groupRememberHandler(memoryEnv)
+  rt.handlers.speak = speaking.handler
+  // 卸载时停下正在念的（用 ctx.effect，实测 ctx.on('dispose') 不触发）
+  const effect = (ctx as unknown as { effect(fn: () => () => unknown): unknown }).effect
+  effect.call(ctx, () => () => speaking.speaker.stop())
   host.inject(['agentPresets'], (c) => {
     services = c
     const ensure = async (agent: HostAgent, via: string): Promise<void> => {
@@ -808,15 +816,21 @@ export function installGroup(ctx: Context, rt: Runtime): void {
       await ensure(payload.agent, 'pre-step')
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
       void onGroupMemoryStep(memoryEnv, payload.agent, payload.turn, newUsers)
+      speaking.auto.onStep(payload.agent.id, payload.turn, newUsers)
       return next()
     })
     c.on('agent/assistant-stream', (payload: { agent: HostAgent; frame: unknown }) => {
       recorder.onFrame(payload.agent, payload.frame as never)
     })
+    // 一轮正常结束时自动朗读（被停止的轮次不经过这里；残留的段在 pre-step 清掉）
+    c.on('agent/turn-stopping', (payload: { agent: HostAgent; turn?: unknown }) => {
+      void speaking.auto.onTurnStopping(payload.agent, payload.turn)
+    })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
       clearGroupWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
+      speaking.auto.forget(payload.agent.id)
       env.declinedScenes.delete(payload.agent.id)
       memoryEnv.turns.forget(payload.agent.id)
       memoryEnv.recallTurns.forget(payload.agent.id)

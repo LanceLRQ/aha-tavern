@@ -892,6 +892,24 @@ export function autoReadReadonlyReceipt(theme: Theme): Reply {
   return guide(`这间${theme.concept('tavern')}的数据比插件新，不能改自动朗读的开关；朗读本身可以用。`)
 }
 
+// ---------- 群聊的朗读（按段分音色） ----------
+
+/** 群聊开始朗读；有段因为没有可用音色被跳过时一并说明。 */
+export function speakStartedGroupReceipt(count: number, truncated: boolean, silent: number): Reply {
+  const skipped = silent > 0 ? `；另有 ${silent} 段没有声音可念，已跳过` : ''
+  return guide(`开始朗读，共 ${count} 句${truncated ? '，超出的部分没有念' : ''}${skipped}。`)
+}
+
+/** 群聊要念的话一段声音都没有：要念的角色都没有音色。 */
+export function speakNoVoicesReceipt(theme: Theme): Reply {
+  return guide(`要念的话没有可用的声音：${theme.concept('character')}还没有音色，请到「${MODE_LABEL.setup}」配声音。`)
+}
+
+/** 群聊手动念给定文字用的旁白音色不可用（配置的目录里没有成对的参考录音）。 */
+export function speakNarratorNoVoiceReceipt(dir: string): Reply {
+  return guide(`旁白的音色不可用：${dir} 里没有成对的 voice_ref.wav 与 voice_ref.txt，请检查配置。`)
+}
+
 // ---------- 登记音色 ----------
 
 export const VOICE_SET_QUESTION_ID = 'voice-replace'

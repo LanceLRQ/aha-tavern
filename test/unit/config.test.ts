@@ -40,6 +40,14 @@ describe('配置默认值', () => {
     expect(c.mode).toBe('chat')
     expect(c.worldBudget).toBe(4000)
   })
+
+  it('旁白音色目录：缺省空串（用随包的旁白音色），用户配置覆盖，空白不算指定', () => {
+    expect(DEFAULTS.narratorVoiceDir).toBe('')
+    expect(resolveConfig({}).narratorVoiceDir).toBe('')
+    expect(resolveConfig({ narratorVoiceDir: '~/nv' }).narratorVoiceDir).toBe('~/nv')
+    expect(resolveConfig({ narratorVoiceDir: '  ' }).narratorVoiceDir).toBe('')
+    expect(resolveConfig({ narratorVoiceDir: 5 }).narratorVoiceDir).toBe('')
+  })
 })
 
 describe('登记表默认路径跟随 DSH_HOME', () => {

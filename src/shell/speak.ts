@@ -60,12 +60,20 @@ export interface SpeakRequest {
   gaps?: readonly SpeechGap[]
   /** 与 sentences 等长：每句与上一句之间被跳过的字数，决定 break 停多久；不给按 0（只是换段）算。 */
   skipped?: readonly number[]
+  /** 与 sentences 等长：每句各自用的参考音色（群聊按人分音色）；不给或不给到位的句子用 voice。 */
+  voices?: readonly SpeakVoice[]
   /** 参考录音的绝对路径与录音里说的话。 */
-  voice: { audio: string; text: string }
+  voice: SpeakVoice
   settings: Pick<VoiceServiceSettings, 'endpoint' | 'model' | 'language' | 'timeoutSeconds' | 'pauseSeconds' | 'pauseMinSeconds' | 'pauseMaxSeconds'> & Partial<Pick<VoiceServiceSettings, 'local'>>
   player: Player
   /** 会话编号：会话销毁、或该会话来了新的用户消息时，据此停下属于它的朗读。 */
   owner: string
+}
+
+/** 一套参考音色：参考录音的绝对路径与录音里说的话（克隆合成用它）。 */
+export interface SpeakVoice {
+  audio: string
+  text: string
 }
 
 export interface SpeakError {
@@ -86,6 +94,8 @@ interface QueueItem {
   text: string
   gap: SpeechGap
   skipped: number
+  /** 这一句用的参考音色；来自请求里逐句的 voices，缺省用整段的 voice。 */
+  voice: SpeakVoice
 }
 
 /** 已合成好、等待播放的一句。 */
@@ -131,7 +141,9 @@ export class Speaker {
   speak(req: SpeakRequest): void {
     if (req.sentences.length === 0) return
     this.begin({
-      owner: req.owner, player: req.player, req, queue: req.sentences.map((text, i) => ({ text, gap: req.gaps?.[i] ?? 'none', skipped: req.skipped?.[i] ?? 0 })), ctl: new AbortController(), files: new Set(),
+      owner: req.owner, player: req.player, req, queue: req.sentences.map((text, i) => ({
+        text, gap: req.gaps?.[i] ?? 'none', skipped: req.skipped?.[i] ?? 0, voice: req.voices?.[i] ?? req.voice,
+      })), ctl: new AbortController(), files: new Set(),
       closed: false, client: this.deps.createClient(req.settings.endpoint), ahead: null, playing: false, lastPlayEnd: null,
       finished: Promise.resolve(), outcome: { status: 'stopped' },
     })
@@ -201,7 +213,9 @@ export class Speaker {
     if (cur && !cur.closed && cur.owner === req.owner) {
       // 接到上一段末尾：第一句与前面隔着一个段落
       cur.queue.push(...req.sentences.map((text, i): QueueItem => (
-        i === 0 ? { text, gap: 'break', skipped: 0 } : { text, gap: req.gaps?.[i] ?? 'none', skipped: req.skipped?.[i] ?? 0 })))
+        i === 0
+          ? { text, gap: 'break', skipped: 0, voice: req.voices?.[i] ?? req.voice }
+          : { text, gap: req.gaps?.[i] ?? 'none', skipped: req.skipped?.[i] ?? 0, voice: req.voices?.[i] ?? req.voice })))
       this.prefetch(cur)
       return
     }
@@ -307,10 +321,10 @@ export class Speaker {
     run.ahead.catch(noop)
   }
 
-  private async synth(run: Run, { text, gap, skipped }: QueueItem): Promise<Ready> {
+  private async synth(run: Run, { text, gap, skipped, voice }: QueueItem): Promise<Ready> {
     const { req, client } = run
     if (!req || !client) throw new TtsError('other', 'synth without request')
-    const { voice, settings } = req
+    const { settings } = req
     const audio = await client.synthesize(
       { kind: 'clone', model: settings.model, text, refAudio: voice.audio, refText: voice.text, language: settings.language },
       { timeoutMs: settings.timeoutSeconds * 1000, signal: run.ctl.signal },
@@ -395,14 +409,17 @@ export interface SpeakEnv {
 }
 
 export type Readiness =
-  | { ok: true; settings: VoiceServiceSettings; voice: { audio: string; text: string }; player: Player }
+  | { ok: true; settings: VoiceServiceSettings; voice: SpeakVoice; player: Player }
   | { ok: false; block: SpeakBlock }
 
-/** 按固定顺序检查能不能朗读：配置、地址、服务、音色、播放器；命中即停。 */
-export async function checkReadiness(
-  env: SpeakEnv, target: Pick<ChatTarget, 'tavernDir' | 'characterId'>,
-): Promise<Readiness> {
-  const blocked = (block: SpeakBlock): Readiness => ({ ok: false, block })
+/** 只查语音服务与播放器（不涉及任何角色的音色）；群聊按段各用各的音色时用。 */
+export type ServiceReadiness =
+  | { ok: true; settings: VoiceServiceSettings; player: Player }
+  | { ok: false; block: SpeakBlock }
+
+/** 按固定顺序检查语音服务本身能不能朗读：配置、地址、启动、服务、播放器；命中即停。 */
+export async function checkService(env: SpeakEnv): Promise<ServiceReadiness> {
+  const blocked = (block: SpeakBlock): ServiceReadiness => ({ ok: false, block })
   const cfg = await env.rt.voiceSettings()
   if (!cfg.configured) return blocked('not-configured')
   const s = cfg.settings
@@ -414,12 +431,21 @@ export async function checkReadiness(
   } catch {
     return blocked('unreachable')
   }
-  const entry = await readCharacter(target.tavernDir, target.characterId)
-  const voice = entry ? await readVoice(entry.dir) : null
-  if (!voice?.ok) return blocked('no-voice')
   const player = await env.findPlayer()
   if (!player) return blocked('no-player')
-  return { ok: true, settings: s, voice: { audio: voice.audioPath, text: voice.text }, player }
+  return { ok: true, settings: s, player }
+}
+
+/** 按固定顺序检查能不能朗读：配置、地址、服务、播放器、音色；命中即停。 */
+export async function checkReadiness(
+  env: SpeakEnv, target: Pick<ChatTarget, 'tavernDir' | 'characterId'>,
+): Promise<Readiness> {
+  const s = await checkService(env)
+  if (!s.ok) return s
+  const entry = await readCharacter(target.tavernDir, target.characterId)
+  const voice = entry ? await readVoice(entry.dir) : null
+  if (!voice?.ok) return { ok: false, block: 'no-voice' }
+  return { ok: true, settings: s.settings, voice: { audio: voice.audioPath, text: voice.text }, player: s.player }
 }
 
 // ---------- 自动朗读 ----------

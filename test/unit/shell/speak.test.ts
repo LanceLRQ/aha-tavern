@@ -370,6 +370,33 @@ describe('Speaker', () => {
     expect(h.synths[0]!.opts.timeoutMs).toBe(120_000)
   })
 
+  it('voices 逐句给出各自的参考音色；没给到的句子用整段的 voice（群聊按人分音色走这里）', async () => {
+    const h = harness()
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['一一一', '二二二', '三三三'], { voices: [{ audio: '/ref/n.wav', text: '旁白的话' }] }))
+    await settle()
+    expect(h.plays).toHaveLength(3)
+    expect(h.synths.map((s) => s.input.refAudio)).toEqual(['/ref/n.wav', '/ref/a.wav', '/ref/a.wav'])
+    expect(h.synths.map((s) => s.input.refText)).toEqual(['旁白的话', '参考文字', '参考文字'])
+  })
+
+  it('append 的逐句音色同样生效：追加的段用段自己的音色', async () => {
+    const h = harness({ auto: false })
+    const sp = new Speaker(h.deps)
+    sp.speak(req(['一一一']))
+    await settle()
+    h.synths[0]!.done()
+    await settle() // 第一句在播
+    sp.append(req(['二二二'], { voices: [{ audio: '/ref/n.wav', text: '旁白的话' }] }))
+    await settle()
+    h.synths[1]!.done()
+    h.plays[0]!.end()
+    await settle()
+    expect(h.synths[1]!.input.refAudio).toBe('/ref/n.wav')
+    expect(h.synths[1]!.input.refText).toBe('旁白的话')
+    await sp.stop()
+  })
+
   it('空句子列表什么也不做，也不顶掉正在念的', async () => {
     const h = harness({ auto: false })
     const sp = new Speaker(h.deps)

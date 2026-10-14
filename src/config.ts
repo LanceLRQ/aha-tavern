@@ -29,6 +29,8 @@ export interface TavernConfig {
   registryPath: string
   /** 外部服务（生图等）的配置文件路径，支持 ~ 开头。 */
   servicesPath: string
+  /** 群聊旁白音色所在目录（含 voice_ref.wav 与 voice_ref.txt，与角色音色同样的约定），支持 ~ 开头；空串用随包自带的旁白音色。 */
+  narratorVoiceDir: string
 }
 
 /** 酒馆数据目录：跟随宿主的数据目录（DSH_HOME，未设时是 ~/.dsh）。 */
@@ -49,6 +51,7 @@ export const DEFAULTS: TavernConfig = {
   groupCastMax: 5,
   registryPath: '~/.dsh/aha-tavern/taverns.yaml',
   servicesPath: '~/.dsh/aha-tavern/services.yaml',
+  narratorVoiceDir: '',
 }
 
 const MODES: readonly PluginMode[] = ['setup', 'chat', 'group', 'settings']
@@ -66,6 +69,8 @@ export function resolveConfig(input: unknown, env: Record<string, string | undef
   out.servicesPath = `${dataDir}/services.yaml`
   if (typeof raw.registryPath === 'string' && raw.registryPath) out.registryPath = raw.registryPath
   if (typeof raw.servicesPath === 'string' && raw.servicesPath) out.servicesPath = raw.servicesPath
+  // 空白不算指定：旁白音色回落到随包自带的那段参考录音
+  if (typeof raw.narratorVoiceDir === 'string' && raw.narratorVoiceDir.trim()) out.narratorVoiceDir = raw.narratorVoiceDir
 
   const numericKeys = [
     'worldBudget',
