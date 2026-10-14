@@ -29,6 +29,7 @@ import type { Runtime } from './runtime'
 import { hostSectionRegister, SessionSections, type SectionPlan } from './sections'
 import { flatText, makeNotice } from './steer'
 import { registerGroupTools, type GroupStartArgs } from './group-tools'
+import { GroupTranscriptRecorder, resolveGroupTarget } from './group-transcript'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:group'
@@ -796,17 +797,26 @@ export function installGroup(ctx: Context, rt: Runtime): void {
         rt.log.error(`注册群聊提示词段失败（${via}）：${(e as Error).stack ?? e}`)
       }
     }
+    // 对话逐段落盘：用户的话取自入步消息，回复按行首标记拆分（规格 §6、§10）
+    const recorder = new GroupTranscriptRecorder({
+      resolve: (agent) => resolveGroupTarget(agent, c, rt), log: rt.log,
+    })
     // 新建与恢复会话时就注册（恢复的场景中会话在这里还原五段）；pre-step 兜底，且必须 return next()
     c.on('agent/created', (payload: { agent: HostAgent }) => {
       void ensure(payload.agent, 'created')
     })
-    c.on('agent/pre-step', async (payload: { agent: HostAgent }, next: () => Promise<unknown>) => {
+    c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[] }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
+      recorder.onStep(payload.agent, (payload.messages ?? []) as never)
       return next()
+    })
+    c.on('agent/assistant-stream', (payload: { agent: HostAgent; frame: unknown }) => {
+      recorder.onFrame(payload.agent, payload.frame as never)
     })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
       clearGroupWarned(env, payload.agent.id)
+      recorder.forget(payload.agent.id)
     })
     rt.log.info('群聊外壳已装配（created / pre-step / disposed 监听）')
   })
