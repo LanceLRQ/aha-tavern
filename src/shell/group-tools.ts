@@ -42,6 +42,12 @@ export interface GroupToolDeps {
   scene(agent: HostAgent | undefined, args: unknown, signal?: AbortSignal): Promise<string>
   /** 收场：写最后一段梗概与标题，更新往事索引行。 */
   wrap(agent: HostAgent | undefined, args: unknown): Promise<string>
+  /** 随手记（群聊）：指明哪些在场角色记住了。 */
+  remember(agent: HostAgent | undefined, args: unknown): Promise<string>
+  /** 回忆（群聊）：指明哪个在场角色在回忆。 */
+  recall(agent: HostAgent | undefined, args: unknown): Promise<string>
+  /** 整理（群聊）：当前场景梗概 + 在场角色前几栏。 */
+  review(agent: HostAgent | undefined, args: unknown): Promise<string>
 }
 
 interface ToolHost {
@@ -102,5 +108,62 @@ export function registerGroupTools(ctx: Context, deps: GroupToolDeps): void {
     },
     output: { schema: { type: 'string' }, render: text },
     execute: (args, exec) => deps.wrap(agentOf(exec), args),
+  }))
+
+  registerGroupMemoryTools(host, deps, text, agentOf)
+}
+
+function registerGroupMemoryTools(host: ToolHost, deps: GroupToolDeps, text: (a: unknown, v: unknown) => Array<{ type: 'text'; text: string }>, agentOf: (exec: unknown) => HostAgent | undefined): void {
+  host.tools.register(defineTool({
+    name: 'aha_remember',
+    description: '把一件恒久的事实或重要的事记进 core_memory 的 facts 栏。who 填记住这件事的 character（在场的一个或几个的名字）；'
+      + '只记要紧的，不记一次性的闲聊；每一轮最多调用一次。返回 remembered for <名单>；同一轮再次调用返回 already remembered this turn。',
+    parameters: {
+      who: { type: 'array', items: { type: 'string' }, required: true, description: '记住这件事的在场 character 的名字' },
+      text: { type: 'string', required: true, description: '一句话，只写结论，不写经过' },
+    },
+    output: { schema: { type: 'string' }, render: text },
+    execute: (args, exec) => deps.remember(agentOf(exec), args),
+  }))
+
+  host.tools.register(defineTool({
+    name: 'aha_recall',
+    description: '让某个在场的 character 回忆往事：who 填 TA 的名字，id 是 TA 的 core_memory 往事索引行行尾的聊天编号。'
+      + '只能回忆 TA 自己索引里的聊天；回忆一场群聊时只返回 TA 在场的那些场景。'
+      + '只在 user 提起某次往事、或话题明显与某一行有关时才用，寒暄不用；每一轮最多调用一次。'
+      + '编号不在 TA 的索引里返回 not remembered by <名字>；同一轮再次调用返回 already recalled this turn。',
+    parameters: {
+      who: { type: 'string', required: true, description: '在回忆的 character 的名字' },
+      id: { type: 'string', required: true, description: 'TA 的往事索引里的聊天编号（4 位）' },
+    },
+    output: { schema: { type: 'string' }, render: text },
+    execute: (args, exec) => deps.recall(agentOf(exec), args),
+  }))
+
+  host.tools.register(defineTool({
+    name: 'aha_review',
+    description: '整理：scene_summary 写当前 scene 到目前为止的梗概（换场或收场时会覆盖这段）；'
+      + 'members 里给每个要整理的在场 character 更新 core_memory 的 address、impression、facts（给了哪栏改哪栏，facts 是字符串数组，只写结论；'
+      + '没有要改的 character 就不放进 members，但 scene_summary 每次都要给）。收到"整理记忆"的通知时调用；平时不用。',
+    parameters: {
+      scene_summary: { type: 'string', required: true, description: '当前 scene 到目前为止的梗概' },
+      members: {
+        type: 'array',
+        required: true,
+        description: '要更新的在场 character 列表',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            name: { type: 'string', description: 'character 的名字' },
+            address: { type: 'string', description: 'address 栏的完整新正文' },
+            impression: { type: 'string', description: 'impression 栏的完整新正文' },
+            facts: { type: 'array', items: { type: 'string' }, description: 'facts 栏的完整新条目列表' },
+          },
+        },
+      },
+    },
+    output: { schema: { type: 'string' }, render: text },
+    execute: (args, exec) => deps.review(agentOf(exec), args),
   }))
 }

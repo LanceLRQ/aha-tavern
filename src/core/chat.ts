@@ -34,6 +34,8 @@ export interface ChatMeta {
   scenario?: string
   /** 群聊：当前在场的角色编号；换场增减时更新。缺省视为与 participants 相同 */
   present?: string[]
+  /** 群聊：开场时的在场名单（建场时定死，回忆判断角色在场景一是否在场用） */
+  initialPresent?: string[]
 }
 
 export interface ChatRecord {
@@ -108,7 +110,7 @@ export async function createChat(tavernDir: string, input: CreateChatInput): Pro
     started: input.now.toISOString(),
     title: '',
     ...(input.scenario !== undefined ? { scenario: input.scenario } : {}),
-    ...(input.present !== undefined ? { present: input.present } : {}),
+    ...(input.present !== undefined ? { present: input.present, initialPresent: input.present } : {}),
   }
   await atomicWrite(path.join(dir, CHAT_META_FILE), YAML.stringify(meta))
   return { id, dirName, dir }
@@ -132,7 +134,8 @@ function parseMeta(text: string, chatId: string): ChatMeta {
     typeof m.started === 'string' &&
     typeof m.title === 'string' &&
     (m.scenario === undefined || typeof m.scenario === 'string') &&
-    (m.present === undefined || (Array.isArray(m.present) && m.present.every((x) => typeof x === 'string')))
+    (m.present === undefined || (Array.isArray(m.present) && m.present.every((x) => typeof x === 'string'))) &&
+    (m.initialPresent === undefined || (Array.isArray(m.initialPresent) && m.initialPresent.every((x) => typeof x === 'string')))
   if (!ok) throw new AhaError('chat-invalid', `聊天元数据格式不对：${chatId}`)
   return m as ChatMeta
 }

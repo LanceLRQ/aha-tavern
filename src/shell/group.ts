@@ -32,6 +32,9 @@ import { registerGroupTools, type GroupStartArgs } from './group-tools'
 import { GroupTranscriptRecorder, resolveGroupTarget } from './group-transcript'
 import { narratorHandler } from './group-commands'
 import { sceneHandler, sceneTool, wrapHandler, wrapTool } from './group-scene'
+import { groupRememberHandler, groupRememberTool, groupRecallTool, groupReviewTool, onGroupMemoryStep, type GroupMemoryEnv } from './group-memory'
+import { RememberTurns } from './remember'
+import { ReviewReminder } from '../core/reminder'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:group'
@@ -773,11 +776,21 @@ export function installGroup(ctx: Context, rt: Runtime): void {
     if (!services) return
     await sections.refresh(agent, groupPlan(env, agent, services, await rt.theme()))
   }
-  registerGroupTools(ctx, { start: groupStartTool(env), scene: sceneTool(env, { rebuild }), wrap: wrapTool(env) })
+  const memoryEnv: GroupMemoryEnv = {
+    rt, getServices: () => services,
+    turns: new RememberTurns(), recallTurns: new RememberTurns(),
+    reminder: new ReviewReminder(rt.config.reviewIntervalTurns),
+    recorder,
+  }
+  registerGroupTools(ctx, {
+    start: groupStartTool(env), scene: sceneTool(env, { rebuild }), wrap: wrapTool(env),
+    remember: groupRememberTool(memoryEnv), recall: groupRecallTool(memoryEnv), review: groupReviewTool(memoryEnv),
+  })
   rt.handlers.start = groupStartHandler(env)
   rt.handlers.narrator = narratorHandler({ recorder })
   rt.handlers.scene = sceneHandler()
   rt.handlers.wrap = wrapHandler()
+  rt.handlers.remember = groupRememberHandler(memoryEnv)
   host.inject(['agentPresets'], (c) => {
     services = c
     const ensure = async (agent: HostAgent, via: string): Promise<void> => {
@@ -791,9 +804,10 @@ export function installGroup(ctx: Context, rt: Runtime): void {
     c.on('agent/created', (payload: { agent: HostAgent }) => {
       void ensure(payload.agent, 'created')
     })
-    c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[] }, next: () => Promise<unknown>) => {
+    c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
-      recorder.onStep(payload.agent, (payload.messages ?? []) as never)
+      const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
+      void onGroupMemoryStep(memoryEnv, payload.agent, payload.turn, newUsers)
       return next()
     })
     c.on('agent/assistant-stream', (payload: { agent: HostAgent; frame: unknown }) => {
@@ -804,6 +818,9 @@ export function installGroup(ctx: Context, rt: Runtime): void {
       clearGroupWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
       env.declinedScenes.delete(payload.agent.id)
+      memoryEnv.turns.forget(payload.agent.id)
+      memoryEnv.recallTurns.forget(payload.agent.id)
+      memoryEnv.reminder.forget(payload.agent.id)
     })
     rt.log.info('群聊外壳已装配（created / pre-step / disposed 监听）')
   })

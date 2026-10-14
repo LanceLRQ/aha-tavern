@@ -94,7 +94,7 @@ describe('GroupTranscriptRecorder', () => {
     feedReply(r, '【旁白】后院安静。')
     await r.drain('s1')
     const records = await recordsOf()
-    expect(records[1]).toMatchObject({ type: 'scene', text: '后院夜话', scene: 1, cast: target.known.map((k) => k.id) })
+    expect(records[1]).toMatchObject({ type: 'scene', text: '后院夜话', scene: 2, cast: target.known.map((k) => k.id) })
     expect(records[2]).toMatchObject({ type: 'user', scene: 2 })
     expect(records[3]).toMatchObject({ type: 'narrator', scene: 2 })
     // 新建一个记录器（模拟重开会话）：场景序号从盘上还原

@@ -92,15 +92,16 @@ export class GroupTranscriptRecorder {
     }
   }
 
-  /** 换场时写场景分界（正文是新场景的标题，另带在场名单），之后本会话的记录归新场景。 */
+  /** 换场时写场景分界（新场景的序号、标题与在场名单，规格 §8.2），之后本会话的记录归新场景。 */
   writeSceneBoundary(agent: HostAgent, input: { title: string; cast: readonly string[] }): Promise<void> {
     const s = this.state(agent.id)
     const arrival = this.arrival(agent, s)
     const task = async (): Promise<void> => {
       const t = await arrival
       if (!t) return
-      await this.append(t.tavernDir, t.chatId, { type: 'scene', text: input.title, cast: [...input.cast], scene: this.sceneOf(s) })
-      s.scene = this.sceneOf(s) + 1
+      const next = this.sceneOf(s) + 1
+      await this.append(t.tavernDir, t.chatId, { type: 'scene', text: input.title, cast: [...input.cast], scene: next })
+      s.scene = next
     }
     return this.enqueue(s, task)
   }
@@ -143,7 +144,12 @@ export class GroupTranscriptRecorder {
 
   private async restoreScene(s: SessionState, t: GroupTarget): Promise<void> {
     const { records } = await readRecords(t.tavernDir, t.chatId)
-    s.scene = 1 + records.filter((r) => r.type === 'scene').length
+    // 场景分界带新场景的序号：取最后一条的序号；没有分界就是场景一
+    let scene = 1
+    for (const r of records) {
+      if (r.type === 'scene' && typeof r.scene === 'number' && Number.isInteger(r.scene) && r.scene > 0) scene = r.scene
+    }
+    s.scene = scene
   }
 
   private arrival(agent: HostAgent, s: SessionState): Promise<GroupTarget | null> {

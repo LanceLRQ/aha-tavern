@@ -111,7 +111,7 @@ describe('sceneTool', () => {
     // 分界记录：新场景标题与在场名单
     const records = (await readRecords(dir, chatId)).records
     const idOf = (n: string): string => target.known.find((k) => k.name === n)!.id
-    expect(records.at(-1)).toMatchObject({ type: 'scene', text: '后院夜话', scene: 1, cast: [idOf('白狐'), idOf('青衫')] })
+    expect(records.at(-1)).toMatchObject({ type: 'scene', text: '后院夜话', scene: 2, cast: [idOf('白狐'), idOf('青衫')] })
     // 新记录归场景二
     await env.recorder.writeNarratorRequest(agent, 'x')
     expect((await readRecords(dir, chatId)).records.at(-1)).toMatchObject({ type: 'narrator-request', scene: 2 })
