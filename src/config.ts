@@ -1,9 +1,9 @@
 // 插件配置：类型、默认值与合并逻辑。
 
-/** 模式：筹备 / 单聊。 */
-export type TavernMode = 'setup' | 'chat'
+/** 模式：筹备 / 单聊 / 群聊。 */
+export type TavernMode = 'setup' | 'chat' | 'group'
 
-/** 插件实例的角色：两个酒馆模式，外加挂在根层、只为"插件"页的设置页服务的 settings。 */
+/** 插件实例的角色：三个酒馆模式，外加挂在根层、只为"插件"页的设置页服务的 settings。 */
 export type PluginMode = TavernMode | 'settings'
 
 export interface TavernConfig {
@@ -23,6 +23,8 @@ export interface TavernConfig {
   reviewIntervalTurns: number
   /** 回忆工具单次节选上限（字）。 */
   recallExcerptMaxChars: number
+  /** 群聊一场的在场角色上限。 */
+  groupCastMax: number
   /** 全局登记表路径，支持 ~ 开头。 */
   registryPath: string
   /** 外部服务（生图等）的配置文件路径，支持 ~ 开头。 */
@@ -44,11 +46,12 @@ export const DEFAULTS: TavernConfig = {
   pastIndexMaxLines: 100,
   reviewIntervalTurns: 30,
   recallExcerptMaxChars: 2000,
+  groupCastMax: 5,
   registryPath: '~/.dsh/aha-tavern/taverns.yaml',
   servicesPath: '~/.dsh/aha-tavern/services.yaml',
 }
 
-const MODES: readonly PluginMode[] = ['setup', 'chat', 'settings']
+const MODES: readonly PluginMode[] = ['setup', 'chat', 'group', 'settings']
 
 /** 把用户配置与默认值合并：未知字段丢弃，类型不对的字段回落默认值。 */
 export function resolveConfig(input: unknown, env: Record<string, string | undefined> = process.env): TavernConfig {
@@ -71,6 +74,7 @@ export function resolveConfig(input: unknown, env: Record<string, string | undef
     'pastIndexMaxLines',
     'reviewIntervalTurns',
     'recallExcerptMaxChars',
+    'groupCastMax',
   ] as const
   for (const key of numericKeys) {
     const v = raw[key]

@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { doctorHandler } from './doctor'
 import type { Runtime } from './runtime'
 import { installChat } from './chat'
+import { installGroup } from './group'
 import { installSettings } from './settings-remote'
 import { installSetup } from './setup'
 import { installVoice } from './voice'
@@ -19,4 +20,5 @@ export function installHandlers(rt: Runtime, ctx: Context): void {
   installVoice(rt, ctx)
   if (rt.config.mode === 'setup') installSetup(ctx, rt)
   if (rt.config.mode === 'chat') installChat(ctx, rt)
+  if (rt.config.mode === 'group') installGroup(ctx, rt)
 }

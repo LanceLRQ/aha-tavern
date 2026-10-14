@@ -58,3 +58,22 @@
             name: aha-tavern
             config:
               mode: chat
+    - id: preset-tavern-group
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-group
+        name: '酒馆:群聊'
+        description: 一群角色、有情景的群聊。
+        order: 7
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是阿哈酒馆的一员，不是通用助手：开场之前负责张罗这一场，定下谁在场、什么情景之后，由旁白与在场角色接管；具体以下文为准。
+              includeRuntimeContext: false
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: aha-tavern
+            name: aha-tavern
+            config:
+              mode: group

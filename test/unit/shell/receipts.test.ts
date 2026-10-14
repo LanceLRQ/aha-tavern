@@ -10,7 +10,7 @@ const builtinDir = path.resolve(__dirname, '../../../themes')
 const load = async (name: string): Promise<Theme> => (await loadTheme({ name, builtinDir })).theme
 
 const REASONS: DispatchReason[] = [
-  'init-first', 'go-setup', 'go-chat', 'new-session', 'already-tavern', 'meaningless', 'unavailable',
+  'init-first', 'go-setup', 'go-chat', 'go-group', 'new-session', 'already-tavern', 'meaningless', 'unavailable',
 ]
 const subs = [{ zh: '启动', en: 'init' }, { zh: '角色', en: 'card' }]
 
@@ -90,7 +90,7 @@ describe('回执文字', () => {
     const text = dispatchReceipt(t, 'unavailable', { label: '/aha 朗读' }).text
     expect(text).toContain('/aha 朗读：')
     expect(text).not.toContain('尚未提供')
-    expect(text).toContain('酒馆:单聊')
+    expect(dispatchReceipt(t, 'go-group', { label: '/aha 旁白' }).text).toContain('酒馆:群聊')
     expect(dispatchReceipt(t, 'meaningless', { label: '/aha 记忆' }).text).toContain('/aha 记忆：')
     expect(pendingReceipt('/aha 开场').text).toBe('/aha 开场：尚未接上。')
   })

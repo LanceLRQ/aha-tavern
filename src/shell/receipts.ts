@@ -7,7 +7,7 @@ import { shownName, type AskItem } from './confirm'
 import type { DoctorFailKind, DrawDoctorReport, ReferenceWhy } from './draw-doctor'
 import type { VoiceDoctorReport, VoiceTrial } from './voice-doctor'
 
-export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊' }
+export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊', group: '酒馆:群聊' }
 
 /** 回执：宿主只有 success / error 两种，error 在界面上是红色的 Failed，只给真正的错误用。 */
 export type Reply = { kind: 'success' | 'error'; text: string }
@@ -48,7 +48,9 @@ function dispatchText(theme: Theme, reason: DispatchReason, info: DispatchReceip
       }
       return `这件事归${theme.host().name}在「${MODE_LABEL.setup}」里办，请切换到那个模式再试。`
     case 'go-chat':
-      return `开场要在「${MODE_LABEL.chat}」里进行，请切换到那个模式再用 \`/aha 开场\`。`
+      return `开场要在「${MODE_LABEL.chat}」或「${MODE_LABEL.group}」里进行，请切换到那个模式再用 \`/aha 开场\`。`
+    case 'go-group':
+      return `${label}是「${MODE_LABEL.group}」里的命令，请切换到那个模式再试。`
     case 'new-session':
       return `这场聊天正在进行。要和别的${theme.concept('character')}聊，请新开一个会话再用 \`/aha 开场\`。`
     case 'already-tavern':
@@ -56,7 +58,7 @@ function dispatchText(theme: Theme, reason: DispatchReason, info: DispatchReceip
     case 'meaningless':
       return `${label}：在现在的状态下用不上。`
     case 'unavailable':
-      return `${label}：要在「${MODE_LABEL.chat}」里开场聊天之后才能用。`
+      return `${label}：开场之后才能用。`
   }
 }
 

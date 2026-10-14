@@ -29,6 +29,10 @@ export interface ChatMeta {
   title: string
   /** 自动朗读开关；缺省与非布尔值都按关闭处理 */
   autoRead?: boolean
+  /** 群聊：这一场的情景（含"我"在这一场的身份） */
+  scenario?: string
+  /** 群聊：当前在场的角色编号；换场增减时更新。缺省视为与 participants 相同 */
+  present?: string[]
 }
 
 export interface ChatRecord {
@@ -54,6 +58,10 @@ export interface CreateChatInput {
   participants: string[]
   sessionId: string
   now: Date
+  /** 群聊：这一场的情景，写进 meta */
+  scenario?: string
+  /** 群聊：初始在场名单；缺省等于 participants */
+  present?: string[]
 }
 
 const pad = (n: number, w = 2) => String(n).padStart(w, '0')
@@ -98,6 +106,8 @@ export async function createChat(tavernDir: string, input: CreateChatInput): Pro
     session: input.sessionId,
     started: input.now.toISOString(),
     title: '',
+    ...(input.scenario !== undefined ? { scenario: input.scenario } : {}),
+    ...(input.present !== undefined ? { present: input.present } : {}),
   }
   await atomicWrite(path.join(dir, CHAT_META_FILE), YAML.stringify(meta))
   return { id, dirName, dir }
@@ -119,7 +129,9 @@ function parseMeta(text: string, chatId: string): ChatMeta {
     m.participants.every((x) => typeof x === 'string') &&
     typeof m.session === 'string' &&
     typeof m.started === 'string' &&
-    typeof m.title === 'string'
+    typeof m.title === 'string' &&
+    (m.scenario === undefined || typeof m.scenario === 'string') &&
+    (m.present === undefined || (Array.isArray(m.present) && m.present.every((x) => typeof x === 'string')))
   if (!ok) throw new AhaError('chat-invalid', `聊天元数据格式不对：${chatId}`)
   return m as ChatMeta
 }

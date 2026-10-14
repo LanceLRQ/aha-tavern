@@ -28,12 +28,12 @@ describe('设置页的包清单约定', () => {
     // 根层行的 id 与宿主自己的行同在一张表里：撞名会让宿主的服务消失（实测 settings 撞过）
     for (const r of rows) expect(r.id, `根层行 id ${r.id}`).toMatch(/^(aha-tavern|preset-tavern-)/)
     expect(rows.map((r) => r.id)).not.toContain('settings')
-    expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining(['preset-tavern-setup', 'preset-tavern-chat']))
+    expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining(['preset-tavern-setup', 'preset-tavern-chat', 'preset-tavern-group']))
     const presets = rows.filter((r) => r.id.startsWith('preset-'))
-    expect(presets.map((p) => p.config.id).sort()).toEqual(['tavern-chat', 'tavern-setup'])
-    // 酒馆模式里嵌套的插件仍是原来的 aha-tavern，mode 分别为 setup / chat
+    expect(presets.map((p) => p.config.id).sort()).toEqual(['tavern-chat', 'tavern-group', 'tavern-setup'])
+    // 酒馆模式里嵌套的插件仍是原来的 aha-tavern，mode 分别为 setup / chat / group
     const nested = presets.map((p) => p.config.plugins.find((x: any) => x.id === 'aha-tavern').config.mode).sort()
-    expect(nested).toEqual(['chat', 'setup'])
+    expect(nested).toEqual(['chat', 'group', 'setup'])
   })
 
   it('peerDependencies 声明了设置页要用的协议包', () => {

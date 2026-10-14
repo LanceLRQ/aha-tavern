@@ -39,6 +39,7 @@ export interface HostTools {
 const PRESET_TO_MODE: Record<string, TavernMode> = {
   'tavern-setup': 'setup',
   'tavern-chat': 'chat',
+  'tavern-group': 'group',
 }
 
 export function modeFromPreset(presetId: string | undefined): TavernMode | null {
@@ -77,7 +78,7 @@ export async function buildContext(
   const tavernHere = cwd !== undefined && (await isTavern(cwd))
   const tavern = tavernHere ? await openResolved(cwd, log) : null
   let record: SessionRecord | null = null
-  if (tavern && mode === 'chat') {
+  if (tavern && (mode === 'chat' || mode === 'group')) {
     record = (await readSession(sessionsFile(tavern.dir), agent.id)).record
   }
   const { state, reason } = resolveState({

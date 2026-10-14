@@ -6,7 +6,7 @@ import type { TavernMode } from '../config'
 import { AhaError } from './errors'
 import { modifyFile } from './fsx'
 
-export type SessionState = 'outside' | 'preparing' | 'picking' | 'chatting'
+export type SessionState = 'outside' | 'preparing' | 'picking' | 'chatting' | 'gathering' | 'performing'
 export type OutsideReason = 'no-workspace' | 'not-tavern'
 
 export interface SessionRecord {
@@ -31,13 +31,20 @@ export interface StateResult {
   reason?: OutsideReason
 }
 
-const VALID_STATES: readonly SessionState[] = ['outside', 'preparing', 'picking', 'chatting']
-const VALID_MODES: readonly TavernMode[] = ['setup', 'chat']
+const VALID_STATES: readonly SessionState[] = ['outside', 'preparing', 'picking', 'chatting', 'gathering', 'performing']
+const VALID_MODES: readonly TavernMode[] = ['setup', 'chat', 'group']
+/** 已进入聊天（单聊）或场景中（群聊）的记录不可逆，不能再改成别的状态、模式或聊天编号。 */
+const LOCKED_STATES: readonly SessionState[] = ['chatting', 'performing']
 
 export function resolveState(input: StateInput): StateResult {
   if (!input.workspaceExists) return { state: 'outside', reason: 'no-workspace' }
   if (!input.isTavern) return { state: 'outside', reason: 'not-tavern' }
   if (input.mode === 'setup') return { state: 'preparing' }
+  if (input.mode === 'group') {
+    const s = input.stored
+    if (s && s.mode === 'group' && s.state === 'performing') return { state: 'performing' }
+    return { state: 'gathering' }
+  }
   const s = input.stored
   if (s && s.mode === 'chat' && s.state === 'chatting') return { state: 'chatting' }
   return { state: 'picking' }
@@ -104,8 +111,8 @@ export interface SessionPatch {
 }
 
 /**
- * 写入（新建或更新）一条会话记录。不变式：已是 chatting 的记录
- * 不可改成别的状态、模式或换聊天编号。原文件损坏时先改名备份再写新文件。
+ * 写入（新建或更新）一条会话记录。不变式：已进入聊天（chatting）或场景中
+ * （performing）的记录不可改成别的状态、模式或换聊天编号。原文件损坏时先改名备份再写新文件。
  */
 export async function saveSession(
   file: string,
@@ -113,7 +120,7 @@ export async function saveSession(
   patch: SessionPatch,
   now: Date = new Date(),
 ): Promise<SessionRecord> {
-  if (patch.state === 'chatting' && !patch.chatId) {
+  if (LOCKED_STATES.includes(patch.state) && !patch.chatId) {
     throw new AhaError('session-invalid', '进入聊天状态必须带聊天编号')
   }
   let result!: SessionRecord
@@ -124,8 +131,8 @@ export async function saveSession(
     }
     const existing = toRecord(sessions[sessionId])
     if (
-      existing?.state === 'chatting' &&
-      (patch.state !== 'chatting' || patch.mode !== existing.mode || patch.chatId !== existing.chatId)
+      existing && LOCKED_STATES.includes(existing.state) &&
+      (patch.state !== existing.state || patch.mode !== existing.mode || patch.chatId !== existing.chatId)
     ) {
       throw new AhaError('session-locked', `会话 ${sessionId} 已在聊天中，状态不可更改`)
     }
