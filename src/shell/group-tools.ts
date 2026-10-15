@@ -48,6 +48,8 @@ export interface GroupToolDeps {
   recall(agent: HostAgent | undefined, args: unknown): Promise<string>
   /** 整理（群聊）：当前场景梗概 + 在场角色前几栏。 */
   review(agent: HostAgent | undefined, args: unknown): Promise<string>
+  /** 画图（群聊）：场景图或单人特写，返回图片路径与复述说明，或固定的失败短语。 */
+  draw(agent: HostAgent | undefined, args: unknown, signal?: AbortSignal): Promise<string>
 }
 
 interface ToolHost {
@@ -108,6 +110,30 @@ export function registerGroupTools(ctx: Context, deps: GroupToolDeps): void {
     },
     output: { schema: { type: 'string' }, render: text },
     execute: (args, exec) => deps.wrap(agentOf(exec), args),
+  }))
+
+  host.tools.register(defineTool({
+    name: 'aha_draw',
+    description: '把这一场的画面画成图，两种画法。场景图：不给 who，scene 只写环境与氛围（地点、时间、光线、陈设），'
+      + '不写任何 character 的长相，画面里的人长相不保证。单人特写：给 who 填一个在场 character 的名字，只画 TA 一个人，'
+      + '长相由参考图保持一致；scene 写 TA 此刻的动作神态与环境，不写 TA 固定的长相，不写对话内容；换了形象时在 look 里写形象名。'
+      + '这一轮要画图时先调用本工具，再写这一轮完整的回复；每一轮最多成功一次，出图要等几十秒。'
+      + '不画多人同框且每个人都长相一致的图：user 想要几个人同框时改用场景图（人影可以模糊入画），或分别画单人特写。'
+      + 'orientation 缺省 portrait，横构图 landscape，方形 square。look 只在单人特写时用，且只有画图规范里列出了形象名时才填。'
+      + 'redo 为 true 时重画上一张：不给 scene 就沿用上一张的画面与方向，上一张是单人特写就照旧特写那个角色（who 不用再给）；'
+      + 'user 想改动画面时把上一张的画面按要求改写成一段新的完整描述放进 scene：是改写，不是在后面追加，与修改要求冲突的旧内容要删掉。'
+      + '成功返回 drawn 和一行 Markdown 图片：照常写完这一轮的回复，在整份回复的最后一段之后单独一行原样输出那一行，一个字符都不要改，不解释，不提工具。'
+      + '返回 unavailable、already drew this turn、nothing to redo、error: no character named ...（who 不在场）或 failed: <原因> 表示没画成，'
+      + '照常写这一轮的回复，不要重试，不要向 user 提起。',
+    parameters: {
+      scene: { type: 'string', description: '这一刻的画面，最多 600 字；redo 为 true 且沿用上一张画面时可缺，改动画面时给改写后的完整描述' },
+      orientation: { type: 'string', enum: ['portrait', 'landscape', 'square'], description: '构图方向，缺省 portrait；redo 时缺省沿用上一张的方向' },
+      who: { type: 'string', description: '单人特写画哪个在场 character（名字或名字的一部分）；不给表示画场景图' },
+      look: { type: 'string', description: '可缺。单人特写用哪一套形象；只有画图规范里列出了该角色的形象名时才填' },
+      redo: { type: 'boolean', description: '重新生成上一张：不给 scene 时沿用上一张的画面、方向与形态，换种子' },
+    },
+    output: { schema: { type: 'string' }, render: text },
+    execute: (args, exec) => deps.draw(agentOf(exec), args, signalOf(exec)),
   }))
 
   registerGroupMemoryTools(host, deps, text, agentOf)

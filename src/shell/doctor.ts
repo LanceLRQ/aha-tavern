@@ -55,9 +55,9 @@ const check = (inv: Invocation, trial: boolean): Promise<DrawDoctorReport> =>
 /** 正文放在 detail：界面只对 detail 做 Markdown 排版，question 是原样显示的一行。 */
 const card = (question: string, detail: string, options: AskItem['options']): AskItem => ({ id: QUESTION_ID, header: HEADER, question, detail, options })
 
-/** 检查后刷新这个会话的画图能力（只在单聊）；返回结论，没有或不在聊天中为 null。 */
+/** 检查后刷新这个会话的画图能力（单聊与群聊，各自的实例各自赋值）；返回结论，没有或不在聊天中为 null。 */
 async function refreshSession(inv: Invocation): Promise<{ available: boolean; reason: string } | null> {
-  if (inv.context.mode !== 'chat' || !inv.rt.drawing) return null
+  if ((inv.context.mode !== 'chat' && inv.context.mode !== 'group') || !inv.rt.drawing) return null
   try {
     const av = await inv.rt.drawing.refresh(inv.agent, { notify: true })
     return av.reason === 'not-chatting' ? null : { available: av.available, reason: av.reason }
@@ -278,7 +278,9 @@ export const doctorHandler: CommandHandler = async (inv) => {
     const session = await refreshSession(inv)
     if (report.cancelled || inv.signal?.aborted) return cancelledReply()
     const brief = drawDoctorBrief(report)
-    const note = session ? drawSessionNote(drawDoctorIssues(report).length === 0 && report.configured, session.available, session.reason) : null
+    const note = session
+      ? drawSessionNote(drawDoctorIssues(report).length === 0 && report.configured, session.available, session.reason, inv.context.mode === 'group' ? 'group' : 'chat')
+      : null
     return {
       kind: 'success',
       text: doctorLine(theme, {

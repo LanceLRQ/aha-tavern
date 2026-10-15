@@ -294,8 +294,10 @@ export const SCENE_MAX = 600
 export const LOOK_MAX = 40
 /** `重新生图` 命令的修改词上限（字符） */
 export const REROLL_CHANGE_MAX = 200
-const POLL_MS = 1000
-const ORIENTATIONS: readonly ImageOrientation[] = ['portrait', 'landscape', 'square']
+/** 轮询出图结果的间隔（毫秒）；群聊的生图也用同一个值。 */
+export const POLL_MS = 1000
+/** 记录里合法的方向；群聊的 redo 沿用方向时也按它过滤。 */
+export const ORIENTATIONS: readonly ImageOrientation[] = ['portrait', 'landscape', 'square']
 
 export interface DrawArgs {
   scene?: string
@@ -479,8 +481,10 @@ async function readCharacterInfo(target: ChatTarget): Promise<{ appearance: stri
 export const DRAW_HINT = '照常写这一轮的回复，不要重试，不要向 user 提起。'
 export type DrawFailKind = 'unreachable' | 'missing-node' | 'missing-model' | 'timeout' | 'cancelled' | 'other'
 
-const failText = (kind: DrawFailKind): string => `failed: ${kind}\n${DRAW_HINT}`
-const UNAVAILABLE = `unavailable\n${DRAW_HINT}`
+/** 失败时给模型的返回值（群聊的生图沿用同一套短语）。 */
+export const failText = (kind: DrawFailKind): string => `failed: ${kind}\n${DRAW_HINT}`
+/** 没有画图能力时给模型的返回值。 */
+export const UNAVAILABLE = `unavailable\n${DRAW_HINT}`
 
 /** 图片行里的路径：尖括号写法能容纳空格与括号；路径里的 < 和 > 换成百分号编码。 */
 export function imagePathText(absPath: string): string {
@@ -627,16 +631,18 @@ export function drawTool(env: DrawEnv): (agent: HostAgent | undefined, args: unk
 
 type SectionOps = Pick<SessionSections, 'refresh' | 'forget'>
 
-/** 做成 DrawAvailability 的 onChange：有能力时装上对应版本（auto 变了就换版本），没能力时撤掉。 */
+/** 做成 DrawAvailability 的 onChange：有能力时装上对应版本（auto 变了就换版本），没能力时撤掉。
+ *  source 缺省是单聊的画图规范；群聊传自己的版本（draw-group.md）。 */
 export function drawPromptSync(
   sections: SectionOps, warn: (message: string) => void,
   /** 会话当前角色的额外形象说明（looksPromptText 的结果）；缺省或出错按没有 */
   looksNote?: (agent: HostAgent) => Promise<string>,
+  source: string = drawPrompts,
 ): (agent: HostAgent, available: boolean, settings: ImageServiceSettings | null) => void {
   return (agent, available, settings) => {
     if (available && settings) {
       sections.refresh(agent, async () => ({
-        kind: 'text', text: drawPromptText(settings.auto) + (await looksNote?.(agent).catch(() => '') ?? ''),
+        kind: 'text', text: drawPromptText(settings.auto, source) + (await looksNote?.(agent).catch(() => '') ?? ''),
         note: settings.auto ? '自动' : '仅应要求',
       })).catch((e: unknown) => warn(`注册画图提示词段失败：${(e as Error).message}`))
     } else {

@@ -335,10 +335,13 @@ export function drawDoctorBrief(r: DrawDoctorReport): DrawDoctorBrief {
   return { status: '可用', notes, flagged: notes.length > 0 }
 }
 
-/** 检查后会话画图能力与小结不一致时的括注。 */
-export function drawSessionNote(briefOk: boolean, available: boolean, reason: string): string | null {
+/** 检查后会话画图能力与小结不一致时的括注；群聊里"还没开始"的说法用群聊的词。 */
+export function drawSessionNote(briefOk: boolean, available: boolean, reason: string, mode: 'chat' | 'group' = 'chat'): string | null {
   if (available === briefOk) return null
   if (available) return '这个会话可以画图'
+  if (reason === 'not-chatting') {
+    return mode === 'group' ? '这个会话不能画图：还没有开场' : '这个会话不能画图：还没有开始聊天'
+  }
   return reason === 'readonly' ? '这个会话只读，不能画图' : `这个会话不能画图：${unavailableWhy(reason)}`
 }
 

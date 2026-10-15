@@ -26,6 +26,8 @@ export interface ImageRecord {
   orientation: ImageOrientation
   /** 用了哪套定妆图："default"、形象编号，没带定妆图为 null；重新生图沿用它 */
   look: string | null
+  /** 群聊的单人特写：画的是哪个角色（编号）；场景图与单聊不带。重新生图沿用它 */
+  who?: string | null
 }
 
 /** look 缺省记 null，所以不带定妆图的调用方不用改。 */
@@ -160,6 +162,7 @@ export async function saveImage(
       redoOf: record.redoOf,
       orientation: record.orientation,
       look: record.look ?? null,
+      ...(typeof record.who === 'string' && record.who !== '' ? { who: record.who } : {}),
     }
     const prefix = (await endsWithoutNewline(logFile)) ? '\n' : ''
     await fs.appendFile(logFile, prefix + JSON.stringify(full) + '\n', 'utf8')

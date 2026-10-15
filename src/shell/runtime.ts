@@ -39,7 +39,7 @@ export interface Runtime {
   theme(): Promise<Theme>
   /** "执行"分支的处理函数表。在 handlers.ts 里往里登记。 */
   readonly handlers: Partial<Record<CommandId, CommandHandler>>
-  /** 单聊模式的画图能力判定；由 installChat 创建后赋值，自检用它刷新当前会话。 */
+  /** 聊天模式的画图能力判定；由 installChat / installGroup 各自创建后赋值，自检用它刷新当前会话。 */
   drawing?: DrawAvailability
   /** 语音服务的启停与状态操作；由 installVoice 赋值，命令与设置页共用。 */
   voice?: VoiceController

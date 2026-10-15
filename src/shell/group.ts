@@ -34,12 +34,18 @@ import { createGroupSpeaking } from './group-speak'
 import { narratorHandler } from './group-commands'
 import { sceneHandler, sceneTool, wrapHandler, wrapTool } from './group-scene'
 import { groupRememberHandler, groupRememberTool, groupRecallTool, groupReviewTool, onGroupMemoryStep, type GroupMemoryEnv } from './group-memory'
+import { groupDrawPromptSync, groupDrawTool, groupLooksNoteOf } from './group-draw'
+import { defaultDrawDeps, DrawAvailability, DrawEcho, rerollHandler } from './draw'
+import { RefUploader } from './ref-upload'
 import { RememberTurns } from './remember'
 import { ReviewReminder } from '../core/reminder'
 import { isReadonly } from './writable'
 
 const SECTION_NAME = 'aha:group'
 const SECTION_ORDER = 5000
+/** 画图规范段的登记名与次序，与单聊一致（两个模式不共存，各自的实例各自装配）。 */
+const DRAW_SECTION_NAME = 'aha-tavern-drawing'
+const DRAW_SECTION_ORDER = 5100
 /** 多选卡片一次最多列多少人；更多时请用命令带名字（宿主的实际上限未知，30 是保守取值）。 */
 export const CAST_CARD_MAX = 30
 /** 复述确认卡片：自由输入算修改情景，最多改这么多次，超过按取消处理。 */
@@ -764,12 +770,31 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   })
   // 对话逐段落盘：用户的话取自入步消息，回复按行首标记拆分（规格 §6、§10）。
   // resolve 在事件里才会被调，那时 services 已由下面的 inject 赋上。
-  // 每段回复拆分落盘后同步交给自动朗读（开着才念，规格 §13.1）。
+  // 每段回复拆分落盘后同步交给自动朗读（开着才念，规格 §13.1）与生图的复述核对
+  // （图片行混在最后一段里，拼回去核对，规格 §13.2）。
   const speaking = createGroupSpeaking(rt, () => services)
+  // 画图提示词段：有画图能力时装上群聊版（auto 决定版本），没有时撤掉
+  const drawSections = new SessionSections(rt.log, hostSectionRegister(DRAW_SECTION_NAME, DRAW_SECTION_ORDER), '群聊画图提示词段')
+  const drawing = new DrawAvailability({
+    log: rt.log,
+    ...defaultDrawDeps(() => rt.servicesPath()),
+    inspect: async (agent) => {
+      if (!services) return { chatting: false, readonly: false }
+      const cc = await buildContext(agent, services, rt.log)
+      return { chatting: cc.state === 'performing', readonly: isReadonly(cc.tavern) }
+    },
+    onChange: groupDrawPromptSync(drawSections, (m) => rt.log.warn(m), groupLooksNoteOf({ rt, getServices: () => services })),
+  })
+  rt.drawing = drawing
+  const drawTurns = new RememberTurns()
+  const drawEcho = new DrawEcho(rt.log)
   const recorder = new GroupTranscriptRecorder({
     resolve: (agent) => (services ? resolveGroupTarget(agent, services, rt) : Promise.resolve(null)),
     log: rt.log,
-    onReply: (agent, lines) => speaking.auto.onReply(agent.id, lines),
+    onReply: (agent, lines) => {
+      drawEcho.onReply(agent.id, lines.map((l) => l.text).join('\n'))
+      speaking.auto.onReply(agent.id, lines)
+    },
   })
   const env: GroupEnv = {
     rt, sections, gate: new SessionGate(), getAsk: () => ask, getServices: () => services, now: () => new Date(),
@@ -779,6 +804,10 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   const rebuild = async (agent: HostAgent): Promise<void> => {
     if (!services) return
     await sections.refresh(agent, groupPlan(env, agent, services, await rt.theme()))
+    // 在场名单变了：画图段的形象清单与 who 的可用名单跟着换（可用时 onChange 会重装该段）
+    await drawing.refresh(agent, { notify: true }).catch((e: unknown) => {
+      rt.log.warn(`换场：刷新画图提示词段失败：${(e as Error).message}`)
+    })
   }
   const memoryEnv: GroupMemoryEnv = {
     rt, getServices: () => services,
@@ -789,12 +818,16 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   registerGroupTools(ctx, {
     start: groupStartTool(env), scene: sceneTool(env, { rebuild }), wrap: wrapTool(env),
     remember: groupRememberTool(memoryEnv), recall: groupRecallTool(memoryEnv), review: groupReviewTool(memoryEnv),
+    draw: groupDrawTool({
+      rt, getServices: () => services, drawing, turns: drawTurns, echo: drawEcho, refUploader: new RefUploader(),
+    }),
   })
   rt.handlers.start = groupStartHandler(env)
   rt.handlers.narrator = narratorHandler({ recorder })
   rt.handlers.scene = sceneHandler()
   rt.handlers.wrap = wrapHandler()
   rt.handlers.remember = groupRememberHandler(memoryEnv)
+  rt.handlers.reroll = rerollHandler({ drawing })
   rt.handlers.speak = speaking.handler
   // 卸载时停下正在念的（用 ctx.effect，实测 ctx.on('dispose') 不触发）
   const effect = (ctx as unknown as { effect(fn: () => () => unknown): unknown }).effect
@@ -810,11 +843,15 @@ export function installGroup(ctx: Context, rt: Runtime): void {
     }
     // 新建与恢复会话时就注册（恢复的场景中会话在这里还原五段）；pre-step 兜底，且必须 return next()
     c.on('agent/created', (payload: { agent: HostAgent }) => {
+      drawing.conceal(payload.agent)
       void ensure(payload.agent, 'created')
     })
     c.on('agent/pre-step', async (payload: { agent: HostAgent; messages?: readonly unknown[]; turn?: unknown }, next: () => Promise<unknown>) => {
       await ensure(payload.agent, 'pre-step')
+      await drawing.ensure(payload.agent)
       const newUsers = recorder.onStep(payload.agent, (payload.messages ?? []) as never)
+      drawTurns.onStep(payload.agent.id, payload.turn, newUsers)
+      drawEcho.onStep(payload.agent.id, payload.turn, newUsers)
       void onGroupMemoryStep(memoryEnv, payload.agent, payload.turn, newUsers)
       speaking.auto.onStep(payload.agent.id, payload.turn, newUsers)
       return next()
@@ -822,12 +859,20 @@ export function installGroup(ctx: Context, rt: Runtime): void {
     c.on('agent/assistant-stream', (payload: { agent: HostAgent; frame: unknown }) => {
       recorder.onFrame(payload.agent, payload.frame as never)
     })
-    // 一轮正常结束时自动朗读（被停止的轮次不经过这里；残留的段在 pre-step 清掉）
+    // 一轮正常结束时：先核对图片行（缺了就 steer 请模型补一次），再自动朗读（被停止的轮次不经过这里）
     c.on('agent/turn-stopping', (payload: { agent: HostAgent; turn?: unknown }) => {
+      drawEcho.onTurnStopping(payload.agent.id, payload.turn, (notice) => {
+        if (typeof payload.agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
+        payload.agent.steer(makeNotice(notice, '补上图片'))
+      })
       void speaking.auto.onTurnStopping(payload.agent, payload.turn)
     })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)
+      drawing.forget(payload.agent.id)
+      drawSections.forget(payload.agent.id)
+      drawTurns.forget(payload.agent.id)
+      drawEcho.forget(payload.agent.id)
       clearGroupWarned(env, payload.agent.id)
       recorder.forget(payload.agent.id)
       speaking.auto.forget(payload.agent.id)
