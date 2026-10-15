@@ -46,8 +46,12 @@ export interface SpeechPlan {
 
 const len = (s: string): number => [...s].length
 
-// 图片行：![说明](路径) 或 ![说明](<含空格的路径>)
-const IMAGE_RE = /!\[[^\]]*\]\((?:<[^>]*>|[^)\n]*)\)/g
+// 图片行：![说明](路径) 或 ![说明](<含空格的路径>)。路径没有尖括号时允许一层嵌套括号
+//（文件名里的 file(1).png），嵌套更深或未闭合的不匹配（未闭合走下面的 UNCLOSED_IMAGE_RE）。
+const PAREN_PATH = '(?:<[^>]*>|(?:[^()\\n]|\\([^()\\n]*\\))*)'
+const IMAGE_RE = new RegExp(`!\\[[^\\]]*\\]\\(${PAREN_PATH}\\)`, 'g')
+// 未闭合的图片（漏了右括号）：从 ![ 到行尾中间没有右括号，删掉它、留下行里的其他文字
+const UNCLOSED_IMAGE_RE = /!\[[^\]\n]*\]\([^\n)*]*$/gm
 const OPENERS = '（(【'
 const CLOSERS = '）)】'
 
@@ -102,14 +106,20 @@ function stripBlockMarks(line: string): string {
     .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '')
 }
 
-/** 行内的 Markdown 标记：链接只留文字，去掉强调与反引号。 */
+/** 数字之间的星号是乘号（2*3、3.5*2），删 Markdown 星号前先换成占位符保住。 */
+const MUL_STAR = '\u0001'
+const protectMulStars = (line: string): string => line.replace(/(?<=\d)\*+(?=\d)/g, MUL_STAR)
+
+/** 行内的 Markdown 标记：链接只留文字，去掉强调与反引号；乘号星号保留。 */
 function stripInlineMarks(line: string): string {
-  return line
-    .replace(/\[([^\]]*)\]\((?:<[^>]*>|[^)]*)\)/g, '$1')
+  const kept = protectMulStars(line)
+  const stripped = kept
+    .replace(new RegExp(`\\[([^\\]]*)\\]\\(${PAREN_PATH}\\)`, 'g'), '$1')
     .replace(/`+/g, '')
     .replace(/\*+/g, '')
     .replace(/__(.+?)__/g, '$1')
     .replace(/~~(.+?)~~/g, '$1')
+  return stripped.replace(/\u0001/g, '*')
 }
 
 /**
@@ -122,11 +132,12 @@ export function speakableText(reply: string, mode: SpeechReadMode): string {
 
 /** 取字；被删掉的动作与括号内容原处换成 mark（mark 为空就是直接删）。 */
 function extractText(reply: string, mode: SpeechReadMode, mark: (removed: string) => string): string {
-  let text = reply.replace(IMAGE_RE, '')
+  let text = reply.replace(IMAGE_RE, '').replace(UNCLOSED_IMAGE_RE, '')
   text = text.split(/\r?\n/).map(stripBlockMarks).join('\n')
   if (mode === 'lines') {
-    // 单星号包起来的是动作；双星号是强调，留给后面只去符号
-    text = text.replace(/(?<!\*)\*(?![\s*])[^*\n]*?(?<![\s*])\*(?!\*)/g, (m) => mark(m))
+    // 单星号包起来的是动作；双星号是强调，留给后面只去符号。
+    // 星号两侧紧邻数字、小数点或另一个星号时不算（2*3 是乘号，**是强调）。
+    text = text.replace(/(?<![\d.*])\*(?![\s*])[^*\n]*?(?<![\s*])\*(?![\d.*])/g, (m) => mark(m))
     text = removeBracketed(text, mark)
   }
   return text

@@ -380,7 +380,7 @@ export async function inspect(
 }
 
 const NETWORK_HINT =
-  /timed out|connection refused|connection reset|dns|failed to fetch|network is unreachable|tls|certificate/i
+  /timed out|connection refused|connection reset|dns|failed to fetch|network is unreachable|tls|certificate|could not resolve|getaddrinfo|resolve host/i
 
 interface StepResult {
   code: number | null

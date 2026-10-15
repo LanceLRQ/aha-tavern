@@ -445,6 +445,12 @@ describe('loadVoiceService：已配置', () => {
     }
     expect(problems).toHaveLength(6)
     expect(problems.join('')).not.toContain('secret-mirror')
+  })
+
+  it('hfEndpoint 光有协议没有主机（http:///）过不了正则之后的 URL 复核', async () => {
+    const { settings, problems } = voiceOk(await loadVoice('voice:\n  endpoint: http://h\n  hfEndpoint: http:///\n'))
+    expect(settings.hfEndpoint).toBeUndefined()
+    expect(problems.some((p) => p.includes('voice.hfEndpoint'))).toBe(true)
     expect(problems.join('')).not.toContain('relative/dir')
   })
 

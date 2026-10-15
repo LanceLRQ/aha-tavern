@@ -86,6 +86,12 @@ describe('readVoice', () => {
     await fs.writeFile(path.join(dir, VOICE_TEXT_FILE), ' \n\t ')
     expect(await readVoice(dir)).toEqual({ ok: false, missing: 'text' })
   })
+
+  it('角色目录本身是个文件（路径各段撞上文件）：当作没有音色，不抛错', async () => {
+    const notDir = path.join(root, 'not-a-dir')
+    await fs.writeFile(notDir, 'x')
+    expect(await readVoice(notDir)).toEqual({ ok: false, missing: 'both' })
+  })
 })
 
 describe('wavInfo', () => {
@@ -114,6 +120,18 @@ describe('wavInfo', () => {
     expect(wavInfo(full.subarray(0, 30))).toBeNull() // 有 fmt，没有 data 块
     expect(wavInfo(Buffer.from('ID3 this is an mp3 file, not a wave one'))).toBeNull()
     expect(wavInfo(Buffer.alloc(0))).toBeNull()
+  })
+
+  it('压缩格式的 fmt（audioFormat 不是 PCM/EXTENSIBLE）与 byteRate 不自洽的坏头：返回 null', () => {
+    const compressed = makeWav(4)
+    compressed.writeUInt16LE(0x0011, 20) // IMA ADPCM（fmt 体的 audioFormat，在整 wav 的偏移 20）
+    expect(wavInfo(compressed)).toBeNull()
+    const extensible = makeWav(4)
+    extensible.writeUInt16LE(0xfffe, 20) // WAVE_FORMAT_EXTENSIBLE 仍按基本字段算
+    expect(wavInfo(extensible)?.seconds).toBe(4)
+    const lying = makeWav(4)
+    lying.writeUInt32LE(999999, 28) // byteRate 与采样率、声道、位深对不上
+    expect(wavInfo(lying)).toBeNull()
   })
 })
 

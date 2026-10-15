@@ -14,6 +14,14 @@ describe('speakableText 图片行', () => {
     expect(speakableText('![画面](<a b/c.png>)', 'lines')).toBe('')
     expect(planSpeech('![画面](<a b/c.png>)', { mode: 'all' })).toEqual({ sentences: [], gaps: [], skipped: [], truncated: false })
   })
+  it('路径里带一层括号也认得出（file(1).png 这类文件名）', () => {
+    expect(speakableText('![画面](file(1).png)\n你好', 'lines')).toBe('你好')
+    expect(speakableText('看这![画面](a (b).png)张图', 'all')).toBe('看这张图')
+  })
+  it('漏了右括号的图片不再被念出来，行里其他文字保留', () => {
+    expect(speakableText('看这张\n![画面](~/a b/图.png', 'all')).toBe('看这张')
+    expect(planSpeech('![画面](/a/b.png', { mode: 'lines' }).sentences).toEqual([])
+  })
 })
 
 describe('speakableText Markdown 标记', () => {
@@ -22,6 +30,14 @@ describe('speakableText Markdown 标记', () => {
   })
   it('去强调、反引号，链接只留文字', () => {
     expect(speakableText('这是**重点**和`代码`，见[链接文字](https://x.y/z)。', 'all')).toBe('这是重点和代码，见链接文字。')
+  })
+  it('链接路径里带一层括号也只留文字', () => {
+    expect(speakableText('见[链接文字](file(1).html)这行。', 'all')).toBe('见链接文字这行。')
+  })
+  it('数字之间的星号是乘号，不当强调也不当动作', () => {
+    expect(speakableText('一共 2*3 个。', 'lines')).toBe('一共 2*3 个。')
+    expect(speakableText('一共 2*3 个。', 'all')).toBe('一共 2*3 个。')
+    expect(speakableText('算 3.5*2 试试', 'all')).toBe('算 3.5*2 试试')
   })
   it('all 模式保留括号与单星号里的文字，只去符号', () => {
     expect(speakableText('（笑）你好*挥手*再见', 'all')).toBe('（笑）你好挥手再见')
@@ -44,6 +60,9 @@ describe('speakableText lines 模式', () => {
   })
   it('嵌套括号按最外层删', () => {
     expect(speakableText('甲（乙（丙）丁）戊', 'lines')).toBe('甲戊')
+  })
+  it('不同类括号交叉嵌套也按计数配对，最外层一起删', () => {
+    expect(speakableText('甲（乙【丙)丁】戊', 'lines')).toBe('甲戊')
   })
   it('删除后收拾多余空白与空行', () => {
     expect(speakableText('你好 （笑） 世界\n（沉默）\n\n再见', 'lines')).toBe('你好 世界\n再见')

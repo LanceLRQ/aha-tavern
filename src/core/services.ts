@@ -263,8 +263,17 @@ export async function loadVoiceService(
   let hfEndpoint: string | undefined
   if (voice.hfEndpoint !== undefined && voice.hfEndpoint !== null) {
     const h = typeof voice.hfEndpoint === 'string' ? voice.hfEndpoint.trim() : ''
-    if (/^https?:\/\/\S+$/.test(h)) hfEndpoint = h.replace(/\/+$/, '')
-    else problems.push('voice.hfEndpoint 必须是 http:// 或 https:// 开头的地址，已忽略')
+    // 光有协议没有主机（http:///）正则也能过，再用 URL 核一遍主机
+    let parsed: URL | null = null
+    try {
+      parsed = new URL(h)
+    } catch {
+      parsed = null
+    }
+    if (parsed?.protocol === 'http:' || parsed?.protocol === 'https:') {
+      if (parsed.hostname !== '') hfEndpoint = h.replace(/\/+$/, '')
+    }
+    if (hfEndpoint === undefined) problems.push('voice.hfEndpoint 必须是 http:// 或 https:// 开头的地址，已忽略')
   }
 
   let modelsDir = expandHome(opts.defaultModelsDir)

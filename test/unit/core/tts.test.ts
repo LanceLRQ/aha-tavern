@@ -226,14 +226,14 @@ describe('synthesize', () => {
 describe('unload', () => {
   it('DELETE 带 URL 编码的模型名，204 算成功', async () => {
     const { f, calls } = fakeFetch({ 'DELETE /v1/models': () => new Response(null, { status: 204 }) })
-    await createTtsClient({ endpoint: ENDPOINT, fetch: f }).unload('org/model name')
+    await createTtsClient({ endpoint: ENDPOINT, fetch: f }).unload('org/model name', { timeoutMs: 5000 })
     expect(calls[0]!.method).toBe('DELETE')
     expect(calls[0]!.url).toBe(`${ENDPOINT}/v1/models?model_name=org%2Fmodel%20name`)
   })
 
   it('非 2xx 归 bad-response 并带状态码', async () => {
     const { f } = fakeFetch({ 'DELETE /v1/models': () => new Response('no such model', { status: 404 }) })
-    const err = await errOf(createTtsClient({ endpoint: ENDPOINT, fetch: f }).unload('m'))
+    const err = await errOf(createTtsClient({ endpoint: ENDPOINT, fetch: f }).unload('m', { timeoutMs: 5000 }))
     expect(err.kind).toBe('bad-response')
     expect(err.status).toBe(404)
   })
@@ -242,7 +242,25 @@ describe('unload', () => {
     const f = (async () => {
       throw new TypeError('fetch failed')
     }) as unknown as typeof fetch
-    const err = await errOf(createTtsClient({ endpoint: ENDPOINT, fetch: f }).unload('m'))
+    const err = await errOf(createTtsClient({ endpoint: ENDPOINT, fetch: f }).unload('m', { timeoutMs: 5000 }))
     expect(err.kind satisfies TtsErrorKind).toBe('unreachable')
+  })
+
+  it('timeoutMs 为 Infinity/NaN/负数时不设超时，不当成立即超时', async () => {
+    // fetch 一直挂着不回：超时若被当成 1ms，这里会抛 timeout 而不是挂到手动放行
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const makeFetch = (): typeof fetch =>
+      (async () => {
+        await gate
+        return new Response('{"data":[]}', { status: 200 })
+      }) as unknown as typeof fetch
+    for (const bad of [Number.POSITIVE_INFINITY, Number.NaN, -1, 0]) {
+      const client = createTtsClient({ endpoint: ENDPOINT, fetch: makeFetch() })
+      const p = client.probe(bad)
+      await new Promise((r) => setTimeout(r, 20))
+      release()
+      await expect(p).resolves.toEqual([])
+    }
   })
 })

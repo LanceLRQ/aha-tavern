@@ -62,7 +62,8 @@ export interface TtsClient {
   /** 返回已加载的模型名；一个都没加载（空数组）也算探测成功。 */
   probe(timeoutMs: number): Promise<string[]>
   synthesize(input: SynthesizeInput, opts: SynthesizeOptions): Promise<SynthesizedAudio>
-  unload(model: string, opts?: { timeoutMs?: number; signal?: AbortSignal }): Promise<void>
+  /** 卸载必须带超时：服务端不回时调用方不能一直挂着。 */
+  unload(model: string, opts: { timeoutMs: number; signal?: AbortSignal }): Promise<void>
 }
 
 const MAX_TOKENS_CAP = 1200
@@ -117,13 +118,17 @@ export function createTtsClient(opts: TtsClientOptions): TtsClient {
     const onAbort = (): void => ctl.abort()
     if (o.signal?.aborted) throw new TtsError('cancelled')
     o.signal?.addEventListener('abort', onAbort, { once: true })
+    // 非有限数、非正数不设超时（Node 的 setTimeout 把 Infinity/NaN 当 1ms，会立即判超时）；超大值截到上限
+    const timeoutMs = typeof o.timeoutMs === 'number' && Number.isFinite(o.timeoutMs) && o.timeoutMs > 0
+      ? Math.min(2_147_483_647, o.timeoutMs)
+      : undefined
     const timer =
-      o.timeoutMs === undefined
+      timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
             timedOut = true
             ctl.abort()
-          }, Math.max(1, o.timeoutMs))
+          }, timeoutMs)
     try {
       const res = await doFetch(`${base}${path}`, {
         method,
@@ -196,7 +201,7 @@ export function createTtsClient(opts: TtsClientOptions): TtsClient {
     return { bytes, format: 'wav' }
   }
 
-  async function unload(model: string, o: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
+  async function unload(model: string, o: { timeoutMs: number; signal?: AbortSignal }): Promise<void> {
     const res = await call('DELETE', `/v1/models?model_name=${encodeURIComponent(model)}`, {
       timeoutMs: o.timeoutMs,
       signal: o.signal,

@@ -30,7 +30,8 @@ export async function readVoice(characterDir: string): Promise<VoiceRead> {
   const [audio, text] = await Promise.all([
     statFile(audioPath),
     fs.readFile(textPath, 'utf8').then((t) => t.trim(), (e: NodeJS.ErrnoException) => {
-      if (e.code === 'ENOENT' || e.code === 'EISDIR') return ''
+      // 角色目录本身是个文件时（ENOTDIR）、文字是目录（EISDIR）都当作没有音色，不抛给调用方
+      if (e.code === 'ENOENT' || e.code === 'ENOTDIR' || e.code === 'EISDIR') return ''
       throw e
     }),
   ])
@@ -63,11 +64,16 @@ export function wavInfo(bytes: Uint8Array): WavInfo | null {
     const body = pos + 8
     if (id === 'fmt ') {
       if (size < 16 || body + 16 > bytes.length) return null
-      fmt = {
-        channels: view.getUint16(body + 2, true),
-        sampleRate: view.getUint32(body + 4, true),
-        byteRate: view.getUint32(body + 8, true),
-      }
+      const audioFormat = view.getUint16(body, true)
+      // 只认 PCM 与 WAVE_FORMAT_EXTENSIBLE：压缩格式的时长不能按 data/byteRate 算
+      if (audioFormat !== 1 && audioFormat !== 0xfffe) return null
+      const channels = view.getUint16(body + 2, true)
+      const sampleRate = view.getUint32(body + 4, true)
+      const byteRate = view.getUint32(body + 8, true)
+      const bitsPerSample = view.getUint16(body + 14, true)
+      // byteRate 与采样率、声道、位深不自洽的是坏头，算出的时长不可信
+      if (channels === 0 || sampleRate === 0 || byteRate !== sampleRate * channels * (bitsPerSample / 8)) return null
+      fmt = { sampleRate, channels, byteRate }
     } else if (id === 'data') {
       if (!fmt || fmt.byteRate === 0) return null
       const remain = bytes.length - body
@@ -101,7 +107,7 @@ export interface RegisterVoiceOptions {
   /** 把非 wav 录音转成 wav；不传则非 wav 一律返回 needs-wav。 */
   convert?: VoiceConvert
   signal?: AbortSignal
-  /** 测试用：替换写入阶段使用的改名操作，用来模拟中途失败。 */
+  /** @internal 测试用：替换写入阶段使用的改名操作，用来模拟中途失败。 */
   rename?: RenameFn
 }
 
@@ -111,7 +117,7 @@ export interface SaveDesignedVoiceOptions {
   wav: Uint8Array
   /** 试听台词，即录音里说的话。 */
   text: string
-  /** 测试用：替换写入阶段使用的改名操作，用来模拟中途失败。 */
+  /** @internal 测试用：替换写入阶段使用的改名操作，用来模拟中途失败。 */
   rename?: RenameFn
 }
 
