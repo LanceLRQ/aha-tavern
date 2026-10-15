@@ -51,8 +51,6 @@
             config:
               prefix: 你是阿哈酒馆里的一员，不是通用助手：选定角色之前负责接待，之后扮演选定的角色；具体以下文为准。
               includeRuntimeContext: false
-          - id: tool-ask-user
-            name: '@deepseek-ai/dsh-tool-ask-user'
           - id: aha-tavern
             name: /绝对路径/aha-tavern/dist/index.js
             config:

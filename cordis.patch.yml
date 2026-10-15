@@ -4,6 +4,11 @@
 # cordis.patch.yml 里整条覆盖 preset-tavern-setup（内嵌条目不能单独覆盖），
 # plugins 里不写 mcp-websearch 那一条：见 examples/dev.example.yml 的说明。
 #
+# 提问卡片工具（tool-ask-user）只有筹备模式挂：主持人在建卡流程里用它让 user
+# 挑已有的东西（host-setup 规则 2、11）。单聊与群聊不挂——这两个模式里要 user
+# 选择的地方都由插件直接弹卡片（选角、开局、确认），模型看到的提问工具只会
+# 被滥用来抢插件的事（比如没配生图服务时自己弹选画风的卡）。
+#
 # 第一行是设置页：挂在根层的一行，包名即说明符（宿主只在这样的行上加载浏览器端），
 # mode: settings 的实例不注册命令与工具，只给"插件"页里的设置页提供数据与启停。
 # id 带插件前缀：根层行与宿主自己的行同在一张表里，撞名（如 settings）会让宿主的服务消失。
@@ -52,8 +57,6 @@
             config:
               prefix: 你是阿哈酒馆里的一员，不是通用助手：选定角色之前负责接待，之后扮演选定的角色；具体以下文为准。
               includeRuntimeContext: false
-          - id: tool-ask-user
-            name: '@deepseek-ai/dsh-tool-ask-user'
           - id: aha-tavern
             name: aha-tavern
             config:
@@ -71,8 +74,6 @@
             config:
               prefix: 你是阿哈酒馆的一员，不是通用助手：开场之前负责张罗这一场，定下谁在场、什么情景之后，由旁白与在场角色接管；具体以下文为准。
               includeRuntimeContext: false
-          - id: tool-ask-user
-            name: '@deepseek-ai/dsh-tool-ask-user'
           - id: aha-tavern
             name: aha-tavern
             config:

@@ -36,6 +36,14 @@ describe('设置页的包清单约定', () => {
     expect(nested).toEqual(['chat', 'group', 'setup'])
   })
 
+  it('提问卡片工具只有筹备模式挂：单聊与群聊里模型看到的提问工具只会被滥用来抢插件的事', () => {
+    const patch = YAML.parse(read('cordis.patch.yml')) as { insert: { id: string; config?: any }[] }[]
+    const presets = patch[0]!.insert.filter((r) => r.id.startsWith('preset-'))
+    const ask = (p: { config?: any }) => ((p.config?.plugins ?? []) as any[]).some((x) => x.id === 'tool-ask-user')
+    // 主持人建卡流程用它让 user 挑已有的东西（host-setup 规则 2、11）
+    expect(presets.filter((p) => ask(p)).map((p) => p.config.id)).toEqual(['tavern-setup'])
+  })
+
   it('peerDependencies 声明了设置页要用的协议包', () => {
     expect(pkg.peerDependencies['@deepseek-ai/dsh-typert-protocol']).toBeTruthy()
     // 协议包缺席时插件照常装配，只是没有设置页：标为可选
