@@ -169,9 +169,9 @@ function fakeClientCtx(remote: Record<string, unknown>) {
 }
 
 describe('打包产物与入口格式', () => {
-  it('三个产物都在，client.js 是 __ModuleLoader__.load({id, factory}) 的格式，id 是包名', async () => {
+  it('四个产物都在，client.js 是 __ModuleLoader__.load({id, factory}) 的格式，id 是包名', async () => {
     const files = (await fs.readdir(outdir)).sort()
-    expect(files).toEqual(['client.js', 'index.js', 'typert.host.js'])
+    expect(files).toEqual(['client.js', 'compaction.js', 'index.js', 'typert.host.js'])
     const code = await fs.readFile(path.join(outdir, 'client.js'), 'utf8')
     expect(code.startsWith('window.__ModuleLoader__.load({\n  id: "aha-tavern",\n  factory: (require) => {')).toBe(true)
     expect(code).toContain('return module.exports;')

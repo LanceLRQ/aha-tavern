@@ -44,6 +44,20 @@ describe('设置页的包清单约定', () => {
     expect(presets.filter((p) => ask(p)).map((p) => p.config.id)).toEqual(['tavern-setup'])
   })
 
+  it('每个酒馆模式都挂隔离的 compaction 组：扮演向压缩后端加手动 /compact，长聊天有压缩对策', () => {
+    const patch = YAML.parse(read('cordis.patch.yml')) as { insert: { id: string; config?: any }[] }[]
+    const presets = patch[0]!.insert.filter((r) => r.id.startsWith('preset-'))
+    expect(presets).toHaveLength(3)
+    for (const p of presets) {
+      const group = ((p.config?.plugins ?? []) as any[]).find((x) => x.id === 'compaction')
+      expect(group, `模式 ${p.config.id} 缺 compaction 组`).toMatchObject({ name: 'cordis:group', group: true, isolate: { compaction: true } })
+      expect(group.config.map((c: any) => c.id)).toEqual(['compaction-tavern', 'command-compact'])
+      expect(group.config[0].name).toBe(`${pkg.name}/compaction`)
+    }
+    // 压缩入口随包发布
+    expect(pkg.exports['./compaction']).toBe('./dist/compaction.js')
+  })
+
   it('peerDependencies 声明了设置页要用的协议包', () => {
     expect(pkg.peerDependencies['@deepseek-ai/dsh-typert-protocol']).toBeTruthy()
     // 协议包缺席时插件照常装配，只是没有设置页：标为可选

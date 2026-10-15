@@ -1,5 +1,6 @@
 // 打包：
 //   dist/index.js        插件本体（src/index.ts），提示词 .md 内联
+//   dist/compaction.js   长聊天的压缩后端（src/compaction.ts，包的 ./compaction 导出）
 //   dist/typert.host.js  设置页的远程调用描述（包的 ./typert 导出）
 //   dist/client.js       设置页的浏览器端，包成 window.__ModuleLoader__.load 的格式（包的 ./client 导出）
 // @deepseek-ai/* 保持 external：运行时由宿主提供，避免出现两套框架实例。
@@ -47,6 +48,22 @@ async function buildTypert(outdir, logLevel) {
   })
 }
 
+/** 压缩后端：独立小入口，挂在各酒馆模式的 compaction 隔离组里。 */
+async function buildCompaction(outdir, logLevel) {
+  await build({
+    absWorkingDir: ROOT,
+    entryPoints: { compaction: 'src/compaction.ts' },
+    outdir,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node20',
+    external: ['@deepseek-ai/*'],
+    legalComments: 'none',
+    logLevel,
+  })
+}
+
 /** 浏览器端：先打成 CJS，再套上宿主要求的 factory 外壳。react 等由宿主页面提供，保持 external。 */
 async function buildClient(outdir, logLevel) {
   const result = await build({
@@ -80,6 +97,7 @@ async function buildClient(outdir, logLevel) {
 
 export async function buildAll({ outdir = path.join(ROOT, 'dist'), logLevel = 'info' } = {}) {
   await buildPlugin(outdir, logLevel)
+  await buildCompaction(outdir, logLevel)
   await buildTypert(outdir, logLevel)
   await buildClient(outdir, logLevel)
 }
