@@ -309,9 +309,13 @@ export function wrapTool(env: GroupEnv): (agent: HostAgent | undefined, args: un
 
 const guide = (text: string): { kind: 'success'; text: string } => ({ kind: 'success', text })
 
-/** `/aha 换场 [新情景] [谁来谁走]`：转告旁白调用 aha_scene。 */
-export function sceneHandler(): CommandHandler {
+/**
+ * `/aha 换场 [新情景] [谁来谁走]`：转告旁白调用 aha_scene。
+ * user 亲自要换场时清掉"本场景拒绝过"的记录：那条只限制旁白主动提议（规格 §8.1）。
+ */
+export function sceneHandler(declinedScenes: Map<string, Set<number>>): CommandHandler {
   return async (inv) => {
+    if (inv.agent) declinedScenes.delete(inv.agent.id)
     const extra = inv.args.trim()
     inv.steer(buildSceneNotice(extra), '换场')
     return guide('已请旁白张罗换场，会先给你一张确认卡片。')

@@ -822,7 +822,7 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   })
   rt.handlers.start = groupStartHandler(env)
   rt.handlers.narrator = narratorHandler({ recorder })
-  rt.handlers.scene = sceneHandler()
+  rt.handlers.scene = sceneHandler(env.declinedScenes)
   rt.handlers.wrap = wrapHandler()
   rt.handlers.remember = groupRememberHandler(memoryEnv)
   rt.handlers.reroll = rerollHandler({ drawing })

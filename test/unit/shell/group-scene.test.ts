@@ -15,7 +15,7 @@ import { buildContext, sessionsFile, type HostAgent, type HostServices } from '.
 import type { Runtime } from '../../../src/shell/runtime'
 import { SessionSections } from '../../../src/shell/sections'
 import { GroupTranscriptRecorder, type GroupTarget } from '../../../src/shell/group-transcript'
-import { sceneTool, wrapTool, buildSceneQuestion, interpretSceneAnswer, parseSceneArgs, parseWrapArgs } from '../../../src/shell/group-scene'
+import { sceneHandler, sceneTool, wrapTool, buildSceneQuestion, interpretSceneAnswer, parseSceneArgs, parseWrapArgs } from '../../../src/shell/group-scene'
 import type { GroupEnv } from '../../../src/shell/group'
 import { voiceRuntimeStubs } from './helpers/runtime'
 
@@ -142,6 +142,18 @@ describe('sceneTool', () => {
     const again = await scene(agent, { summary: 's', title: 't' })
     expect(again).toContain('already declined')
     expect((await readRecords(dir, chatId)).records).toEqual([])
+  })
+
+  it('用户拒绝过之后又敲 /aha 换场：不再拦，照常弹卡片', async () => {
+    ask.mockResolvedValue({ answers: [{ selected: ['不换场'] }] })
+    await scene(agent, { summary: 's', title: 't' })
+    const steer = vi.fn()
+    await sceneHandler(env.declinedScenes)({ agent, args: '去后院', steer } as never)
+    expect(steer).toHaveBeenCalledTimes(1)
+    ask.mockClear()
+    ask.mockResolvedValue({ answers: [{ selected: ['不换场'] }] })
+    expect(await scene(agent, { summary: 's', title: 't' })).toContain('declined by user')
+    expect(ask).toHaveBeenCalledTimes(1)
   })
 
   it('人全走光与不在场的离开都拒绝', async () => {
