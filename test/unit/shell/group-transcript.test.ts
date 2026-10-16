@@ -137,3 +137,20 @@ describe('GroupTranscriptRecorder', () => {
     expect(await recordsOf()).toHaveLength(2)
   })
 })
+
+describe('onText', () => {
+  it('回复一提交就同步给出原文，不等落盘（轮次收尾的图片核对靠它）', async () => {
+    const seen: string[] = []
+    const replies: number[] = []
+    const r = new GroupTranscriptRecorder({
+      resolve: async () => target, log: { debug: vi.fn(), warn: vi.fn() },
+      onText: (_a, text) => seen.push(text),
+      onReply: (_a, lines) => replies.push(lines.length),
+    })
+    feedReply(r, '【旁白】夜深了。\n\n![画面](<a.png>)')
+    expect(seen).toEqual(['【旁白】夜深了。\n\n![画面](<a.png>)'])
+    expect(replies).toEqual([])
+    await r.drain('s1')
+    expect(replies).toEqual([2])
+  })
+})

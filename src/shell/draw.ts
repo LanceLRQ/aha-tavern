@@ -496,9 +496,9 @@ export function imageLine(absPath: string): string {
   return `![画面](<${imagePathText(absPath)}>)`
 }
 
-/** 成功时给角色的返回值：先写完整回复，最后单独一行原样输出图片行。note（如点名的形象找不到）放在图片行前面。 */
+/** 成功时给角色的返回值：回复的第一行原样输出图片行，再写完整回复（写完长回复再贴，本地模型常常漏掉）。note（如点名的形象找不到）放在图片行前面。 */
 export function drawnText(absPath: string, note = ''): string {
-  return `drawn. ${note ? `${note}\n` : ''}现在写这一轮的回复（照常扮演，不要提到工具或画图的过程），并在回复的最后单独一行原样输出下面这一行，一个字符都不要改：\n`
+  return `drawn. ${note ? `${note}\n` : ''}现在写这一轮的回复：第一行原样输出下面这一行，一个字符都不要改，然后另起一段照常扮演写完（不要提到工具或画图的过程）：\n`
     + imageLine(absPath)
 }
 
@@ -659,7 +659,7 @@ export function drawPromptSync(
  */
 export function rerollNotice(change: string, previousScene = ''): string {
   const head = '（通知）user 用命令要求重新生成上一张图。'
-  const tail = '工具返回后，照常写一句这一轮的回复，并在最后单独一行原样输出图片行。不要提到这条通知。'
+  const tail = '工具返回后，第一行原样输出图片行，再照常写一句这一轮的回复。不要提到这条通知。'
   if (change === '') return `${head}请调用 aha_draw，redo 设为 true，不给 scene。${tail}`
   // 两段素材来自不同来源（记录、用户输入），各自都要转义两种闭合标签，防止一段伪造另一段
   const safe = (text: string): string => escapeClosingTag(escapeClosingTag(text, 'previous_scene'), 'change')

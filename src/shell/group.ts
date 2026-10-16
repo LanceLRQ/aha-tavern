@@ -791,10 +791,8 @@ export function installGroup(ctx: Context, rt: Runtime): void {
   const recorder = new GroupTranscriptRecorder({
     resolve: (agent) => (services ? resolveGroupTarget(agent, services, rt) : Promise.resolve(null)),
     log: rt.log,
-    onReply: (agent, lines) => {
-      drawEcho.onReply(agent.id, lines.map((l) => l.text).join('\n'))
-      speaking.auto.onReply(agent.id, lines)
-    },
+    onText: (agent, text) => drawEcho.onReply(agent.id, text),
+    onReply: (agent, lines) => speaking.auto.onReply(agent.id, lines),
   })
   const env: GroupEnv = {
     rt, sections, gate: new SessionGate(), getAsk: () => ask, getServices: () => services, now: () => new Date(),
@@ -865,7 +863,8 @@ export function installGroup(ctx: Context, rt: Runtime): void {
         if (typeof payload.agent.steer !== 'function') throw new Error('宿主 agent 没有 steer')
         payload.agent.steer(makeNotice(notice, '补上图片'))
       })
-      void speaking.auto.onTurnStopping(payload.agent, payload.turn)
+      // 拆好的段要等这段回复落盘后才交给朗读：先等写入队列（本地写文件，很快）
+      void recorder.drain(payload.agent.id).then(() => speaking.auto.onTurnStopping(payload.agent, payload.turn))
     })
     c.on('agent/disposed', (payload: { agent: { id: string } }) => {
       sections.forget(payload.agent.id)

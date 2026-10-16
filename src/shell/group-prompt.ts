@@ -58,7 +58,7 @@ export function buildGroupPrompt(i: GroupPromptInput): string {
 
 /** 开场指令（二期规格 §4.4 第 5 步）：由旁白写第一个场景的开场。 */
 export function buildGroupStartCue(): string {
-  return '（通知）这一场开始了。请先以 narrator 的身份写出第一个场景的开场：以「【旁白】」开头的段落，'
+  return '（通知）这一场开始了。请以 narrator 的身份写出第一个场景的开场：以「【旁白】」开头的段落，'
     + '交代地点、时间与在场的人；然后让 character 们按各自的性子自然地开口（最多三人）。'
     + '不替 user 说话。不要提这条通知。'
 }

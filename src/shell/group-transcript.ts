@@ -27,8 +27,10 @@ export interface GroupRecorderDeps {
   resolve(agent: HostAgent): Promise<GroupTarget | null>
   log: Pick<Log, 'debug' | 'warn'>
   append?: GroupAppendFn
-  /** 一段回复拆分落盘后同步调用（不论是否成功）；语音与生图后续接在这里。 */
+  /** 一段回复拆分落盘后调用（不论是否成功），给自动朗读用；比轮次收尾晚，收尾时要先 drain。 */
   onReply?(agent: HostAgent, lines: readonly GroupLine[]): void
+  /** 一段回复一提交就同步调用，给出原文、不等落盘：轮次收尾的图片行核对靠它。 */
+  onText?(agent: HostAgent, text: string): void
 }
 
 interface SessionState {
@@ -78,6 +80,7 @@ export class GroupTranscriptRecorder {
       const s = this.state(agent.id)
       const text = s.collector.feed(frame)
       if (text === null) return
+      this.deps.onText?.(agent, text)
       const arrival = this.arrival(agent, s)
       s.tail = s.tail.then(async () => {
         const t = await arrival

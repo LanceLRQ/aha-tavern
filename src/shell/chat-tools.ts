@@ -102,12 +102,12 @@ export function registerChatTools(ctx: Context, deps: ChatToolDeps): void {
 
   host.tools.register(defineTool({
     name: 'aha_draw',
-    description: '把剧情里的一个画面画成图。这一轮要画图时，先调用本工具，再写这一轮完整的回复；不要先说话再调用。每一轮最多成功一次，出图要等几十秒。'
+    description: '把剧情里的一个画面画成图。这一轮要画图时，第一步就调用本工具，在它之前一个字都不要写（调用前写的字 user 看不到），工具返回后再写这一轮完整的回复。每一轮最多成功一次，出图要等几十秒。'
       + 'scene 只写这一刻的画面（谁、在做什么、在哪、光线与氛围），不写 character 的长相，不写对话内容；redo 为 true 时可以不给 scene。'
       + 'orientation 缺省 portrait，横构图用 landscape，方形用 square。'
       + 'user 要“换一张”“重画”时传 redo=true、不给 scene，沿用上一张的画面与方向。'
       + 'user 想改动画面（如“换成夜晚”“让她坐下”）时传 redo=true，并把上一张的画面按要求改写成一段新的完整描述放进 scene：是改写，不是在后面追加，与修改要求冲突的旧内容要删掉。'
-      + '成功返回 drawn 和一行 Markdown 图片：照常写完这一轮的回复，在回复最后单独一行原样输出那一行，一个字符都不要改，不解释，不提工具。'
+      + '成功返回 drawn 和一行 Markdown 图片：回复的第一行原样输出那一行，一个字符都不要改，再另起一段照常写完这一轮的回复，不解释，不提工具。'
       + '返回 unavailable、already drew this turn、nothing to redo 或 failed: <原因> 表示没画成，照常写这一轮的回复，不要重试，不要向 user 提起。',
     parameters: {
       scene: { type: 'string', description: '这一刻的画面，最多 600 字；redo 为 true 且沿用上一张画面时可缺，改动画面时给改写后的完整描述' },
