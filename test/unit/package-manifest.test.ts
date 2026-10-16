@@ -43,6 +43,16 @@ describe('设置页的包清单约定', () => {
     expect(nested).toEqual(['book', 'chat', 'group', 'setup'])
   })
 
+  it('本机调试模板的模式与 cordis.patch.yml 一致（只差插件写成 dist 下的绝对路径）', () => {
+    type Row = { id: string; name: string; config?: any }
+    const presetsOf = (f: string) => (YAML.parse(read(f)) as { insert: Row[] }[])[0]!.insert.filter((r) => r.id.startsWith('preset-'))
+    const local = (name: string) => name.endsWith('/dist/index.js') ? pkg.name : name.endsWith('/dist/compaction.js') ? `${pkg.name}/compaction` : name
+    const normalize = (v: any): any => Array.isArray(v) ? v.map(normalize)
+      : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'name' && typeof x === 'string' ? local(x) : normalize(x)]))
+        : v
+    expect(normalize(presetsOf('examples/dev.example.yml'))).toEqual(presetsOf('cordis.patch.yml'))
+  })
+
   it('提问卡片工具只有筹备模式挂：单聊与群聊里模型看到的提问工具只会被滥用来抢插件的事', () => {
     const patch = YAML.parse(read('cordis.patch.yml')) as { insert: { id: string; config?: any }[] }[]
     const presets = patch[0]!.insert.filter((r) => r.id.startsWith('preset-'))

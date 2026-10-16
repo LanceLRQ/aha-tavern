@@ -75,3 +75,57 @@
                 name: /绝对路径/aha-tavern/dist/compaction.js
               - id: command-compact
                 name: '@deepseek-ai/dsh-command-compact'
+    - id: preset-tavern-group
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-group
+        name: '酒馆:群聊'
+        description: 一群角色、有情景的群聊。
+        order: 7
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是阿哈酒馆的一员，不是通用助手：开场之前负责张罗这一场，定下谁在场、什么情景之后，由旁白与在场角色接管；具体以下文为准。
+              includeRuntimeContext: false
+          - id: aha-tavern
+            name: /绝对路径/aha-tavern/dist/index.js
+            config:
+              mode: group
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-tavern
+                name: /绝对路径/aha-tavern/dist/compaction.js
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+    - id: preset-tavern-book
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-book
+        name: '酒馆:写书'
+        description: 把聊过的内容整理成一本书。
+        order: 8
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是阿哈酒馆里帮客人把聊过的故事整理成书的编辑，不是通用助手；具体以下文为准。
+              includeRuntimeContext: false
+          - id: aha-tavern
+            name: /绝对路径/aha-tavern/dist/index.js
+            config:
+              mode: book
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-tavern
+                name: /绝对路径/aha-tavern/dist/compaction.js
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
