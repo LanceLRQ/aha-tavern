@@ -705,8 +705,18 @@ export const VOICE_DOCTOR_OPTION_HINTS = {
   close: '看完了',
 } as const
 
-export function voiceDoctorQuestion(passed: boolean): string {
-  return passed ? '语音服务检查结果：全部通过' : '语音服务检查结果：有未通过的项'
+/** 自检卡片的标题。warned：检查都过了，但配置里有写错而按默认处理的项（列在卡片里）。 */
+function doctorQuestion(service: string, passed: boolean, warned: boolean): string {
+  if (!passed) return `${service}检查结果：有未通过的项`
+  return warned ? `${service}检查结果：能用，配置里有要改的项` : `${service}检查结果：全部通过`
+}
+
+export function drawDoctorQuestion(passed: boolean, warned = false): string {
+  return doctorQuestion('生图服务', passed, warned)
+}
+
+export function voiceDoctorQuestion(passed: boolean, warned = false): string {
+  return doctorQuestion('语音服务', passed, warned)
 }
 
 /** 没通过的项的短说法，一项一条；按检查顺序。 */

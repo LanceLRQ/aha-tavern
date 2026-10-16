@@ -11,7 +11,7 @@ import { doctorHandler } from '../../../src/shell/doctor'
 import { checkDrawing, wantsTrial, type DrawDoctorDeps } from '../../../src/shell/draw-doctor'
 import {
   drawBriefText, drawDoctorBrief, drawDoctorCardReceipt, drawDoctorIssues, drawDoctorItems, drawDoctorMarkdown, drawDoctorOneLine,
-  unavailableWhy,
+  drawDoctorQuestion, unavailableWhy, voiceDoctorQuestion,
 } from '../../../src/shell/receipts'
 import { OPT_CLOSE, OPT_RECHECK, OPT_TRIAL, RECHECK_MAX } from '../../../src/shell/doctor'
 import { SessionGate } from '../../../src/shell/confirm'
@@ -363,6 +363,13 @@ describe('小结与报告', () => {
     const r2 = await checkDrawing(deps(), { trial: false, signal: ac2.signal })
     expect(r2.cancelled).toBe(true)
     expect(fake.objectInfo).not.toHaveBeenCalled()
+  })
+
+  it('卡片标题：检查都过了但配置里有要改的项时不说全部通过', () => {
+    expect(drawDoctorQuestion(true)).toBe('生图服务检查结果：全部通过')
+    expect(drawDoctorQuestion(true, true)).toBe('生图服务检查结果：能用，配置里有要改的项')
+    expect(drawDoctorQuestion(false, true)).toBe('生图服务检查结果：有未通过的项')
+    expect(voiceDoctorQuestion(true, true)).toBe('语音服务检查结果：能用，配置里有要改的项')
   })
 
   it('卡片回执', async () => {

@@ -19,7 +19,10 @@
     "workflows",
     "assets",
     "examples",
-    "!examples/dev.yml"
+    "!examples/dev.yml",
+    "docs/getting-started.md",
+    "docs/image-setup.md",
+    "docs/voice-setup.md"
   ],
   "dsh": {
     "bundle": {

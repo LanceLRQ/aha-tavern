@@ -15,6 +15,13 @@ describe('设置页的包清单约定', () => {
     expect(pkg.files).toContain('dist')
   })
 
+  it('files 只带面向使用者的三份文档（回执里会让用户去看），不带整个 docs', () => {
+    for (const f of ['docs/getting-started.md', 'docs/image-setup.md', 'docs/voice-setup.md']) {
+      expect(pkg.files).toContain(f)
+      expect(fs.existsSync(new URL(`../../${f}`, import.meta.url))).toBe(true)
+    }
+    expect(pkg.files).not.toContain('docs')
+  })
   it('files 含 assets，随包录音存在（预热与无角色试念要用）', () => {
     expect(pkg.files).toContain('assets')
     expect(fs.existsSync(new URL('../../assets/voice-ref.wav', import.meta.url))).toBe(true)

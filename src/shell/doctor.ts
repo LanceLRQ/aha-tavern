@@ -14,7 +14,7 @@ import { probeWebSearch, type CommandHandler, type Invocation } from './context'
 import { checkDrawing, doctorTarget, type DrawDoctorReport } from './draw-doctor'
 import {
   DOCTOR_CANCELLED_TEXT, DOCTOR_CARD_BUSY_TEXT, doctorLine, drawBriefText, drawDoctorBrief, drawDoctorCardReceipt,
-  drawDoctorIssues, drawDoctorMarkdown, drawDoctorOneLine, drawSessionNote, drawTrialMarkdown, VOICE_DOCTOR_CHECK_ERROR_TEXT,
+  drawDoctorIssues, drawDoctorMarkdown, drawDoctorOneLine, drawDoctorQuestion, drawSessionNote, drawTrialMarkdown, VOICE_DOCTOR_CHECK_ERROR_TEXT,
   VOICE_DOCTOR_HEADER, VOICE_DOCTOR_OPTION_HINTS, voiceBriefText, voiceDoctorBrief, voiceDoctorCardReceipt,
   voiceDoctorIssues, voiceDoctorMarkdown, voiceDoctorOneLine, voiceDoctorQuestion, voiceTrialMarkdown, type Reply,
 } from './receipts'
@@ -98,7 +98,7 @@ async function cardFlow(inv: Invocation, ask: AskFn): Promise<Reply> {
       const options = passed
         ? [{ label: OPT_TRIAL, description: '用当前配置真的生成一张，大约十几秒到一分钟' }, { label: OPT_CLOSE, description: '看完了' }]
         : [{ label: OPT_RECHECK, description: '改好配置或装好缺的东西后再查一遍' }, { label: OPT_CLOSE, description: '看完了' }]
-      const choice = await ask1(ask, inv, card(passed ? '生图服务检查结果：全部通过' : '生图服务检查结果：有未通过的项', drawDoctorMarkdown(report, inv.theme), options))
+      const choice = await ask1(ask, inv, card(drawDoctorQuestion(passed, report.problems.length > 0), drawDoctorMarkdown(report, inv.theme), options))
       if (choice === OPT_TRIAL && passed) {
         const tried = await check(inv, true)
         if (tried.trial && tried.trial.status !== 'skipped') {
@@ -204,7 +204,7 @@ async function voiceCardFlow(inv: Invocation, ask: AskFn): Promise<Reply> {
       note = undefined
       const choice = await ask1(ask, inv, {
         id: VOICE_QUESTION_ID, header: VOICE_DOCTOR_HEADER,
-        question: voiceDoctorQuestion(voiceDoctorIssues(report).length === 0), detail: voiceDoctorMarkdown(report, shownNote), options,
+        question: voiceDoctorQuestion(voiceDoctorIssues(report).length === 0, report.problems.length > 0), detail: voiceDoctorMarkdown(report, shownNote), options,
       })
       if (choice === OPT_TRIAL_SPEAK && mode === 'ready') {
         const result = await trialSpeak(deps, inv.signal)
