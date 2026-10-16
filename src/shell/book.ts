@@ -99,6 +99,7 @@ async function locateBook(agent: HostAgent | undefined, services: HostServices |
   const cc = await buildContext(agent, services, rt.log)
   if (cc.mode !== 'book') return 'error: not available in this mode'
   if (!cc.tavern) return 'error: this workspace is not a tavern'
+  if (isReadonly(cc.tavern)) return 'error: this tavern was saved by a newer version of the plugin; it is read only here'
   if (cc.state !== 'writing' || !cc.record?.bookId) return 'error: no book yet; ask the user to type /aha 写书'
   const bookDir = await findBookDir(cc.tavern.dir, cc.record.bookId)
   if (!bookDir) return 'error: the book directory is missing'
@@ -172,14 +173,12 @@ export function installBook(ctx: Context, rt: Runtime): void {
     const word = { written: '已写', stale: '原料变了，需重写', missing: '未写' } as const
     const rows = lines.map((l) => {
       const [key, label, status] = l.split(' ') as [string, string, keyof typeof word]
-      return `- ${label}：${key === cur ? '正在写' : word[status] ?? status}`
+      return `${label}${key === cur ? '正在写' : word[status] ?? status}`
     })
     return {
       kind: 'success',
-      text: [
-        rows.length ? rows.join('\n') : '还没有目录。',
-        fail ? `上次停在 ${fail.key}：${fail.message}` : '',
-      ].filter(Boolean).join('\n'),
+      // 回执不渲染换行：各节用分号连成一行
+      text: `${rows.length ? `${rows.join('；')}。` : '还没有目录。'}${fail ? `上次停在 ${fail.key}：${fail.message}` : ''}`,
     }
   }
   rt.handlers.pause = async (inv) => {
@@ -194,7 +193,7 @@ export function installBook(ctx: Context, rt: Runtime): void {
     if (r.startsWith('error: ')) return { kind: 'success', text: '还没有目录，先和编辑把目录定下来。' }
     const [head, ...rest] = r.split('\n')
     const tail = rest.map((l) => l.replace(/^not written: /, '还没写：').replace(/^stale \(exported as is\): /, '原料变了（照旧导出）：'))
-    return { kind: 'success', text: [`已导出到 \`${head!.replace(/^exported: /, '')}\`。`, ...tail].join('\n') }
+    return { kind: 'success', text: [`已导出到 \`${head!.replace(/^exported: /, '')}\`。`, ...tail.map((l) => `${l}。`)].join('') }
   }
 
   host.inject(['agentPresets'], (c) => {

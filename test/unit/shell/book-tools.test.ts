@@ -133,6 +133,15 @@ describe('aha_book_write', () => {
 })
 
 describe('状态与导出', () => {
+  it('话标题不带序号时导出补上「第几话」；节文件记下模型', async () => {
+    const e = env(async () => ({ kind: 'ok', text: '成稿。', model: 'local/m1' }))
+    await saveOutlineText(e, agent, at, OUTLINE.replace('title: 第一话', 'title: 灯笼'))
+    await writeText(e, agent, at, {})
+    await waitIdle(e)
+    expect((await readSection(at.bookDir, '01-01'))!.fm!.model).toBe('local/m1')
+    await exportText(at)
+    expect(await fs.readFile(path.join(at.bookDir, '生日.md'), 'utf8')).toContain('## 第一话　灯笼')
+  })
   it('statusLines 标出未写与已写；exportText 拼整本', async () => {
     const e = env()
     await saveOutlineText(e, agent, at, OUTLINE)

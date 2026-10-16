@@ -56,7 +56,8 @@ export function fillImages(text: string, images: ReadonlyArray<{ n: number; file
   return out.trim()
 }
 
-export type GenerateResult = { kind: 'ok'; text: string } | { kind: 'error'; message: string; retry: boolean }
+/** model 是写进节文件的「提供方/模型」 */
+export type GenerateResult = { kind: 'ok'; text: string; model?: string } | { kind: 'error'; message: string; retry: boolean }
 export type GenerateFn = (system: string, user: string, signal: AbortSignal) => Promise<GenerateResult>
 
 /** 取会话当前的提供方与模型（与压缩后端同一取法，不读显式配置）。 */
@@ -85,7 +86,7 @@ export function createGenerate(llm: LlmContextLike['llm'], target: { provider: s
     const text = assembler.blocks()
       .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
       .map((b) => b.text).join('').trim()
-    return text ? { kind: 'ok', text } : { kind: 'error', message: 'empty reply', retry: false }
+    return text ? { kind: 'ok', text, model: `${target.provider}/${target.model}` } : { kind: 'error', message: 'empty reply', retry: false }
   }
 }
 
@@ -98,7 +99,7 @@ export interface SectionTask {
   /** 写之前才组装请求（前文衔接要读上一节刚写好的稿子） */
   prepare(): Promise<Prepared>
   /** 写盘（回填插图、加 frontmatter）由调用方提供 */
-  save(text: string): Promise<void>
+  save(text: string, model: string): Promise<void>
 }
 
 export interface JobResult {
@@ -169,7 +170,7 @@ export class BookJobs {
           result.failure = { key: t.key, message: r.message }
           break
         }
-        await t.save(r.text)
+        await t.save(r.text, r.model ?? '')
         result.written.push(t.key)
         on.onSection(t.label, t.key)
       }

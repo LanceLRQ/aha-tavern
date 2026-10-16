@@ -230,9 +230,9 @@ function taskOf(
         }),
       }
     },
-    save: async (text) => {
+    save: async (text, model) => {
       await writeSection(at.bookDir, row.key, {
-        chat: chapter.chat, range: section.range, fingerprint, model: '', written: new Date().toISOString(),
+        chat: chapter.chat, range: section.range, fingerprint, model, written: new Date().toISOString(),
       }, fillImages(text, images, chatRel))
     },
   }
@@ -280,7 +280,8 @@ export async function exportText(at: BookAt): Promise<string> {
   const rows = await rowsOf(at, outline, meta)
   const fromDir = path.join(at.bookDir, DRAFT_DIR)
   const chapters = await Promise.all(outline.chapters.map(async (c, ci) => ({
-    title: c.title,
+    // 编辑起的话标题常常不带序号：导出时补上「第几话」
+    title: /^第.{1,4}话/.test(c.title) ? c.title : `第${sceneLabel(ci + 1)}话${c.title ? `　${c.title}` : ''}`,
     sections: await Promise.all(c.sections.map(async (s, si) => {
       const file = await readSection(at.bookDir, sectionKey(ci, si))
       return { title: s.title, body: file ? rebaseImages(file.body, fromDir, at.bookDir) : null }
