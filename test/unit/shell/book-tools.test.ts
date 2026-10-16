@@ -3,10 +3,11 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import YAML from 'yaml'
-import { createBook, readOutline, readSection, readBookMeta } from '../../../src/core/book'
+import { createBook, readOutline, readSection, readBookMeta, readNovelSection } from '../../../src/core/book'
 import { saveCharacter } from '../../../src/core/card'
 import {
-  chatsText, surveyText, saveOutlineText, writeText, exportText, statusLines, type BookEnv, type BookAt,
+  chatsText, surveyText, saveOutlineText, saveNovelOutlineText, novelSurveyText, writeText, exportText, statusLines,
+  writingLayer, type BookEnv, type BookAt,
 } from '../../../src/shell/book-tools'
 import { BookJobs, type GenerateFn } from '../../../src/shell/book-writer'
 import { fakeRuntime } from './helpers/runtime'
@@ -154,5 +155,92 @@ describe('状态与导出', () => {
     const md = await fs.readFile(path.join(at.bookDir, '生日.md'), 'utf8')
     expect(md).toContain('# 生日')
     expect(md).toContain('成稿。')
+  })
+})
+
+const NOVEL = `title: 生日（小说）
+style: 短段落
+chapters:
+  - title: 序
+    sections:
+      - brief: 引子
+        from: []
+  - title: 灯笼与蛋糕
+    sections:
+      - brief: 合写两节
+        from: [1-1, 1-2]
+`
+
+async function writeDraft(e: ReturnType<typeof env>) {
+  await saveOutlineText(e, agent, at, OUTLINE)
+  await writeText(e, agent, at, {})
+  await waitIdle(e)
+}
+
+describe('小说层', () => {
+  it('survey(novel) 列出整理稿各节', async () => {
+    const e = env()
+    await writeDraft(e)
+    const s = await novelSurveyText(at)
+    expect(s).toContain('01-01')
+    expect(s).toContain('written')
+    expect(s).toContain('成稿。')
+  })
+  it('整理稿没有目录时不能定小说目录', async () => {
+    expect(await saveNovelOutlineText(env(), agent, at, NOVEL)).toMatch(/^error: no draft outline/)
+  })
+  it('引用还没写的整理稿：拒绝保存', async () => {
+    const e = env()
+    await saveOutlineText(e, agent, at, OUTLINE)
+    expect(await saveNovelOutlineText(e, agent, at, NOVEL)).toMatch(/not written/)
+  })
+  it('保存小说目录、写小说稿、文风进 book.yaml、小说节记 from', async () => {
+    const seen: string[] = []
+    const e = env(async (s, u) => { seen.push(`${s}\n${u}`); return { kind: 'ok', text: '小说正文。', model: 'p/m' } })
+    await writeDraft(e)
+    expect(await saveNovelOutlineText(e, agent, at, NOVEL)).toMatch(/^novel outline saved/)
+    expect((await readBookMeta(at.bookDir)).style).toBe('短段落')
+    expect(await writeText(e, agent, at, { layer: 'novel' })).toMatch(/^started: 2 sections/)
+    await waitIdle(e)
+    const s = await readNovelSection(at.bookDir, '02-01')
+    expect(s!.fm).toMatchObject({ from: ['01-01', '01-02'], model: 'p/m' })
+    expect(s!.body).toBe('小说正文。')
+    const novelPrompt = seen.find((x) => x.includes('【整理稿 01-01】'))!
+    expect(novelPrompt).toContain('文风：短段落')
+    expect((await statusLines(at, 'novel')).join('\n')).not.toContain('missing')
+  })
+  it('整理稿重写后，引用它的小说节变为 stale', async () => {
+    let n = 0
+    const e = env(async () => ({ kind: 'ok', text: `第${++n}稿。` }))
+    await writeDraft(e)
+    await saveNovelOutlineText(e, agent, at, NOVEL)
+    await writeText(e, agent, at, { layer: 'novel' })
+    await waitIdle(e)
+    await writeText(e, agent, at, { section: '1-1', request: '改' })
+    await waitIdle(e)
+    expect((await statusLines(at, 'novel')).find((l) => l.startsWith('02-01'))).toContain('stale')
+  })
+  it('导出小说稿：文件名带（小说）', async () => {
+    const e = env()
+    await writeDraft(e)
+    await saveNovelOutlineText(e, agent, at, NOVEL)
+    await writeText(e, agent, at, { layer: 'novel' })
+    await waitIdle(e)
+    expect(await exportText(at, 'novel')).toMatch(/生日（小说）\.md/)
+    const md = await fs.readFile(path.join(at.bookDir, '生日（小说）.md'), 'utf8')
+    expect(md).toContain('# 生日（小说）')
+    expect(md).toContain('## 第一话　序')
+  })
+  it('写小说层期间 writingLayer 为 novel，结束后清掉', async () => {
+    const e = env()
+    await writeDraft(e)
+    await saveNovelOutlineText(e, agent, at, NOVEL)
+    const seen: Array<string | undefined> = []
+    const e2 = env(async () => { seen.push(writingLayer.get(at.bookId)); return { kind: 'ok', text: '文。' } })
+    await writeText(e2, agent, at, { layer: 'novel' })
+    expect(writingLayer.get(at.bookId)).toBe('novel')
+    await waitIdle(e2)
+    expect(seen).toContain('novel')
+    expect(writingLayer.get(at.bookId)).toBeUndefined()
   })
 })
