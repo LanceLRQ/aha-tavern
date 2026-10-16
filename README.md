@@ -143,6 +143,7 @@ dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
 - [使用指南](docs/getting-started.md)：安装、开店、建角色、单聊、记事、群聊、写书、画图、语音、数据在哪、换主题
 - [配置生图](docs/image-setup.md)：ComfyUI 的模型文件、`services.yaml`、自检、GGUF、自带工作流、定妆图、常见问题
 - [配置语音](docs/voice-setup.md)：本机语音服务的启动与下载、给角色配声音、朗读、自检、自己部署语音服务、常见问题
+- English：[README](README.en.md)、[Getting started](docs/en/getting-started.md)、[Image setup](docs/en/image-setup.md)、[Voice setup](docs/en/voice-setup.md)
 
 ## 开发
 
