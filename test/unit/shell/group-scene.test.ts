@@ -77,7 +77,7 @@ const memFileOfName = async (name: string): Promise<string> => {
 describe('参数与卡片', () => {
   it('parseSceneArgs：summary 与 title 必填，名单去空保序去重', () => {
     expect(parseSceneArgs({ summary: ' 梗概 ', title: ' 后院 ' })).toEqual({ summary: '梗概', title: '后院' })
-    expect(parseSceneArgs({ summary: 's', title: 't', endingTitle: ' 夜 ', join: ['墨鸦', '', '墨鸦'], leave: ['青衫'] }))
+    expect(parseSceneArgs({ summary: 's', title: 't', ending_title: ' 夜 ', join: ['墨鸦', '', '墨鸦'], leave: ['青衫'] }))
       .toEqual({ summary: 's', title: 't', endingTitle: '夜', join: ['墨鸦'], leave: ['青衫'] })
     expect(parseSceneArgs({ title: 't' })).toMatch(/^error: summary/)
     expect(parseSceneArgs({ summary: 's' })).toMatch(/^error: title/)
@@ -102,7 +102,7 @@ describe('参数与卡片', () => {
 describe('sceneTool', () => {
   it('确认换场：梗概入档、分界落盘、之后的记录归新场景', async () => {
     ask.mockResolvedValue({ answers: [{ selected: ['换场'] }] })
-    const out = await scene(agent, { summary: '大堂里布置好了。', title: '后院夜话', endingTitle: '大堂布置' })
+    const out = await scene(agent, { summary: '大堂里布置好了。', title: '后院夜话', ending_title: '大堂布置' })
     expect(out).toContain('scene changed to "后院夜话"')
     // 梗概：场景一的小节
     const show = await readShowSummary(dir, chatId)
@@ -182,7 +182,7 @@ describe('wrapTool', () => {
   })
 
   it('收场：最后一段梗概与标题、meta 标题、往事索引行换成标题', async () => {
-    const out = await wrap(agent, { summary: '吹了蜡烛。', title: '生日派对', endingTitle: '切蛋糕' })
+    const out = await wrap(agent, { summary: '吹了蜡烛。', title: '生日派对', ending_title: '切蛋糕' })
     expect(out).toContain('wrapped with title "生日派对"')
     const show = await readShowSummary(dir, chatId)
     expect(show.title).toBe('生日派对')

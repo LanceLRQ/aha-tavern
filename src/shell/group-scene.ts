@@ -52,7 +52,7 @@ export function parseSceneArgs(args: unknown): SceneArgs | string {
   const title = typeof args.title === 'string' ? args.title.trim() : ''
   if (title === '') return 'error: title is required (title of the new scene)'
   const out: SceneArgs = { summary, title }
-  if (typeof args.endingTitle === 'string' && args.endingTitle.trim() !== '') out.endingTitle = args.endingTitle.trim()
+  if (typeof args.ending_title === 'string' && args.ending_title.trim() !== '') out.endingTitle = args.ending_title.trim()
   if (typeof args.scenario === 'string' && args.scenario.trim() !== '') out.scenario = args.scenario.trim()
   for (const key of ['join', 'leave'] as const) {
     const v = args[key]
@@ -79,7 +79,7 @@ export function parseWrapArgs(args: unknown): WrapArgs | string {
   const title = typeof args.title === 'string' ? args.title.trim() : ''
   if (title === '') return 'error: title is required (title of the whole show)'
   const out: WrapArgs = { summary, title }
-  if (typeof args.endingTitle === 'string' && args.endingTitle.trim() !== '') out.endingTitle = args.endingTitle.trim()
+  if (typeof args.ending_title === 'string' && args.ending_title.trim() !== '') out.endingTitle = args.ending_title.trim()
   return out
 }
 
