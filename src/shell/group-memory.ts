@@ -3,7 +3,7 @@
 // 回忆一场群聊只返回该角色在场的那些场景。
 import path from 'node:path'
 import { listCharacters, MEMORY_FILE, readCharacter, type CharacterEntry } from '../core/card'
-import { readChatMeta, readRecords, readShowSummary, recallChat, writeShowSummary } from '../core/chat'
+import { readChatMeta, readRecords, readShowSummary, recallChat, writeShowSummary, type ChatMeta } from '../core/chat'
 import { appendFact, appendPinned, readMemory, replaceSections, type SectionPatch } from '../core/memory'
 import { sceneLabel, upsertScene } from '../core/summary'
 import { buildContext, type CommandHandler, type HostAgent, type HostServices } from './context'
@@ -215,31 +215,37 @@ export function groupRecallTool(env: GroupMemoryEnv): (agent: HostAgent | undefi
       if (r.kind === 'recap' || r.kind === 'excerpt') return r.text
       return r.kind === 'empty' ? 'empty' : 'missing'
     }
-    // 群聊：只返回该角色在场的场景；缺梗概的场景用原文节选补（规格 §9、§11.3）
-    const { records } = await readRecords(cc.tavern.dir, parsed.id)
-    const casts = castByScene(records, meta.initialPresent ?? meta.participants)
-    const show = await readShowSummary(cc.tavern.dir, parsed.id)
-    const names = new Map((await listCharacters(cc.tavern.dir)).filter((e) => e.ok).map((e) => [(e as GoodEntry).card.id, (e as GoodEntry).card.name]))
-    const scenesKnown = new Set(show.scenes.map((s) => s.index))
-    for (const scene of casts.keys()) {
-      const cast = casts.get(scene)!
-      if (!cast.includes(self.card.id)) continue
-      if (!scenesKnown.has(scene)) scenesKnown.add(scene)
-    }
-    const parts: string[] = []
-    for (const scene of [...scenesKnown].sort((a, b) => a - b)) {
-      const cast = casts.get(scene)
-      if (cast && !cast.includes(self.card.id)) continue
-      const section = show.scenes.find((s) => s.index === scene)
-      const head = `场景${sceneLabel(scene)}${section?.title ? `：${section.title}` : ''}`
-      const body = section && section.text.trim() !== ''
-        ? section.text.trim()
-        : sceneExcerpt(records, scene, names, env.rt.config.recallExcerptMaxChars)
-      parts.push(body === '' ? head : `${head}\n${body}`)
-    }
-    if (parts.length === 0) return `${self.card.name} was not on stage in that show`
-    return parts.join('\n\n')
+    const text = await recallShowScenes(cc.tavern.dir, parsed.id, meta, self.card.id, env.rt.config.recallExcerptMaxChars)
+    return text ?? `${self.card.name} was not on stage in that show`
   }
+}
+
+/** 一场群聊里某个角色在场的那些场景：有梗概用梗概，缺的用原文节选补（规格 §9、§11.3）；一场都不在返回 null。群聊与单聊的回忆共用。 */
+export async function recallShowScenes(
+  tavernDir: string, chatId: string, meta: ChatMeta, characterId: string, excerptMax: number,
+): Promise<string | null> {
+  const { records } = await readRecords(tavernDir, chatId)
+  const casts = castByScene(records, meta.initialPresent ?? meta.participants)
+  const show = await readShowSummary(tavernDir, chatId)
+  const names = new Map((await listCharacters(tavernDir)).filter((e) => e.ok).map((e) => [(e as GoodEntry).card.id, (e as GoodEntry).card.name]))
+  const scenesKnown = new Set(show.scenes.map((s) => s.index))
+  for (const scene of casts.keys()) {
+    const cast = casts.get(scene)!
+    if (!cast.includes(characterId)) continue
+    if (!scenesKnown.has(scene)) scenesKnown.add(scene)
+  }
+  const parts: string[] = []
+  for (const scene of [...scenesKnown].sort((a, b) => a - b)) {
+    const cast = casts.get(scene)
+    if (cast && !cast.includes(characterId)) continue
+    const section = show.scenes.find((s) => s.index === scene)
+    const head = `场景${sceneLabel(scene)}${section?.title ? `：${section.title}` : ''}`
+    const body = section && section.text.trim() !== ''
+      ? section.text.trim()
+      : sceneExcerpt(records, scene, names, excerptMax)
+    parts.push(body === '' ? head : `${head}\n${body}`)
+  }
+  return parts.length ? parts.join('\n\n') : null
 }
 
 // ---------- 整理 ----------

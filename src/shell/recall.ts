@@ -1,9 +1,10 @@
-// 单聊的回忆（规格 7.4）：按往事索引里的聊天编号取梗概或原文节选。
+// 单聊的回忆（规格 7.4）：按往事索引里的聊天编号取梗概或原文节选；回忆一场群聊时只取自己在场的场景。
 // 返回给模型的是英文固定标识加资料正文；失败返回原因，不抛异常。
-import { recallChat, type RecallResult } from '../core/chat'
+import { readChatMeta, recallChat, type RecallResult } from '../core/chat'
 import { isChatId } from '../core/ids'
 import { hasChatInIndex } from '../core/memory'
 import type { HostAgent } from './context'
+import { recallShowScenes } from './group-memory'
 import { isTarget, targetForTool, traced, type MemoryEnv } from './remember'
 import { escapeClosingTag } from './steer'
 
@@ -46,6 +47,16 @@ export function recallTool(env: MemoryEnv): (agent: HostAgent | undefined, args:
     const token = env.recallTurns.claim(session)
     if (token === null) return 'already recalled this turn'
     try {
+      // 一场群聊：只给这个角色在场的场景（规格 §11.3）
+      const meta = await readChatMeta(target.tavernDir, id).catch(() => null)
+      if (meta?.kind === 'group') {
+        const text = await recallShowScenes(target.tavernDir, id, meta, target.characterId, env.rt.config.recallExcerptMaxChars)
+        if (text === null) {
+          env.recallTurns.release(session, token)
+          return 'not available: you were not on stage in that show'
+        }
+        return render(id, { kind: 'recap', text })
+      }
       const r = await recallChat(target.tavernDir, id, {
         limit: env.rt.config.recallExcerptMaxChars,
         speakerNames: { user: 'user', [target.characterId]: 'character' },

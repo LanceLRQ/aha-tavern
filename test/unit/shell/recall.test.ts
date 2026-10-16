@@ -238,3 +238,22 @@ describe('aha_recall', () => {
     expect(await recallTool(s.env)(agent, { id: oo01 })).toBe('not remembered')
   })
 })
+
+describe('aha_recall 一场群聊', () => {
+  it('只返回自己在场的场景（规格 §11.3），不在场的场景不给', async () => {
+    const s = await startChat()
+    const other = (await saveCharacter(dir, { name: '黑猫', persona: '黑猫的设定', greeting: '嗯' })).card
+    const { id, dir: chatDir } = await createChat(dir, {
+      kind: 'group', name: '群聊', participants: [other.id, s.charId], sessionId: 'old', now: new Date(2026, 9, 1),
+      scenario: '后院', present: [other.id],
+    })
+    await appendRecord(dir, id, { type: 'narrator', text: '后院乘凉。', scene: 1 })
+    await appendRecord(dir, id, { type: 'scene', text: '刚开门', cast: [s.charId], scene: 2 })
+    await appendRecord(dir, id, { type: 'narrator', text: '第二天开门。', scene: 2 })
+    await fs.writeFile(path.join(chatDir, CHAT_SUMMARY_FILE), '## 场景一\n在场：黑猫、我\n只有黑猫在的后院。\n\n## 场景二：刚开门\n在场：白狐、我\n白狐来了。\n')
+    await appendIndexLine(s.memFile, { date: '2026-10-01', kind: 'group', id })
+    const out = await recallTool(s.env)(agent, { id })
+    expect(out).toContain('白狐来了。')
+    expect(out).not.toContain('只有黑猫在的后院')
+  })
+})
