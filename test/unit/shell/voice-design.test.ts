@@ -88,7 +88,8 @@ function build(over: Partial<VoiceDesignDeps> = {}) {
     tempRoot: () => tmpRoot,
     tavernDirOf: async (a) => a?.session?.header?.cwd as string | undefined,
     onRegistered,
-    cleanupLimitMs: 200,
+    // 收尾的 mock 都立即返回，上限只在负载高时才可能碰到；故意卡住的用例自己改成 200
+    cleanupLimitMs: 2000,
     ...over,
   })
   exec = (a = {}, o = {}) => defs.aha_voice_design!.execute(
@@ -741,6 +742,7 @@ describe('收尾', () => {
   })
 
   it('收尾超时：给重启的信号被中止并记日志，中止后不再继续', async () => {
+    build({ cleanupLimitMs: 200 })
     let seen: AbortSignal | undefined
     restartService.mockImplementation((_s: unknown, o?: { signal?: AbortSignal }) => {
       seen = o?.signal
@@ -764,6 +766,7 @@ describe('收尾', () => {
   })
 
   it('重启卡住：到时间上限就返回，并附重启失败的提示', async () => {
+    build({ cleanupLimitMs: 200 })
     restartService.mockImplementation(() => new Promise(() => undefined))
     script.push('取消')
     const r = await exec()

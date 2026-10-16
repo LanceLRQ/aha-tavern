@@ -849,8 +849,8 @@ describe('额外形象的提示词段', () => {
       live.clear()
       return new SessionSections(log, (a, text) => { live.set(a.id, text); return () => undefined }, '画图提示词段')
     }
-    // looksNote 要读角色卡与形象目录（文件系统），负载高时 5 毫秒内落不了盘，放宽到 50
-    const settle = () => new Promise((r) => setTimeout(r, 50))
+    // looksNote 要读角色卡与形象目录（文件系统），负载高时固定等多久都可能不够：等段文字出现（一次写成，出现即最终）
+    const settle = () => vi.waitFor(() => { if (!live.has('s1')) throw new Error('段文字还没写入') }, { timeout: 5000, interval: 10 })
     const card = (looks: string) => fs.writeFile(path.join(charDir, 'character.yaml'), `id: c_1\nname: 白狐\npersona: 温柔\n${looks}`)
     const note = () => looksNoteOf({ rt: env.rt, getServices: () => undefined, resolveTarget: async () => target, charDirOf: async () => charDir })
 
@@ -892,15 +892,14 @@ describe('额外形象的提示词段', () => {
       await card(`looks:\n  - id: ${SWIM}\n    name: 泳装\n    when: 去海边时\n`)
       await fs.writeFile(path.join(charDir, 'looks', `${SWIM}.png`), swimPng)
       await d.refresh(agent)
-      await settle()
+      // 断言"没变"无从轮询，只能等一会儿再看
+      await new Promise((r) => setTimeout(r, 50))
       expect(live.get('s1')).toBe(base)
       await d.refresh(agent, { notify: true })
-      await settle()
-      expect(live.get('s1')).toContain('泳装')
+      await vi.waitFor(() => expect(live.get('s1')).toContain('泳装'), { timeout: 5000, interval: 10 })
       await card('')
       await d.refresh(agent, { notify: true })
-      await settle()
-      expect(live.get('s1')).toBe(base)
+      await vi.waitFor(() => expect(live.get('s1')).toBe(base), { timeout: 5000, interval: 10 })
     })
     it('读形象出错：退回原文字', async () => {
       drawPromptSync(mk(), vi.fn(), async () => { throw new Error('x') })(agent, true, settings)
