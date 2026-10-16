@@ -7,7 +7,7 @@ import { shownName, type AskItem } from './confirm'
 import type { DoctorFailKind, DrawDoctorReport, ReferenceWhy } from './draw-doctor'
 import type { VoiceDoctorReport, VoiceTrial } from './voice-doctor'
 
-export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊', group: '酒馆:群聊' }
+export const MODE_LABEL: Record<TavernMode, string> = { setup: '酒馆:筹备', chat: '酒馆:单聊', group: '酒馆:群聊', book: '酒馆:写书' }
 
 /** 回执：宿主只有 success / error 两种，error 在界面上是红色的 Failed，只给真正的错误用。 */
 export type Reply = { kind: 'success' | 'error'; text: string }
@@ -51,6 +51,12 @@ function dispatchText(theme: Theme, reason: DispatchReason, info: DispatchReceip
       return `开场要在「${MODE_LABEL.chat}」或「${MODE_LABEL.group}」里进行，请切换到那个模式再用 \`/aha 开场\`。`
     case 'go-group':
       return `${label}是「${MODE_LABEL.group}」里的命令，请切换到那个模式再试。`
+    case 'go-book':
+      return `${label}是「${MODE_LABEL.book}」里的命令，请切换到那个模式再试。`
+    case 'book-first':
+      return `还没有开书。先用 \`/aha 写书 [书名]\` 开一本。`
+    case 'book-open':
+      return `这个会话已经在写一本书了。要写别的书，请新开一个「${MODE_LABEL.book}」会话。`
     case 'new-session':
       return `这场聊天正在进行。要和别的${theme.concept('character')}聊，请新开一个会话再用 \`/aha 开场\`。`
     case 'already-tavern':

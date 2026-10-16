@@ -1,4 +1,4 @@
-# 阿哈酒馆 bundle 层：向 profile 注册两个酒馆模式。
+# 阿哈酒馆 bundle 层：向 profile 注册四个酒馆模式。
 # 每个模式是一份独立清单，只挂自己需要的插件；都不挂编码工具。
 # 筹备模式自带联网搜索（MCP: open-websearch）。要关掉它，在自己 profile 的
 # cordis.patch.yml 里整条覆盖 preset-tavern-setup（内嵌条目不能单独覆盖），
@@ -103,6 +103,33 @@
             name: aha-tavern
             config:
               mode: group
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+            config:
+              - id: compaction-tavern
+                name: 'aha-tavern/compaction'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+    - id: preset-tavern-book
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tavern-book
+        name: '酒馆:写书'
+        description: 把聊过的内容整理成一本书。
+        order: 8
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: 你是阿哈酒馆里帮客人把聊过的故事整理成书的编辑，不是通用助手；具体以下文为准。
+              includeRuntimeContext: false
+          - id: aha-tavern
+            name: aha-tavern
+            config:
+              mode: book
           - id: compaction
             name: cordis:group
             group: true

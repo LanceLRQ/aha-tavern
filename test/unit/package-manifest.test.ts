@@ -28,12 +28,12 @@ describe('设置页的包清单约定', () => {
     // 根层行的 id 与宿主自己的行同在一张表里：撞名会让宿主的服务消失（实测 settings 撞过）
     for (const r of rows) expect(r.id, `根层行 id ${r.id}`).toMatch(/^(aha-tavern|preset-tavern-)/)
     expect(rows.map((r) => r.id)).not.toContain('settings')
-    expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining(['preset-tavern-setup', 'preset-tavern-chat', 'preset-tavern-group']))
+    expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining(['preset-tavern-setup', 'preset-tavern-chat', 'preset-tavern-group', 'preset-tavern-book']))
     const presets = rows.filter((r) => r.id.startsWith('preset-'))
-    expect(presets.map((p) => p.config.id).sort()).toEqual(['tavern-chat', 'tavern-group', 'tavern-setup'])
-    // 酒馆模式里嵌套的插件仍是原来的 aha-tavern，mode 分别为 setup / chat / group
+    expect(presets.map((p) => p.config.id).sort()).toEqual(['tavern-book', 'tavern-chat', 'tavern-group', 'tavern-setup'])
+    // 酒馆模式里嵌套的插件仍是原来的 aha-tavern，mode 分别为 setup / chat / group / book
     const nested = presets.map((p) => p.config.plugins.find((x: any) => x.id === 'aha-tavern').config.mode).sort()
-    expect(nested).toEqual(['chat', 'group', 'setup'])
+    expect(nested).toEqual(['book', 'chat', 'group', 'setup'])
   })
 
   it('提问卡片工具只有筹备模式挂：单聊与群聊里模型看到的提问工具只会被滥用来抢插件的事', () => {
@@ -47,7 +47,7 @@ describe('设置页的包清单约定', () => {
   it('每个酒馆模式都挂隔离的 compaction 组：扮演向压缩后端加手动 /compact，长聊天有压缩对策', () => {
     const patch = YAML.parse(read('cordis.patch.yml')) as { insert: { id: string; config?: any }[] }[]
     const presets = patch[0]!.insert.filter((r) => r.id.startsWith('preset-'))
-    expect(presets).toHaveLength(3)
+    expect(presets).toHaveLength(4)
     for (const p of presets) {
       const group = ((p.config?.plugins ?? []) as any[]).find((x) => x.id === 'compaction')
       expect(group, `模式 ${p.config.id} 缺 compaction 组`).toMatchObject({ name: 'cordis:group', group: true, isolate: { compaction: true } })

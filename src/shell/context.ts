@@ -40,6 +40,7 @@ const PRESET_TO_MODE: Record<string, TavernMode> = {
   'tavern-setup': 'setup',
   'tavern-chat': 'chat',
   'tavern-group': 'group',
+  'tavern-book': 'book',
 }
 
 export function modeFromPreset(presetId: string | undefined): TavernMode | null {
@@ -78,7 +79,7 @@ export async function buildContext(
   const tavernHere = cwd !== undefined && (await isTavern(cwd))
   const tavern = tavernHere ? await openResolved(cwd, log) : null
   let record: SessionRecord | null = null
-  if (tavern && (mode === 'chat' || mode === 'group')) {
+  if (tavern && (mode === 'chat' || mode === 'group' || mode === 'book')) {
     record = (await readSession(sessionsFile(tavern.dir), agent.id)).record
   }
   const { state, reason } = resolveState({

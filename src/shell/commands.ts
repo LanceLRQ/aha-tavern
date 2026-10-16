@@ -43,6 +43,10 @@ export const SUBCOMMANDS: readonly Subcommand[] = [
   sub('doctor', ['自检'], '检查当前状态与外部服务'),
   sub('voice', ['语音'], '启动、停止或查看语音服务', '[启动|停止|状态]'),
   sub('look', ['定妆'], '给角色定妆：画出三视图，之后聊天画图都照它来', '[角色名]'),
+  sub('book', ['写书'], '开一本书：选要收入的聊天与人称（写书）', '[书名]'),
+  sub('progress', ['进度'], '看书写到哪了（写书）'),
+  sub('pause', ['停笔'], '停下正在写的那一节，已写好的保留（写书）'),
+  sub('export', ['导出'], '把整本书拼成一个 Markdown 文件（写书）'),
 ]
 
 export type ParsedSubcommand =

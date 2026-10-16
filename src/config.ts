@@ -1,9 +1,9 @@
 // 插件配置：类型、默认值与合并逻辑。
 
-/** 模式：筹备 / 单聊 / 群聊。 */
-export type TavernMode = 'setup' | 'chat' | 'group'
+/** 模式：筹备 / 单聊 / 群聊 / 写书。 */
+export type TavernMode = 'setup' | 'chat' | 'group' | 'book'
 
-/** 插件实例的角色：三个酒馆模式，外加挂在根层、只为"插件"页的设置页服务的 settings。 */
+/** 插件实例的角色：四个酒馆模式，外加挂在根层、只为"插件"页的设置页服务的 settings。 */
 export type PluginMode = TavernMode | 'settings'
 
 export interface TavernConfig {
@@ -54,7 +54,7 @@ export const DEFAULTS: TavernConfig = {
   narratorVoiceDir: '',
 }
 
-const MODES: readonly PluginMode[] = ['setup', 'chat', 'group', 'settings']
+const MODES: readonly PluginMode[] = ['setup', 'chat', 'group', 'book', 'settings']
 
 /** 把用户配置与默认值合并：未知字段丢弃，类型不对的字段回落默认值。 */
 export function resolveConfig(input: unknown, env: Record<string, string | undefined> = process.env): TavernConfig {

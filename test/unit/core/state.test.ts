@@ -51,6 +51,12 @@ describe('resolveState', () => {
       mode: 'chat', workspaceExists: true, isTavern: true, stored: { ...chatting, mode: 'setup' },
     }).state).toBe('picking')
   })
+  it('写书模式：无记录 -> opening；写书记录 -> writing；别的模式的记录不算', () => {
+    const base = { mode: 'book', workspaceExists: true, isTavern: true } as const
+    expect(resolveState(base).state).toBe('opening')
+    expect(resolveState({ ...base, stored: { mode: 'book', state: 'writing', bookId: 'ab12', updated: '' } }).state).toBe('writing')
+    expect(resolveState({ ...base, stored: chatting }).state).toBe('opening')
+  })
 })
 
 describe('sessions.yaml 读写', () => {
@@ -107,5 +113,13 @@ describe('sessions.yaml 读写', () => {
     await saveSession(file, 's2', { mode: 'chat', state: 'picking' })
     expect((await readSession(file, 's1')).record?.state).toBe('chatting')
     expect((await readSession(file, 's2')).record?.state).toBe('picking')
+  })
+  it('写书记录带 bookId，写入后锁定', async () => {
+    await saveSession(file, 's-b', { mode: 'book', state: 'writing', bookId: 'ab12' })
+    expect((await readSession(file, 's-b')).record).toMatchObject({ mode: 'book', state: 'writing', bookId: 'ab12' })
+    await expect(saveSession(file, 's-b', { mode: 'book', state: 'writing', bookId: 'cd34' })).rejects.toThrow()
+  })
+  it('进入写书状态必须带 bookId', async () => {
+    await expect(saveSession(file, 's-c', { mode: 'book', state: 'writing' })).rejects.toThrow()
   })
 })
