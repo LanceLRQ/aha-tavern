@@ -231,6 +231,16 @@ describe('小说层', () => {
     expect(md).toContain('# 生日（小说）')
     expect(md).toContain('## 第一话　序')
   })
+  it('小说标题与书名相同：文件名与大标题都补（小说）', async () => {
+    const e = env()
+    await writeDraft(e)
+    await saveNovelOutlineText(e, agent, at, NOVEL.replace('title: 生日（小说）', 'title: 生日'))
+    await writeText(e, agent, at, { layer: 'novel' })
+    await waitIdle(e)
+    expect(await exportText(at, 'novel')).toMatch(/生日（小说）\.md/)
+    const md = await fs.readFile(path.join(at.bookDir, '生日（小说）.md'), 'utf8')
+    expect(md.startsWith('# 生日（小说）\n')).toBe(true)
+  })
   it('写小说层期间 writingLayer 为 novel，结束后清掉', async () => {
     const e = env()
     await writeDraft(e)

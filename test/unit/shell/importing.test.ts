@@ -434,7 +434,8 @@ describe('importHandler', () => {
       return ans(req.questions[0]!.id, req.questions[0]!.id === 'source' ? ['甲'] : ['白狐']) as never
     }
     const p = runWith({ ask, gate })
-    await new Promise((r) => setTimeout(r, 20))
+    // 等导入真正停在第一张卡片上（全量跑时读盘可能慢于固定的等待）
+    while (!order.includes('ask:source')) await new Promise((r) => setTimeout(r, 5))
     const other = gate.run('s1', async () => { order.push('tool') })
     await new Promise((r) => setTimeout(r, 20))
     expect(order).toEqual(['ask:source'])

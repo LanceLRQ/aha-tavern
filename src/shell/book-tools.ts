@@ -478,10 +478,10 @@ export async function exportText(at: BookAt, layer: BookLayer = 'draft'): Promis
       return { title: s.title, body: file ? rebaseImages(file.body, fromDir, at.bookDir) : null }
     })),
   })))
-  // 小说标题与整理稿书名相同时补「（小说）」，免得两份导出互相覆盖
+  // 小说标题与整理稿书名相同时，文件名与大标题都补「（小说）」，免得两份导出互相覆盖、分不清
   const base = layer === 'novel' && title === (meta.title || '未命名') ? `${title}（小说）` : title
   const file = path.join(at.bookDir, `${safeDirName(base)}.md`)
-  await fs.writeFile(file, renderBook(title, chapters), 'utf8')
+  await fs.writeFile(file, renderBook(base, chapters), 'utf8')
   const missing = rows.filter((r) => r.status === 'missing').map((r) => r.label)
   const stale = rows.filter((r) => r.status === 'stale').map((r) => r.label)
   return [
