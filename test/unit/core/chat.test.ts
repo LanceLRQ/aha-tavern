@@ -9,7 +9,6 @@ import {
   appendRecord,
   readRecords,
   readChatMeta,
-  writeSummary,
   writeSummaryFile,
   setChatTitle,
   setChatAutoRead,
@@ -18,6 +17,12 @@ import {
 } from '../../../src/core/chat'
 import { countChars } from '../../../src/core/docs'
 import { isAhaError } from '../../../src/core/errors'
+
+/** 写梗概并同步标题（插件里两步分别调用，这里合成一步方便造数据）。 */
+const writeSummary = async (tavernDir: string, chatId: string, input: { summary: string; title: string }): Promise<void> => {
+  await writeSummaryFile(tavernDir, chatId, input.summary)
+  await setChatTitle(tavernDir, chatId, input.title)
+}
 
 let dir: string
 beforeEach(async () => {
@@ -224,7 +229,7 @@ describe('findChatDir', () => {
   })
 })
 
-describe('writeSummary / recallChat', () => {
+describe('梗概与 recallChat', () => {
   it('写梗概后回忆返回梗概，标题同时写进元数据', async () => {
     const c = await mk()
     await appendRecord(dir, c.id, { type: 'user', speaker: 'user', text: 'hi' })

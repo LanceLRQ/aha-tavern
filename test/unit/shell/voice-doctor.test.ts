@@ -12,7 +12,7 @@ import {
   DOCTOR_VOICE_HINT_BOTH, DOCTOR_VOICE_HINT, doctorLine, voiceDoctorBrief, voiceDoctorCardReceipt, voiceDoctorIssues,
   voiceDoctorMarkdown, voiceDoctorOneLine, voiceTrialMarkdown,
 } from '../../../src/shell/receipts'
-import { createVoiceHandler, resetLaunchesForTest, type VoiceInstanceState, type VoiceOps } from '../../../src/shell/voice'
+import { createVoiceController, resetLaunchesForTest, type VoiceInstanceState, type VoiceOps } from '../../../src/shell/voice'
 import {
   checkVoice, TRIAL_LIMIT_MS, TRIAL_TEXT, trialSpeak, voiceCardMode, type VoiceDoctorDeps, type VoiceDoctorReport,
 } from '../../../src/shell/voice-doctor'
@@ -849,7 +849,7 @@ describe('doctorHandler：语音', () => {
         createClient: vi.fn(() => ({ synthesize: vi.fn().mockResolvedValue({}), probe: vi.fn() })),
         now: Date.now, sleep: vi.fn(() => new Promise<void>(() => undefined)),
       }
-      voiceHandler = vi.fn(createVoiceHandler(state, startOps as unknown as VoiceOps))
+      voiceHandler = vi.fn(createVoiceController(state, startOps as unknown as VoiceOps).handler)
       mocks.inspect.mockResolvedValueOnce(info({ envInstalled: false })).mockResolvedValue(up())
       script({ 'voice-doctor': [OPT_START_SERVICE, OPT_CLOSE], 'voice-start': ['开始'] })
       const r = await doctorHandler(inv('setup', '语音'))

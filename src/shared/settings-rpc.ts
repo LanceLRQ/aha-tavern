@@ -16,8 +16,6 @@ export const SETTINGS_METHODS = [
   { name: 'testImage', params: [] },
 ] as const satisfies readonly { name: string; params: readonly string[] }[]
 
-export type SettingsMethodName = (typeof SETTINGS_METHODS)[number]['name']
-
 /** 入参不做结构校验（校验在插件端的 API 里，把入参当不可信输入处理）。 */
 const anySchema = () => ({ parse: (v: unknown) => v })
 const strictCodec = (typeSymbol: string) => ({ mode: 'strict', typeSymbol, create: anySchema })

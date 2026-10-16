@@ -241,16 +241,6 @@ export async function setChatAutoRead(tavernDir: string, chatId: string, value: 
   })
 }
 
-/** 写梗概，并把标题同步进 meta.yaml；两步分别由 writeSummaryFile 与 setChatTitle 完成。 */
-export async function writeSummary(
-  tavernDir: string,
-  chatId: string,
-  input: { summary: string; title: string },
-): Promise<void> {
-  await writeSummaryFile(tavernDir, chatId, input.summary)
-  await setChatTitle(tavernDir, chatId, input.title)
-}
-
 // ---------- 群聊：按场景分段的梗概与 meta 补丁（二期规格 §8、§10） ----------
 
 export async function readShowSummary(

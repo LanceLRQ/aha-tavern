@@ -10,7 +10,7 @@ import type { Invocation } from '../../../src/shell/context'
 import { handleCommand, parseSubcommand } from '../../../src/shell/commands'
 import { VOICE_OPT_CANCEL, VOICE_OPT_GO } from '../../../src/shell/receipts'
 import {
-  BUILTIN_VOICE_TEXT, START_WAIT_MS, abortLaunch, builtinVoice, createVoiceHandler, installVoice, parseVoiceArgs,
+  BUILTIN_VOICE_TEXT, START_WAIT_MS, abortLaunch, builtinVoice, createVoiceController, installVoice, parseVoiceArgs,
   launchSnapshot, isLaunching, resetLaunchesForTest, startServiceHeld, whichOnPath, lastStartOffline, restartVoiceService, type VoiceInstanceState, type VoiceOps,
 } from '../../../src/shell/voice'
 
@@ -45,7 +45,7 @@ const mkInv = (args: string, signal?: AbortSignal): Invocation => ({
     cards: askFn ? { gate, getAsk: () => askFn as any } : undefined, handlers: {},
   } as any,
 })
-const run = (args: string, signal?: AbortSignal) => createVoiceHandler(state, ops as unknown as VoiceOps)(mkInv(args, signal)) as Promise<{ kind: string; text: string }>
+const run = (args: string, signal?: AbortSignal) => createVoiceController(state, ops as unknown as VoiceOps).handler(mkInv(args, signal)) as Promise<{ kind: string; text: string }>
 afterEach(() => resetLaunchesForTest())
 const pick = (label: string) =>
   askFn!.mockImplementation(async (req: any) => ({ answers: [{ id: req.questions[0].id, selected: [label] }] }))
@@ -535,8 +535,8 @@ describe('启动转后台', () => {
     const gates: Array<() => void> = []
     ops.inspect.mockImplementation(() => new Promise((res) => gates.push(() => res(info()))))
     const stateB: VoiceInstanceState = { started: null, launching: null }
-    const a = createVoiceHandler(state, ops as unknown as VoiceOps)(mkInv('启动')) as Promise<{ text: string }>
-    const b = createVoiceHandler(stateB, ops as unknown as VoiceOps)(mkInv('启动')) as Promise<{ text: string }>
+    const a = createVoiceController(state, ops as unknown as VoiceOps).handler(mkInv('启动')) as Promise<{ text: string }>
+    const b = createVoiceController(stateB, ops as unknown as VoiceOps).handler(mkInv('启动')) as Promise<{ text: string }>
     await vi.waitFor(() => expect(gates.length).toBe(2))
     gates[0]!()
     expect((await a).text).toContain('正在启动')
@@ -1005,7 +1005,7 @@ describe('startServiceHeld：调用方已持有同会话卡片队列', () => {
   it('走同一段启动流程：确认卡片通过后安装并启动', async () => {
     needInstall()
     const inv = mkInv('')
-    inv.rt.handlers.voice = createVoiceHandler(state, ops as unknown as VoiceOps)
+    inv.rt.handlers.voice = createVoiceController(state, ops as unknown as VoiceOps).handler
     const r = await heldRun(inv)
     expect(askFn).toHaveBeenCalledTimes(1)
     expect(ops.install).toHaveBeenCalled()
@@ -1014,7 +1014,7 @@ describe('startServiceHeld：调用方已持有同会话卡片队列', () => {
   it('队列已被调用方占着也不死锁，确认卡片直接发出', async () => {
     needInstall()
     const inv = mkInv('')
-    inv.rt.handlers.voice = createVoiceHandler(state, ops as unknown as VoiceOps)
+    inv.rt.handlers.voice = createVoiceController(state, ops as unknown as VoiceOps).handler
     const out = await gate.run('s1', () => heldRun(inv), 'command')
     expect(askFn).toHaveBeenCalledTimes(1)
     expect(out.text).toContain('语音服务已启动')

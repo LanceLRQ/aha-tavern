@@ -264,10 +264,6 @@ export interface VoiceController {
 const sameService = (a: Pick<VoiceServiceSettings, 'modelsDir' | 'port'>, b: Pick<VoiceServiceSettings, 'modelsDir' | 'port'>): boolean =>
   a.modelsDir === b.modelsDir && a.port === b.port
 
-export function createVoiceHandler(state: VoiceInstanceState, ops: VoiceOps = realVoiceOps): CommandHandler {
-  return createVoiceController(state, ops).handler
-}
-
 export function createVoiceController(state: VoiceInstanceState, ops: VoiceOps = realVoiceOps): VoiceController {
   async function askStart(inv: Invocation, item: AskItem): Promise<'go' | 'declined' | 'cancelled' | 'busy' | 'no-ui'> {
     const { rt, agent, signal } = inv

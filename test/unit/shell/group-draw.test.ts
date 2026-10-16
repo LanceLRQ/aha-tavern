@@ -3,7 +3,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { readCharacter, saveCharacter } from '../../../src/core/card'
 import { createChat, patchChatMeta } from '../../../src/core/chat'
 import { ComfyError } from '../../../src/core/comfy'
@@ -13,9 +13,10 @@ import { saveSession } from '../../../src/core/state'
 import { createTavern } from '../../../src/core/tavern'
 import type { HostAgent, HostServices } from '../../../src/shell/context'
 import { drawPromptText } from '../../../src/shell/draw'
+import groupDrawPrompts from '../../../src/prompts/draw-group.md'
 import { REF_PREAMBLE } from '../../../src/shell/draw-ref'
 import {
-  groupDrawPromptText, groupDrawTool, groupLooksNoteOf, groupLooksPromptText, matchPresentWho, parseGroupDrawArgs,
+  groupDrawTool, groupLooksNoteOf, groupLooksPromptText, matchPresentWho, parseGroupDrawArgs,
   resolveGroupDrawTarget, subjectOf, WHO_MAX, type GroupDrawEnv,
 } from '../../../src/shell/group-draw'
 import { DrawAvailability, DrawEcho } from '../../../src/shell/draw'
@@ -42,7 +43,7 @@ let chatId: string
 let fox: GoodEntry
 let guest: GoodEntry
 let settings: ImageServiceSettings
-let log: { debug: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> }
+let log: { debug: Mock<(...args: any[]) => any>; info: Mock<(...args: any[]) => any>; warn: Mock<(...args: any[]) => any>; error: Mock<(...args: any[]) => any> }
 let drawing: DrawAvailability
 let turns: RememberTurns
 let echo: DrawEcho
@@ -173,7 +174,8 @@ describe('matchPresentWho', () => {
   })
 })
 
-describe('groupDrawPromptText', () => {
+describe('群聊画图规范（draw-group.md）', () => {
+  const groupDrawPromptText = (auto: boolean) => drawPromptText(auto, groupDrawPrompts)
   it('auto 两版不同，都讲两种形态，用 <drawing> 包裹，且与单聊版本不同', () => {
     const on = groupDrawPromptText(true)
     const off = groupDrawPromptText(false)

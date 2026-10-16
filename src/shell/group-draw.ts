@@ -12,7 +12,7 @@ import groupDrawPrompts from '../prompts/draw-group.md'
 import { buildContext, type HostAgent, type HostServices } from './context'
 import type { GoodEntry } from './chat'
 import {
-  composePrompt, drawPromptSync, DrawAvailability, drawPromptText, drawnText, DrawEcho, failKindOf, failText,
+  composePrompt, drawPromptSync, DrawAvailability, drawnText, DrawEcho, failKindOf, failText,
   hostOf, imagePathText, ORIENTATIONS, parseDrawArgs, POLL_MS, sizeFor, UNAVAILABLE, type DrawArgs,
 } from './draw'
 import { chooseRef, extraLooksOf, generateWithRef, REF_PREAMBLE } from './draw-ref'
@@ -258,11 +258,6 @@ export function groupDrawTool(env: GroupDrawEnv): (agent: HostAgent | undefined,
 }
 
 // ---------- 提示词段 ----------
-
-/** 群聊画图规范的文字：与单聊同样按 auto 取两段之一。 */
-export function groupDrawPromptText(auto: boolean): string {
-  return drawPromptText(auto, groupDrawPrompts)
-}
 
 /** 群聊版的 drawPromptSync：装的是群聊画图规范（draw-group.md），装/撤时机照单聊。 */
 export function groupDrawPromptSync(
