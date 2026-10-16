@@ -13,6 +13,27 @@ export const UNUSED_DIR = '.unused'
 /** 一节原料的上限（字）。 */
 export const SECTION_SOURCE_MAX = 30000
 
+export const NOVEL_OUTLINE_FILE = 'novel-outline.yaml'
+export const NOVEL_DIR = 'novel'
+
+export interface NovelSection { title: string; brief: string; from: string[] }
+export interface NovelChapter { title: string; sections: NovelSection[] }
+export interface NovelOutline { title: string; style: string; chapters: NovelChapter[] }
+
+export interface NovelFrontmatter {
+  /** 引用的整理稿小节（两位补零的节号）；没有原料的节为空 */
+  from: string[]
+  fingerprint: string
+  model: string
+  written: string
+}
+
+/** 「2-3」「02-03」都认，统一成两位补零；认不出返回 null。 */
+export function normalizeSectionKey(v: unknown): string | null {
+  const m = typeof v === 'string' ? /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(v) : null
+  return m && Number(m[1]) > 0 && Number(m[2]) > 0 ? `${pad(Number(m[1]))}-${pad(Number(m[2]))}` : null
+}
+
 export type BookPerson = 'third' | 'first'
 
 export interface BookMeta {
@@ -160,37 +181,123 @@ export async function writeOutline(bookDir: string, outline: Outline): Promise<v
   await atomicWrite(path.join(bookDir, OUTLINE_FILE), YAML.stringify(outline))
 }
 
-const sectionFile = (bookDir: string, key: string) => path.join(bookDir, DRAFT_DIR, `${key}.md`)
+/** 解析小说目录的 YAML 全文：只做结构校验（引用的整理稿是否写好由原料组装校验）。 */
+export function parseNovelOutline(text: string): { ok: true; outline: NovelOutline } | { ok: false; error: string } {
+  let v: unknown
+  try {
+    v = YAML.parse(text)
+  } catch (e) {
+    return { ok: false, error: `invalid yaml (${(e as Error).message.split('\n')[0]})` }
+  }
+  const o = v as Record<string, unknown> | null
+  if (!o || typeof o !== 'object') return { ok: false, error: 'invalid yaml: top level must be a mapping' }
+  const str = (x: unknown) => (typeof x === 'string' ? x.trim() : '')
+  if (!Array.isArray(o.chapters) || o.chapters.length === 0) return { ok: false, error: 'chapters must be a non-empty list' }
+  const chapters: NovelChapter[] = []
+  for (const [ci, c] of (o.chapters as unknown[]).entries()) {
+    const ch = c as Record<string, unknown> | null
+    const where = `chapter ${ci + 1}`
+    if (!ch || typeof ch !== 'object') return { ok: false, error: `${where}: must be a mapping` }
+    if (!Array.isArray(ch.sections) || ch.sections.length === 0) return { ok: false, error: `${where}: sections must be a non-empty list` }
+    const sections: NovelSection[] = []
+    for (const [si, s] of (ch.sections as unknown[]).entries()) {
+      const sec = s as Record<string, unknown> | null
+      const at = `${where} section ${si + 1}`
+      if (!sec || typeof sec !== 'object') return { ok: false, error: `${at}: must be a mapping` }
+      const raw = sec.from ?? []
+      if (!Array.isArray(raw)) return { ok: false, error: `${at}: from must be a list of draft sections like [01-02, 01-03]` }
+      const from: string[] = []
+      for (const k of raw) {
+        const key = normalizeSectionKey(k)
+        if (!key) return { ok: false, error: `${at}: from has ${JSON.stringify(k)}; use "chapter-section" like 01-02` }
+        if (from.includes(key)) return { ok: false, error: `${at}: from lists ${key} twice` }
+        from.push(key)
+      }
+      sections.push({ title: str(sec.title), brief: str(sec.brief), from })
+    }
+    chapters.push({ title: str(ch.title), sections })
+  }
+  return { ok: true, outline: { title: str(o.title), style: str(o.style), chapters } }
+}
 
-function parseSectionText(text: string): { fm: SectionFrontmatter | null; body: string } {
+export async function readNovelOutline(bookDir: string): Promise<NovelOutline | null> {
+  let text: string
+  try {
+    text = await fs.readFile(path.join(bookDir, NOVEL_OUTLINE_FILE), 'utf8')
+  } catch {
+    return null
+  }
+  const r = parseNovelOutline(text)
+  return r.ok ? r.outline : null
+}
+
+export async function writeNovelOutline(bookDir: string, outline: NovelOutline): Promise<void> {
+  await atomicWrite(path.join(bookDir, NOVEL_OUTLINE_FILE), YAML.stringify(outline))
+}
+
+const sectionPath = (bookDir: string, dir: string, key: string) => path.join(bookDir, dir, `${key}.md`)
+
+/** 拆出 frontmatter 的原始字段与正文；没有 frontmatter 时 raw 为 null。 */
+function splitSectionText(text: string): { raw: Record<string, unknown> | null; body: string } {
   const m = /^---\n([\s\S]*?)\n---\n\n?([\s\S]*)$/.exec(text)
-  if (!m) return { fm: null, body: text }
-  // writeSection 在正文后补了一个换行，读回时去掉
+  if (!m) return { raw: null, body: text }
+  // 写盘时在正文后补了一个换行，读回时去掉
   const body = m[2]!.replace(/\n$/, '')
   try {
-    const v = YAML.parse(m[1]!) as Record<string, unknown>
-    const range = parseRange(v.range)
-    if (typeof v.chat !== 'string' || !range || typeof v.fingerprint !== 'string') return { fm: null, body }
-    return {
-      fm: { chat: v.chat, range, fingerprint: v.fingerprint, model: String(v.model ?? ''), written: String(v.written ?? '') },
-      body,
-    }
+    const v = YAML.parse(m[1]!) as unknown
+    return { raw: v && typeof v === 'object' ? (v as Record<string, unknown>) : null, body }
   } catch {
-    return { fm: null, body }
+    return { raw: null, body }
   }
 }
 
-export async function readSection(bookDir: string, key: string): Promise<{ fm: SectionFrontmatter | null; body: string } | null> {
+function draftFm(v: Record<string, unknown> | null): SectionFrontmatter | null {
+  const range = v ? parseRange(v.range) : null
+  if (!v || typeof v.chat !== 'string' || !range || typeof v.fingerprint !== 'string') return null
+  return { chat: v.chat, range, fingerprint: v.fingerprint, model: String(v.model ?? ''), written: String(v.written ?? '') }
+}
+
+function novelFm(v: Record<string, unknown> | null): NovelFrontmatter | null {
+  if (!v || !Array.isArray(v.from) || typeof v.fingerprint !== 'string') return null
+  const from = v.from.map(normalizeSectionKey)
+  if (from.some((k) => k === null)) return null
+  return { from: from as string[], fingerprint: v.fingerprint, model: String(v.model ?? ''), written: String(v.written ?? '') }
+}
+
+async function readRaw(file: string): Promise<{ raw: Record<string, unknown> | null; body: string } | null> {
   try {
-    return parseSectionText(await fs.readFile(sectionFile(bookDir, key), 'utf8'))
+    return splitSectionText(await fs.readFile(file, 'utf8'))
   } catch {
     return null
   }
 }
 
 /** 先写临时文件再改名：中断不会留下半截的节文件。 */
+async function writeWithFm(file: string, fm: object, body: string): Promise<void> {
+  await atomicWrite(file, `---\n${YAML.stringify(fm).trimEnd()}\n---\n\n${body}\n`)
+}
+
+export async function readSection(bookDir: string, key: string): Promise<{ fm: SectionFrontmatter | null; body: string } | null> {
+  const r = await readRaw(sectionPath(bookDir, DRAFT_DIR, key))
+  return r && { fm: draftFm(r.raw), body: r.body }
+}
+
 export async function writeSection(bookDir: string, key: string, fm: SectionFrontmatter, body: string): Promise<void> {
-  await atomicWrite(sectionFile(bookDir, key), `---\n${YAML.stringify(fm).trimEnd()}\n---\n\n${body}\n`)
+  await writeWithFm(sectionPath(bookDir, DRAFT_DIR, key), fm, body)
+}
+
+export async function readNovelSection(bookDir: string, key: string): Promise<{ fm: NovelFrontmatter | null; body: string } | null> {
+  const r = await readRaw(sectionPath(bookDir, NOVEL_DIR, key))
+  return r && { fm: novelFm(r.raw), body: r.body }
+}
+
+export async function writeNovelSection(bookDir: string, key: string, fm: NovelFrontmatter, body: string): Promise<void> {
+  await writeWithFm(sectionPath(bookDir, NOVEL_DIR, key), fm, body)
+}
+
+export function novelStatus(fm: NovelFrontmatter | null, from: readonly string[], fingerprint: string): SectionStatus {
+  if (!fm) return 'missing'
+  return fm.from.join('+') === from.join('+') && fm.fingerprint === fingerprint ? 'written' : 'stale'
 }
 
 const rangeId = (chat: string, r: SectionRange): string =>
@@ -204,46 +311,67 @@ export function sectionStatus(
 }
 
 /**
- * 保存新目录前搬动节文件：按"聊天 + 范围"把已有的节对到新编号；
- * 新目录里没有对应项的移到 draft/.unused/，不删除。先全部改成临时名再落位，避免互相覆盖。
+ * 保存新目录前搬动节文件：按身份（idOf）把已有的节对到新编号；
+ * 新目录里没有对应项的移到 <dir>/.unused/，不删除。先全部改成临时名再落位，避免互相覆盖。
  */
-export async function relocateSections(bookDir: string, outline: Outline): Promise<{ moved: number; unused: number }> {
-  const draft = path.join(bookDir, DRAFT_DIR)
+async function relocate(
+  dir: string, target: Map<string, string>, idOf: (raw: Record<string, unknown> | null) => string | null,
+): Promise<{ moved: number; unused: number }> {
   let names: string[]
   try {
-    names = (await fs.readdir(draft)).filter((n) => /^\d{2}-\d{2}\.md$/.test(n))
+    names = (await fs.readdir(dir)).filter((n) => /^\d{2}-\d{2}\.md$/.test(n))
   } catch {
     return { moved: 0, unused: 0 }
   }
-  const target = new Map<string, string>()
-  outline.chapters.forEach((c, ci) => c.sections.forEach((s, si) => {
-    const id = rangeId(c.chat, s.range)
-    if (!target.has(id)) target.set(id, `${sectionKey(ci, si)}.md`)
-  }))
   const staged: Array<{ tmp: string; dest: string | null }> = []
   for (const n of names) {
-    const { fm } = parseSectionText(await fs.readFile(path.join(draft, n), 'utf8'))
-    const dest = fm ? target.get(rangeId(fm.chat, fm.range)) ?? null : null
-    if (fm && dest) target.delete(rangeId(fm.chat, fm.range))
-    const tmp = path.join(draft, `.${n}.moving`)
-    await fs.rename(path.join(draft, n), tmp)
-    staged.push({ tmp, dest: dest ?? null })
+    const { raw } = splitSectionText(await fs.readFile(path.join(dir, n), 'utf8'))
+    const id = idOf(raw)
+    const dest = id ? target.get(id) ?? null : null
+    if (id && dest) target.delete(id)
+    const tmp = path.join(dir, `.${n}.moving`)
+    await fs.rename(path.join(dir, n), tmp)
+    staged.push({ tmp, dest })
   }
   let moved = 0
   let unused = 0
   for (const s of staged) {
     if (s.dest) {
-      await fs.rename(s.tmp, path.join(draft, s.dest))
+      await fs.rename(s.tmp, path.join(dir, s.dest))
       moved++
     } else {
-      const dir = path.join(draft, UNUSED_DIR)
-      await fs.mkdir(dir, { recursive: true })
+      const u = path.join(dir, UNUSED_DIR)
+      await fs.mkdir(u, { recursive: true })
       const base = path.basename(s.tmp).replace(/^\./, '').replace(/\.moving$/, '')
-      let dest = path.join(dir, base)
-      for (let i = 2; await pathExists(dest); i++) dest = path.join(dir, base.replace(/\.md$/, `-${i}.md`))
+      let dest = path.join(u, base)
+      for (let i = 2; await pathExists(dest); i++) dest = path.join(u, base.replace(/\.md$/, `-${i}.md`))
       await fs.rename(s.tmp, dest)
       unused++
     }
   }
   return { moved, unused }
+}
+
+export async function relocateSections(bookDir: string, outline: Outline): Promise<{ moved: number; unused: number }> {
+  const target = new Map<string, string>()
+  outline.chapters.forEach((c, ci) => c.sections.forEach((s, si) => {
+    const id = rangeId(c.chat, s.range)
+    if (!target.has(id)) target.set(id, `${sectionKey(ci, si)}.md`)
+  }))
+  return relocate(path.join(bookDir, DRAFT_DIR), target, (raw) => {
+    const fm = draftFm(raw)
+    return fm ? rangeId(fm.chat, fm.range) : null
+  })
+}
+
+/** 小说节按引用的整理稿认；没有原料的节（如序言）认不出来，移到 .unused。 */
+export async function relocateNovelSections(bookDir: string, outline: NovelOutline): Promise<{ moved: number; unused: number }> {
+  const target = new Map<string, string>()
+  outline.chapters.forEach((c, ci) => c.sections.forEach((s, si) => {
+    if (s.from.length && !target.has(s.from.join('+'))) target.set(s.from.join('+'), `${sectionKey(ci, si)}.md`)
+  }))
+  return relocate(path.join(bookDir, NOVEL_DIR), target, (raw) => {
+    const fm = novelFm(raw)
+    return fm && fm.from.length ? fm.from.join('+') : null
+  })
 }

@@ -5,7 +5,9 @@ import path from 'node:path'
 import {
   createBook, findBookDir, readBookMeta, writeBookMeta, parseOutline, writeOutline, readOutline,
   sectionKey, writeSection, readSection, sectionStatus, relocateSections, DRAFT_DIR, UNUSED_DIR,
-  type Outline,
+  parseNovelOutline, readNovelOutline, writeNovelOutline, readNovelSection, writeNovelSection, novelStatus,
+  relocateNovelSections, NOVEL_DIR,
+  type Outline, type NovelOutline,
 } from '../../../src/core/book'
 
 let dir: string
@@ -129,5 +131,82 @@ describe('relocateSections', () => {
     expect(r).toEqual({ moved: 2, unused: 1 })
     const unused = await fs.readdir(path.join(b.dir, DRAFT_DIR, UNUSED_DIR))
     expect(unused).toHaveLength(1)
+  })
+})
+
+const NOVEL_YAML = `
+title: 生日那天（小说）
+style: 短段落，意象开头
+chapters:
+  - title: 序
+    sections:
+      - brief: 一段关于时间的引子
+        from: []
+  - title: 灯笼
+    sections:
+      - title: 挂灯笼
+        brief: 合并前两节
+        from: [01-01, 1-2]
+`
+
+describe('parseNovelOutline', () => {
+  it('合法：from 可为空，节号补零', () => {
+    const r = parseNovelOutline(NOVEL_YAML)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.outline.style).toBe('短段落，意象开头')
+    expect(r.outline.chapters[0]!.sections[0]).toEqual({ title: '', brief: '一段关于时间的引子', from: [] })
+    expect(r.outline.chapters[1]!.sections[0]!.from).toEqual(['01-01', '01-02'])
+  })
+  it.each([
+    ['没有话', 'title: x\nchapters: []', 'chapters'],
+    ['from 不是列表', 'title: x\nchapters:\n  - title: a\n    sections:\n      - brief: b\n        from: 01-01', 'from'],
+    ['节号写错', 'title: x\nchapters:\n  - title: a\n    sections:\n      - brief: b\n        from: [第一节]', 'from'],
+    ['同一节引用两次', 'title: x\nchapters:\n  - title: a\n    sections:\n      - brief: b\n        from: [01-01, 1-1]', 'from'],
+  ])('%s', (_n, text, word) => {
+    const r = parseNovelOutline(text)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain(word)
+  })
+})
+
+describe('小说目录与小说节文件', () => {
+  it('目录读写；没有时为 null', async () => {
+    const b = await mk()
+    expect(await readNovelOutline(b.dir)).toBeNull()
+    const r = parseNovelOutline(NOVEL_YAML)
+    if (!r.ok) throw new Error(r.error)
+    await writeNovelOutline(b.dir, r.outline)
+    expect(await readNovelOutline(b.dir)).toEqual(r.outline)
+  })
+  it('小说节文件放在 novel/，frontmatter 记 from', async () => {
+    const b = await mk()
+    const fm = { from: ['01-01', '01-02'], fingerprint: 'f', model: 'p/m', written: 't' }
+    await writeNovelSection(b.dir, '02-01', fm, '正文。')
+    expect(await readNovelSection(b.dir, '02-01')).toEqual({ fm, body: '正文。' })
+    expect(await fs.readdir(path.join(b.dir, NOVEL_DIR))).toEqual(['02-01.md'])
+    expect(await readSection(b.dir, '02-01')).toBeNull()
+  })
+  it('novelStatus', () => {
+    const fm = { from: ['01-01'], fingerprint: 'f', model: '', written: '' }
+    expect(novelStatus(null, ['01-01'], 'f')).toBe('missing')
+    expect(novelStatus(fm, ['01-01'], 'f')).toBe('written')
+    expect(novelStatus(fm, ['01-01'], 'g')).toBe('stale')
+    expect(novelStatus(fm, ['01-02'], 'f')).toBe('stale')
+  })
+  it('relocateNovelSections：按引用的整理稿跟着走，没有原料的节按标题与提要认', async () => {
+    const b = await mk()
+    await writeNovelSection(b.dir, '01-01', { from: [], fingerprint: 'f', model: '', written: '' }, '序')
+    await writeNovelSection(b.dir, '02-01', { from: ['01-01'], fingerprint: 'f', model: '', written: '' }, '甲')
+    const outline: NovelOutline = {
+      title: 't', style: '',
+      chapters: [
+        { title: 'a', sections: [{ title: '', brief: '甲', from: ['01-01'] }] },
+        { title: '序', sections: [{ title: '', brief: '一段关于时间的引子', from: [] }] },
+      ],
+    }
+    const r = await relocateNovelSections(b.dir, outline)
+    expect((await readNovelSection(b.dir, '01-01'))!.body).toBe('甲')
+    expect(r).toEqual({ moved: 1, unused: 1 })
   })
 })
