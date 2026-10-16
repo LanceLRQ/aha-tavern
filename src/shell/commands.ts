@@ -46,7 +46,7 @@ export const SUBCOMMANDS: readonly Subcommand[] = [
   sub('book', ['写书'], '开一本书：选要收入的聊天与人称（写书）', '[书名]'),
   sub('progress', ['进度'], '看书写到哪了（写书）'),
   sub('pause', ['停笔'], '停下正在写的那一节，已写好的保留（写书）'),
-  sub('export', ['导出'], '把整本书拼成一个 Markdown 文件（写书）'),
+  sub('export', ['导出'], '把整本书拼成 Markdown 文件，不带参数时整理稿与小说稿都导（写书）', '[整理稿|小说]'),
 ]
 
 export type ParsedSubcommand =

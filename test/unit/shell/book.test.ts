@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { buildBookPrompt, buildOpenQuestions, interpretOpenAnswer, openBook } from '../../../src/shell/book'
+import { buildBookPrompt, buildOpenQuestions, exportLayersOf, interpretOpenAnswer, openBook } from '../../../src/shell/book'
 import { readBookMeta, findBookDir } from '../../../src/core/book'
 import { readSession } from '../../../src/core/state'
 import { sessionsFile } from '../../../src/shell/context'
@@ -49,10 +49,32 @@ describe('buildBookPrompt', () => {
     expect(buildBookPrompt('GUIDE', { kind: 'opening' })).toContain('/aha 写书')
     const p = buildBookPrompt('GUIDE', {
       kind: 'writing', title: '生日', person: 'third', protagonist: '', chats: ['d-1'], me: '我叫夏树。', status: [], running: false,
+      style: '', novel: [],
     })
     expect(p).toContain('GUIDE')
     expect(p).toContain('d-1')
     expect(p).toContain('我叫夏树。')
     expect(p).toContain('no outline yet')
+    expect(p).toContain('novel: not started')
+  })
+  it('有小说目录时带上小说各节与文风', () => {
+    const p = buildBookPrompt('G', {
+      kind: 'writing', title: 't', person: 'third', protagonist: 'p', chats: [], me: '', status: ['01-01 第一话（一） written'],
+      running: false, style: '短段落', novel: ['01-01 小说第一话（一） missing'],
+    })
+    expect(p).toContain('style: 短段落')
+    expect(p).toContain('novel sections:')
+    expect(p).toContain('小说第一话（一） missing')
+  })
+})
+
+describe('exportLayersOf', () => {
+  it('无参数：有小说目录时两份都导，没有只导整理稿；带参数只导一份', () => {
+    expect(exportLayersOf('', true)).toEqual(['draft', 'novel'])
+    expect(exportLayersOf('', false)).toEqual(['draft'])
+    expect(exportLayersOf('小说', true)).toEqual(['novel'])
+    expect(exportLayersOf('novel', false)).toEqual(['novel'])
+    expect(exportLayersOf('整理稿', true)).toEqual(['draft'])
+    expect(exportLayersOf('别的', true)).toEqual(null)
   })
 })
