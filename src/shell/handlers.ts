@@ -1,6 +1,7 @@
 // 命令处理函数的登记处：在 installHandlers 里往 rt.handlers 添一行即可，
 // 不必改 commands.ts。表里没有的命令，入口回"尚未接上"。
 import type { Context } from '@deepseek-ai/cordis'
+import { installBook } from './book'
 import { doctorHandler } from './doctor'
 import type { Runtime } from './runtime'
 import { installChat } from './chat'
@@ -21,4 +22,5 @@ export function installHandlers(rt: Runtime, ctx: Context): void {
   if (rt.config.mode === 'setup') installSetup(ctx, rt)
   if (rt.config.mode === 'chat') installChat(ctx, rt)
   if (rt.config.mode === 'group') installGroup(ctx, rt)
+  if (rt.config.mode === 'book') installBook(ctx, rt)
 }
