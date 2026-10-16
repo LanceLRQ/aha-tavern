@@ -20,10 +20,12 @@ pnpm pack
 dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
 ```
 
-重启 DSH（`dsh web`）。新建会话时，模式列表里会多出两个：
+重启 DSH（`dsh web`）。新建会话时，模式列表里会多出四个：
 
 - **酒馆:筹备**：开店、建角色、写主角档案
 - **酒馆:单聊**：和一个角色聊天
+- **酒馆:群聊**：几个角色同台，有旁白
+- **酒馆:写书**：把聊过的故事整理成书
 
 升级时重新 `add` 新的 tgz 即可。同名同版本的包可能被缓存，换个文件名再装。
 
@@ -113,9 +115,92 @@ dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
 
 记忆存在角色文件夹里的 `memory.md`，是普通文本，你可以直接打开看、改。下次开场时，角色会带着这些记忆和你聊。
 
-## 6. 让角色画图
+## 6. 群聊
 
-配好 ComfyUI 后，角色会在值得留下的时刻先画一张图，再写这一轮的回复，图片显示在回复末尾。你也可以直接说"画一张"。
+想让几个角色同台，新开一个会话，模式选"酒馆:群聊"，工作区选同一个酒馆文件夹。
+
+**开场**：把在场的角色和情景一起说：
+
+```
+/aha 开场 白狐 青衫 今天我过生日
+```
+
+也可以直接用话说。只说情景、没点名角色时，会弹一张卡片让你多选在场的角色。选完后，插件会把"谁在场、什么情景"复述一遍让你确认，点确认才开场。在场的角色最多 5 个（插件配置 `groupCastMax`，默认 5）。
+
+**回复长什么样**：一个模型演全场。旁白以【旁白】开头，角色的台词以"名字："开头。每轮最多一段旁白加三个角色发言，谁开口由情境决定，不会硬凑。
+
+**点名**：消息里带 `@角色名`，比如 `@白狐 你怎么看`，这一轮就只有白狐回应，别的角色不插话（旁白照常可以有）。
+
+**旁白**：想改变环境或局面，用
+
+```
+/aha 旁白 让气氛紧张一点
+```
+
+角色听不到这句话，只会看到局面变了。这个要求在换场之前一直有效。
+
+**换场**：旁白发现地点或时间变了，会弹一张卡片问你要不要换场。你也可以自己来：
+
+```
+/aha 换场 第二天清晨，山门外 青衫离开
+```
+
+后面的"新情景"和"谁来谁走"都可以省略。
+
+**收场**：
+
+```
+/aha 收场
+```
+
+给这一场写梗概并起一个标题。收场之后还能接着聊。
+
+**群聊里的记忆**：
+
+- `/aha 记忆 我不吃香菜` 记给所有在场的人。
+- `/aha 记忆 @白狐 我不吃香菜` 只记给白狐。
+- 不带内容的 `/aha 记忆`，旁白会把当前场景到目前为止的内容写成梗概，并整理在场角色的记忆。
+
+群聊里发生的事，会进每个参与者的往事索引。之后你和其中一个角色单聊，TA 记得这些事，也能回忆起来；只能回忆自己在场的场景。
+
+## 7. 写书
+
+想把聊过的故事写成一本书，新开一个会话，模式选"酒馆:写书"。一个会话对应一本书，之后回到这个会话，就是接着改这本书。
+
+**开一本书**：
+
+```
+/aha 写书 白狐的山中日子
+```
+
+书名可以不写。会弹一张卡片：勾选要收入的聊天（列出最近 20 场），再选用什么人称写。
+
+**定目录**：编辑会起草一份目录（分话、分节，每节有提要），你在对话里来回改，满意了说"定了"，目录就保存了。
+
+**开写**：之后让编辑开写，插件在后台逐节写整理稿。
+
+```
+/aha 进度
+/aha 停笔
+```
+
+`/aha 进度` 看写到哪了；`/aha 停笔` 停下正在写的那一节，已写好的保留。
+
+**重写一节**：对编辑说"重写第二话（三）：少点景物描写"，只重写那一节，别的不动。
+
+**改成小说**：整理稿是按聊天顺序整理的。想要小说，就对编辑说想改写成小说。编辑会请你选或描述文风，另定一份小说目录。小说目录可以合并、重排整理稿的小节，也可以加序言。定好后逐节改写，同样可以重写某一节。
+
+**导出**：
+
+```
+/aha 导出
+```
+
+不带参数时两份都导出，都在书的目录下：整理稿是 `<书名>.md`；小说稿用小说的标题作文件名，和书名相同时是 `<书名>（小说）.md`。只要一份就写 `/aha 导出 整理稿` 或 `/aha 导出 小说`。
+
+## 8. 让角色画图
+
+配好 ComfyUI 后，角色会在值得留下的时刻先画一张图，再写这一轮的回复，图片显示在这一轮回复的第一行，正文跟在下面。你也可以直接说"画一张"。
 
 ```
 /aha 重新生图
@@ -131,9 +216,10 @@ dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
 ```
 
 有现成的图就把路径给掌柜，没有就按角色卡的外貌画。候选图满意了点"保存"，之后聊天里画的图都会照它来。详见[配置生图](image-setup.md)的"定妆图"一节。
+群聊里也能画：有画整个场景的场景图，也有只画一个在场角色的单人特写，详见[配置生图](image-setup.md)的"聊天时怎么用"。
 没配置生图也能正常聊天，只是角色不会画图。配置方法见[配置生图](image-setup.md)，用 `/aha 自检 生图` 可以查看配得对不对。
 
-## 7. 让角色开口
+## 9. 让角色开口
 
 配好语音服务后，角色的台词可以念出来。这里只写最短的路径，细节和常见问题见[配置语音](voice-setup.md)。需要苹果芯片的 Mac 和 uv。
 
@@ -147,11 +233,11 @@ voice:
 
 2. 在任一模式里输入 `/aha 语音 启动`。第一次会装运行环境、下载模型（约 2GB），先弹卡片让你确认；用 `/aha 语音 状态` 看进度。
 3. 在"酒馆:筹备"里对掌柜说："给白狐配声音。"你可以给他一段 3 到 15 秒的录音和录音里逐字说的话，也可以让他按角色卡里的 `voice` 栏描述设计一个，试听后选用。
-4. 在"酒馆:单聊"里输入 `/aha 朗读`，念上一条回复；`/aha 朗读 开` 打开自动朗读。
+4. 在"酒馆:单聊"里输入 `/aha 朗读`，念上一条回复；`/aha 朗读 开` 打开自动朗读。群聊里也一样，旁白和各个角色的台词按各自的声音念，见[配置语音](voice-setup.md)的"聊天时怎么用"。
 
 没配语音也能正常聊天，只是角色不出声。用 `/aha 自检 语音` 可以查看配得对不对。
 
-## 8. 数据在哪
+## 10. 数据在哪
 
 全都在酒馆文件夹里，删掉文件夹就是删掉这间酒馆：
 
@@ -163,16 +249,26 @@ voice:
 ├── characters/
 │   └── 白狐/
 │       ├── character.yaml   # 角色卡
+│       ├── reference.png    # 定妆图，定过妆才有
+│       ├── looks/           # 额外的形象，加过才有
 │       ├── voice_ref.wav    # 角色的声音（参考录音），配过声音才有
 │       ├── voice_ref.txt    # 录音里说的话
 │       └── memory.md        # 角色的记忆
-├── chats/
+├── chats/                   # 单聊、群聊是同一种格式
 │   └── 20261009-1223-白狐-21fl/
 │       ├── chat.jsonl       # 聊天原文，一句一行
 │       ├── summary.md       # 往事梗概（整理过才有）
 │       ├── meta.yaml
 │       ├── images/          # 生成的图片（001.png……），出过图才有
 │       └── images.jsonl     # 每张图的画面描述、种子、尺寸等
+├── books/
+│   └── 20261016-1030-白狐的山中日子-3k9d/
+│       ├── book.yaml            # 书的设定
+│       ├── outline.yaml         # 整理稿目录
+│       ├── draft/               # 整理稿，一节一个文件
+│       ├── novel-outline.yaml   # 小说目录（改成小说才有）
+│       ├── novel/               # 小说稿，一节一个文件
+│       └── 白狐的山中日子.md     # 导出的整本书，导出过才有
 └── .aha/
     └── sessions.yaml        # 会话状态
 ```
@@ -181,58 +277,22 @@ voice:
 
 卸载插件不会动这些数据。已有的酒馆会话还能翻看，但不能继续聊；重新装回后就能接着聊。
 
-## 9. 换主题
+## 11. 换主题
 
 主题决定掌柜怎么说话、各种东西叫什么。自带两套：
 
 - `fools`：愚者，默认
 - `plain`：直白
 
-在你的 profile 的 `cordis.patch.yml` 里设置（路径是 `$DSH_HOME/profiles/<名>/cordis.patch.yml`，默认 `~/.dsh/profiles/<名>/cordis.patch.yml`）。要把两个模式整条覆盖，每个模式的 `aha-tavern` 里都加上 `theme`：
+国风 `guofeng` 的称呼与直白相同，没有单独的主题文件。
+
+主题要在你的 profile 的 `cordis.patch.yml` 里设置（路径是 `$DSH_HOME/profiles/<名>/cordis.patch.yml`，默认 `~/.dsh/profiles/<名>/cordis.patch.yml`）。做法是整条覆盖酒馆的模式定义：
+
+1. 打开本仓库的 `cordis.patch.yml`，把 `preset-tavern-setup`、`preset-tavern-chat`、`preset-tavern-group`、`preset-tavern-book` 这四个模式整条复制出来。换主题要四个模式都改。
+2. 原样粘到你自己 profile 的 `cordis.patch.yml` 里。
+3. 在每个模式的 `aha-tavern` 插件的 `config` 里加一行 `theme: plain`，以单聊为例：
 
 ```yaml
-- id: preset-tavern-setup
-  name: '@deepseek-ai/dsh-agent-preset'
-  config:
-    id: tavern-setup
-    name: '酒馆:筹备'
-    description: 开店、建角色卡、写主角档案、写世界观、导入。
-    order: 5
-    plugins:
-      - id: persona
-        name: '@deepseek-ai/dsh-persona'
-        config:
-          prefix: 你是阿哈酒馆的主持人，只负责筹备，不是通用助手；怎么称呼自己、能做什么，以下文为准。
-          includeRuntimeContext: false
-      - id: tool-ask-user
-        name: '@deepseek-ai/dsh-tool-ask-user'
-      - id: aha-tavern
-        name: aha-tavern
-        config:
-          mode: setup
-          theme: plain
-      - id: mcp-websearch
-        name: '@deepseek-ai/dsh-mcp-client'
-        config:
-          serverName: websearch
-          transport: stdio
-          command: npx
-          args: ['-y', 'open-websearch@2.2.0']
-- id: preset-tavern-chat
-  name: '@deepseek-ai/dsh-agent-preset'
-  config:
-    id: tavern-chat
-    name: '酒馆:单聊'
-    description: 和一个角色聊天。
-    order: 6
-    plugins:
-      - id: persona
-        name: '@deepseek-ai/dsh-persona'
-        config:
-          prefix: 你是阿哈酒馆里的一员，不是通用助手：选定角色之前负责接待，之后扮演选定的角色；具体以下文为准。
-          includeRuntimeContext: false
-      - id: tool-ask-user
-        name: '@deepseek-ai/dsh-tool-ask-user'
       - id: aha-tavern
         name: aha-tavern
         config:
@@ -240,32 +300,10 @@ voice:
           theme: plain
 ```
 
-改完重启 DSH。主题只换称呼和口吻，命令名、文件名、数据格式都不变。
+要整条照抄，别漏掉每个模式末尾的 `compaction` 那一段，否则长聊天会失去压缩。改完重启 DSH。主题只换称呼和口吻，命令名、文件名、数据格式都不变。
 
-## 10. 关掉自带的联网搜索
+## 12. 关掉自带的联网搜索
 
-"酒馆:筹备"自带联网搜索，方便掌柜查资料来建角色卡。不想要它，就用第 9 节同样的办法覆盖 `preset-tavern-setup`，把 `mcp-websearch` 那一段删掉：
+"酒馆:筹备"自带联网搜索，方便掌柜查资料来建角色卡。不想要它，就用第 11 节同样的办法，只复制 `preset-tavern-setup` 这一条到自己 profile 的 `cordis.patch.yml`，并把 `mcp-websearch` 那一段删掉。其余照抄，同样别漏掉 `compaction` 那一段。
 
-```yaml
-- id: preset-tavern-setup
-  name: '@deepseek-ai/dsh-agent-preset'
-  config:
-    id: tavern-setup
-    name: '酒馆:筹备'
-    description: 开店、建角色卡、写主角档案、写世界观、导入。
-    order: 5
-    plugins:
-      - id: persona
-        name: '@deepseek-ai/dsh-persona'
-        config:
-          prefix: 你是阿哈酒馆的主持人，只负责筹备，不是通用助手；怎么称呼自己、能做什么，以下文为准。
-          includeRuntimeContext: false
-      - id: tool-ask-user
-        name: '@deepseek-ai/dsh-tool-ask-user'
-      - id: aha-tavern
-        name: aha-tavern
-        config:
-          mode: setup
-```
-
-只写 `preset-tavern-setup` 这一条就行，另一个模式不用动。改完重启 DSH。"酒馆:单聊"本来就没有联网工具。
+其他模式不用动，它们本来就没有联网工具。改完重启 DSH。
