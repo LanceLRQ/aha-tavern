@@ -10,7 +10,7 @@ import type { Theme } from '../core/theme'
 import { answerItem, CARD_OPEN_MESSAGE, isAbort, type AskItem } from './confirm'
 import { buildContext, localDate, type CommandHandler, type HostAgent } from './context'
 import type { GoodEntry } from './chat'
-import { matchGroupNames } from './group-common'
+import { matchGroupNames, sceneTitleOf } from './group-common'
 import type { GroupEnv } from './group'
 import { flatText } from './steer'
 import { isReadonly } from './writable'
@@ -210,7 +210,7 @@ export function sceneTool(env: GroupEnv, deps: SceneDeps): (agent: HostAgent | u
       const show = await readShowSummary(tavernDir, chatId)
       await writeShowSummary(tavernDir, chatId, upsertScene(show, {
         index: scene,
-        title: parsed.endingTitle ?? null,
+        title: await sceneTitleOf(tavernDir, chatId, show, scene, parsed.endingTitle),
         cast: namesOf(byId, present),
         text: parsed.summary,
       }))
@@ -272,7 +272,7 @@ export function wrapTool(env: GroupEnv): (agent: HostAgent | undefined, args: un
       await writeShowSummary(tavernDir, chatId, {
         ...upsertScene(show, {
           index: scene,
-          title: parsed.endingTitle ?? null,
+          title: await sceneTitleOf(tavernDir, chatId, show, scene, parsed.endingTitle),
           cast: namesOf(byId, present),
           text: parsed.summary,
         }),

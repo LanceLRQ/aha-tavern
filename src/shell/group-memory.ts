@@ -8,7 +8,7 @@ import { appendFact, appendPinned, readMemory, replaceSections, type SectionPatc
 import { sceneLabel, upsertScene } from '../core/summary'
 import { buildContext, type CommandHandler, type HostAgent, type HostServices } from './context'
 import type { GoodEntry } from './chat'
-import { matchGroupNames } from './group-common'
+import { matchGroupNames, sceneTitleOf } from './group-common'
 import type { GroupTranscriptRecorder } from './group-transcript'
 import { RememberTurns, LIMITS } from './remember'
 import { ReviewReminder } from '../core/reminder'
@@ -311,14 +311,13 @@ export function groupReviewTool(env: GroupMemoryEnv): (agent: HostAgent | undefi
     const hit = matchGroupNames(presentGood, parsed.members.map((m) => m.name))
     if (hit.kind !== 'ok') return 'error: match failed'
     const byName = new Map(parsed.members.map((m) => [m.name, m]))
-    // 1 当前场景的梗概：保留已有的小节标题（换场或收场时会覆盖这段）
+    // 1 当前场景的梗概：标题沿用已有的或换场时定的（换场或收场时会覆盖这段）
     const scene = (await env.recorder.currentScene(agent)) ?? 1
     const show = await readShowSummary(cc.tavern.dir, chatId)
-    const existing = show.scenes.find((s) => s.index === scene)
     const names = new Map((await listCharacters(cc.tavern.dir)).filter((e) => e.ok).map((e) => [(e as GoodEntry).card.id, (e as GoodEntry).card.name]))
     await writeShowSummary(cc.tavern.dir, chatId, upsertScene(show, {
       index: scene,
-      title: existing?.title ?? null,
+      title: await sceneTitleOf(cc.tavern.dir, chatId, show, scene),
       cast: present.map((id) => names.get(id) ?? id),
       text: parsed.sceneSummary,
     }))

@@ -199,6 +199,14 @@ describe('wrapTool', () => {
     expect((await readMemory(await memFileOfName('墨鸦'))).index).toEqual([])
   })
 
+  it('收场没给 ending_title：最后一个场景沿用换场时定的标题', async () => {
+    ask.mockResolvedValue({ answers: [{ selected: ['换场'] }] })
+    await scene(agent, { summary: '大堂里布置好了。', title: '后院夜话', ending_title: '大堂布置' })
+    await env.recorder.drain('s1')
+    await wrap(agent, { summary: '吹了蜡烛。', title: '生日派对' })
+    expect((await readShowSummary(dir, chatId)).scenes.map((x) => [x.index, x.title])).toEqual([[1, '大堂布置'], [2, '后院夜话']])
+  })
+
   it('再次收场：覆盖最后一段与标题', async () => {
     await wrap(agent, { summary: '第一版。', title: '旧标题' })
     // 中途换过场之后又收场：换场写了场景一，收场写场景二并覆盖标题

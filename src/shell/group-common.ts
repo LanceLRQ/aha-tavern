@@ -1,5 +1,7 @@
-// 群聊外壳共用的纯函数：名字匹配（group.ts 与 group-scene.ts 都要用，放这里避免循环依赖）。
+// 群聊外壳共用的函数：名字匹配、场景标题（group.ts、group-scene.ts、group-memory.ts 都要用，放这里避免循环依赖）。
 import { matchCharacterName, type CharacterEntry } from '../core/card'
+import { readRecords } from '../core/chat'
+import type { ShowSummary } from '../core/summary'
 import type { BadEntry, GoodEntry } from './chat'
 
 export type NameResolve =
@@ -34,4 +36,16 @@ export function matchGroupNames(entries: readonly CharacterEntry[], names: reado
     }
   }
   return { kind: 'ok', entries: out }
+}
+
+/** 写某个场景的梗概时用的标题：这次给的 > 梗概里已有的 > 换场时写进场景分界的（场景一没有分界）。 */
+export async function sceneTitleOf(
+  tavernDir: string, chatId: string, show: ShowSummary, scene: number, given?: string,
+): Promise<string | null> {
+  if (given) return given
+  const existing = show.scenes.find((s) => s.index === scene)?.title
+  if (existing) return existing
+  const { records } = await readRecords(tavernDir, chatId)
+  const boundary = records.filter((r) => r.type === 'scene' && r.scene === scene).pop()
+  return boundary?.text.trim() || null
 }
