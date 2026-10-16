@@ -21,7 +21,7 @@ import { sceneLabel } from '../core/summary'
 import type { HostAgent } from './context'
 import type { Runtime } from './runtime'
 import {
-  BookJobs, buildDraftSystem, buildDraftUser, buildNovelSystem, fillImages, TAIL_CHARS, WORLD_CHARS, type GenerateFn, type SectionTask,
+  BookJobs, buildDraftSystem, buildDraftUser, buildNovelSystem, fillImages, restoreImages, TAIL_CHARS, WORLD_CHARS, type GenerateFn, type SectionTask,
 } from './book-writer'
 import { flatText } from './steer'
 
@@ -342,7 +342,7 @@ function taskOf(
           toc: tocOf(outline, row),
           previous: await previousOf(at, outline, rows, row),
           source: src.text,
-          ...(current !== undefined ? { current: current.replace(/!\[\]\([^)]*\)/g, '').trim() } : {}),
+          ...(current !== undefined ? { current: restoreImages(current, images, chatRel) } : {}),
           ...(request !== undefined ? { request } : {}),
         }),
       }
@@ -422,7 +422,7 @@ function novelTaskOf(
           toc: tocOf(novel, row),
           previous: await previousNovelOf(at, novel, row),
           source: src.text || `（本节没有原料，按提要写：${section.brief}）`,
-          ...(current !== undefined ? { current: current.replace(/!\[\]\([^)]*\)/g, '').trim() } : {}),
+          ...(current !== undefined ? { current: restoreImages(current, images, '') } : {}),
           ...(request !== undefined ? { request } : {}),
         }),
       }

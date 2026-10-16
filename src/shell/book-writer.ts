@@ -67,6 +67,14 @@ export function fillImages(text: string, images: ReadonlyArray<{ n: number; file
   return out.trim()
 }
 
+/** fillImages 的反过程：重写时把当前稿里的图片引用换回 [插图N]，模型才知道插图原来在哪；认不出的引用删掉。 */
+export function restoreImages(body: string, images: ReadonlyArray<{ n: number; file: string }>, chatRel: string): string {
+  return body.replace(/!\[[^\]]*\]\(([^)\s]+)\)/g, (_all, ref: string) => {
+    const img = images.find((i) => `${chatRel ? `${chatRel}/` : ''}${i.file}` === ref)
+    return img ? `[插图${img.n}]` : ''
+  }).trim()
+}
+
 /** model 是写进节文件的「提供方/模型」 */
 export type GenerateResult = { kind: 'ok'; text: string; model?: string } | { kind: 'error'; message: string; retry: boolean }
 export type GenerateFn = (system: string, user: string, signal: AbortSignal) => Promise<GenerateResult>

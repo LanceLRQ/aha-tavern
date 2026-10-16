@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
-  buildDraftSystem, buildNovelSystem, DEFAULT_STYLE, buildDraftUser, fillImages, BookJobs, type GenerateFn, type SectionTask,
+  buildDraftSystem, buildNovelSystem, DEFAULT_STYLE, buildDraftUser, fillImages, restoreImages, BookJobs, type GenerateFn, type SectionTask,
 } from '../../../src/shell/book-writer'
 
 describe('buildDraftSystem', () => {
@@ -118,5 +118,14 @@ describe('fillImages 不加前缀', () => {
   it('chatRel 为空串时原样使用路径', () => {
     expect(fillImages('[插图1]', [{ n: 1, file: '../../../chats/c/images/001.png' }], ''))
       .toBe('![](../../../chats/c/images/001.png)')
+  })
+})
+
+describe('restoreImages', () => {
+  it('节文件里的图片引用换回占位符，与 fillImages 互逆；认不出的删掉', () => {
+    const images = [{ n: 1, file: 'images/001.png' }, { n: 2, file: 'images/002.png' }]
+    const body = fillImages('甲。\n\n[插图2]\n\n乙。\n\n[插图1]', images, '../../../chats/c')
+    expect(restoreImages(`${body}\n\n![](../x.png)`, images, '../../../chats/c')).toBe('甲。\n\n[插图2]\n\n乙。\n\n[插图1]')
+    expect(restoreImages('![](p.png)', [{ n: 3, file: 'p.png' }], '')).toBe('[插图3]')
   })
 })
