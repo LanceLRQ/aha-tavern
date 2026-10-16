@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { loadImageService, loadVoiceService, VOICE_MODELS } from '../../../src/core/services'
 import { TtsError } from '../../../src/core/tts'
 import type { VoiceServerInfo } from '../../../src/core/voice-server'
@@ -19,10 +19,10 @@ let dir: string
 let file: string
 let wfDir: string
 let state: VoiceInstanceState
-let ops: { [K in keyof VoiceOps]: ReturnType<typeof vi.fn> }
-let probeModels: ReturnType<typeof vi.fn>
-let probeVoice: ReturnType<typeof vi.fn>
-let checkImage: ReturnType<typeof vi.fn>
+let ops: { [K in keyof VoiceOps]: Mock<(...args: any[]) => any> }
+let probeModels: Mock<(...args: any[]) => any>
+let probeVoice: Mock<(...args: any[]) => any>
+let checkImage: Mock<(...args: any[]) => any>
 let api: SettingsApi
 let rt: ReturnType<typeof fakeRuntime>
 

@@ -1,10 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { DrawEcho, echoNotice, imageLine } from '../../../src/shell/draw'
 
 const P = '/tmp/酒馆 a/img (1).png'
-let warn: ReturnType<typeof vi.fn>
+let warn: Mock<(...args: any[]) => any>
 let echo: DrawEcho
-let nudge: ReturnType<typeof vi.fn>
+let nudge: Mock<(...args: any[]) => any>
 
 beforeEach(() => {
   warn = vi.fn()
@@ -71,7 +71,7 @@ describe('DrawEcho 轮次收尾核对', () => {
 })
 
 describe('DrawEcho 用户停止', () => {
-  let debug: ReturnType<typeof vi.fn>
+  let debug: Mock<(...args: any[]) => any>
   beforeEach(() => {
     debug = vi.fn()
     echo = new DrawEcho({ warn, debug })

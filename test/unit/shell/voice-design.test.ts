@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { saveCharacter } from '../../../src/core/card'
 import { VOICE_DESIGN_MODEL, type VoiceServiceResult, type VoiceServiceSettings } from '../../../src/core/services'
 import { createTavern } from '../../../src/core/tavern'
@@ -47,19 +47,19 @@ let tavern: string
 let tmpRoot: string
 let charDir: string
 let cfg: VoiceServiceResult
-let ask: ReturnType<typeof vi.fn>
+let ask: Mock<(...args: any[]) => any>
 let script: Step[]
-let synth: ReturnType<typeof vi.fn>
-let unload: ReturnType<typeof vi.fn>
-let play: ReturnType<typeof vi.fn>
-let stopIfOwner: ReturnType<typeof vi.fn>
-let inspect: ReturnType<typeof vi.fn>
-let modelDownloaded: ReturnType<typeof vi.fn>
-let restartService: ReturnType<typeof vi.fn>
-let lastStartOffline: ReturnType<typeof vi.fn>
-let isLaunching: ReturnType<typeof vi.fn>
-let findPlayer: ReturnType<typeof vi.fn>
-let onRegistered: ReturnType<typeof vi.fn>
+let synth: Mock<(...args: any[]) => any>
+let unload: Mock<(...args: any[]) => any>
+let play: Mock<(...args: any[]) => any>
+let stopIfOwner: Mock<(...args: any[]) => any>
+let inspect: Mock<(...args: any[]) => any>
+let modelDownloaded: Mock<(...args: any[]) => any>
+let restartService: Mock<(...args: any[]) => any>
+let lastStartOffline: Mock<(...args: any[]) => any>
+let isLaunching: Mock<(...args: any[]) => any>
+let findPlayer: Mock<(...args: any[]) => any>
+let onRegistered: Mock<(...args: any[]) => any>
 let declines: DeclineTracker
 let gate: SessionGate
 let log: { debug: any; info: any; warn: any; error: any }

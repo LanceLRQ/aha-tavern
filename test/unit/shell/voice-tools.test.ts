@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { saveCharacter } from '../../../src/core/card'
 import { createTavern } from '../../../src/core/tavern'
 import { MAX_VOICE_SECONDS, MIN_VOICE_SECONDS, VOICE_AUDIO_FILE, VOICE_TEXT_FILE } from '../../../src/core/voice'
@@ -44,11 +44,11 @@ let root: string
 let tavern: string
 let charDir: string
 let src: string
-let ask: ReturnType<typeof vi.fn>
-let speak: ReturnType<typeof vi.fn>
-let readiness: ReturnType<typeof vi.fn>
-let convert: ReturnType<typeof vi.fn>
-let onRegistered: ReturnType<typeof vi.fn>
+let ask: Mock<(...args: any[]) => any>
+let speak: Mock<(...args: any[]) => any>
+let readiness: Mock<(...args: any[]) => any>
+let convert: Mock<(...args: any[]) => any>
+let onRegistered: Mock<(...args: any[]) => any>
 let declines: DeclineTracker
 let exec: (args: unknown, agent?: HostAgent | null) => Promise<string>
 let defs: Record<string, { description: string; parameters: Record<string, { required?: boolean }>; execute(a: unknown, e: unknown): Promise<string> }>

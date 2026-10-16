@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { DEFAULTS } from '../../../src/config'
 import { listCharacters, MEMORY_FILE, saveCharacter } from '../../../src/core/card'
 import { createChat, patchChatMeta, readChatMeta, readRecords, readShowSummary } from '../../../src/core/chat'
@@ -24,8 +24,8 @@ let theme: Theme
 let dir: string
 let chatId: string
 let target: GroupTarget
-let ask: ReturnType<typeof vi.fn>
-let rebuild: ReturnType<typeof vi.fn>
+let ask: Mock<(...args: any[]) => any>
+let rebuild: Mock<(...args: any[]) => any>
 let env: GroupEnv
 
 beforeEach(async () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { ImageServiceResult, ImageServiceSettings } from '../../../src/core/services'
 import { IMAGE_SERVICE_DEFAULTS } from '../../../src/core/services'
 import type { HostAgent } from '../../../src/shell/context'
@@ -14,12 +14,12 @@ let clock: number
 let facts: Map<string, SessionFacts>
 let service: ImageServiceResult | Error
 let probeResult: 'ok' | 'fail'
-let probe: ReturnType<typeof vi.fn>
+let probe: Mock<(...args: any[]) => any>
 let hidden: Set<string>
 let hideCalls: string[]
 let releaseCalls: string[]
-let onChange: ReturnType<typeof vi.fn>
-let log: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> }
+let onChange: Mock<(...args: any[]) => any>
+let log: { info: Mock<(...args: any[]) => any>; warn: Mock<(...args: any[]) => any> }
 
 function make(): DrawAvailability {
   return new DrawAvailability({
