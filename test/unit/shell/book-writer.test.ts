@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
-  buildDraftSystem, buildDraftUser, fillImages, BookJobs, type GenerateFn, type SectionTask,
+  buildDraftSystem, buildNovelSystem, DEFAULT_STYLE, buildDraftUser, fillImages, BookJobs, type GenerateFn, type SectionTask,
 } from '../../../src/shell/book-writer'
 
 describe('buildDraftSystem', () => {
@@ -101,5 +101,22 @@ describe('BookJobs', () => {
     expect(jobs.start('b1', [task('01-01')], gen, { onSection: () => {}, onFinish: () => {} })).toBe(true)
     expect(jobs.start('b1', [task('01-02')], gen, { onSection: () => {}, onFinish: () => {} })).toBe(false)
     expect(jobs.current('b1')).toBe('01-01')
+  })
+})
+
+describe('buildNovelSystem', () => {
+  it('人称、文风都替换；文风为空用默认', () => {
+    const s = buildNovelSystem('third', '夏树', '短段落')
+    expect(s).toContain('「夏树」')
+    expect(s).toContain('文风：短段落')
+    expect(s).not.toContain('{{')
+    expect(buildNovelSystem('first', '', '')).toContain(`文风：${DEFAULT_STYLE}`)
+  })
+})
+
+describe('fillImages 不加前缀', () => {
+  it('chatRel 为空串时原样使用路径', () => {
+    expect(fillImages('[插图1]', [{ n: 1, file: '../../../chats/c/images/001.png' }], ''))
+      .toBe('![](../../../chats/c/images/001.png)')
   })
 })

@@ -3,6 +3,7 @@
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import draftGuide from '../prompts/book-draft.md'
+import novelGuide from '../prompts/book-novel.md'
 import type { BookPerson } from '../core/book'
 import { summarizationTarget, type AgentLike, type LlmContextLike } from '../compaction'
 import { escapeClosingTag } from './steer'
@@ -17,6 +18,16 @@ export function buildDraftSystem(person: BookPerson, protagonist: string): strin
     ? '第一人称。主角自称「我」，叙述贴着主角。'
     : `第三人称。主角写作「${protagonist}」，叙述贴着主角：只写主角看到、听到、想到的；其他人只写言行。`
   return draftGuide.replace('{{person}}', p)
+}
+
+/** 小说稿没写文风时用的默认描述。 */
+export const DEFAULT_STYLE = '短段落；对话嵌在叙述里；克制，少堆形容词；场景之间留白。'
+
+export function buildNovelSystem(person: BookPerson, protagonist: string, style: string): string {
+  const p = person === 'first'
+    ? '第一人称。主角自称「我」。'
+    : `第三人称。主角写作「${protagonist}」；以主角的视角为主，场景需要时可以切到其他人物。`
+  return novelGuide.replace('{{person}}', p).replace('{{style}}', style.trim() || DEFAULT_STYLE)
 }
 
 const block = (tag: string, body: string): string => `<${tag}>\n${escapeClosingTag(body, tag)}\n</${tag}>`
@@ -41,10 +52,10 @@ export function buildDraftUser(i: DraftUserInput): string {
   return parts.join('\n\n')
 }
 
-/** [插图N] 换成图片引用；没出现的补在节末；编造的编号删掉。chatRel 是节文件到聊天目录的相对路径。 */
+/** [插图N] 换成图片引用；没出现的补在节末；编造的编号删掉。chatRel 是节文件到聊天目录的相对路径，空串表示 file 已是完整的相对路径。 */
 export function fillImages(text: string, images: ReadonlyArray<{ n: number; file: string }>, chatRel: string): string {
   const used = new Set<number>()
-  const ref = (file: string) => `![](${chatRel}/${file})`
+  const ref = (file: string) => `![](${chatRel ? `${chatRel}/` : ''}${file})`
   let out = text.replace(/\[插图(\d+)\]/g, (_all, d: string) => {
     const img = images.find((i) => i.n === Number(d))
     if (!img) return ''
