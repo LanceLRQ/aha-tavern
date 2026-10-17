@@ -11,7 +11,7 @@ import { summarizeLooks } from '../core/looks'
 import { readVoice } from '../core/voice'
 import { memoryChars, readMemory, replaceSections, type Memory } from '../core/memory'
 import { isTavern } from '../core/tavern'
-import type { HostAgent } from './context'
+import { currentWorkingDirectory, type HostAgent } from './context'
 import type { Runtime } from './runtime'
 import { createConfirm, DeclineTracker, SessionGate, type AskFn, type Confirm } from './confirm'
 import { lookLabel, renderCard } from './setup-prompt'
@@ -311,8 +311,8 @@ export async function rewriteMemoryText(
 
 /** 工具执行时的会话工作区：必须已是酒馆。 */
 async function tavernDirOf(agent: HostAgent | undefined): Promise<string | undefined> {
-  const cwd = agent?.session?.header?.cwd
-  return typeof cwd === 'string' && cwd !== '' && (await isTavern(cwd)) ? cwd : undefined
+  const cwd = currentWorkingDirectory(agent)
+  return cwd !== undefined && (await isTavern(cwd)) ? cwd : undefined
 }
 
 export const NOT_TAVERN = 'error: this workspace is not a tavern yet, nothing saved'

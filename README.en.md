@@ -86,7 +86,7 @@ Restart `dsh web`. When you create a new session, the mode list now has four tav
 
 You need:
 
-- DSH
+- DSH (tested with `0.2.0-rc.2` and `0.2.1-rc.1`)
 - A working model (local or online)
 - To let characters draw: a ComfyUI, see [Image setup](docs/en/image-setup.md)
 - To let characters speak: an Apple-silicon Mac with uv, or an OpenAI-compatible voice service you run yourself, see [Voice setup](docs/en/voice-setup.md)

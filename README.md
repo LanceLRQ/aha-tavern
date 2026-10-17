@@ -85,7 +85,7 @@ dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
 
 运行时需要：
 
-- DSH
+- DSH（已验证兼容 `0.2.0-rc.2` 与 `0.2.1-rc.1`）
 - 一个能用的模型（本地模型或在线模型都行）
 - 想让角色画图：一个 ComfyUI，见[配置生图](docs/image-setup.md)
 - 想让角色开口：苹果芯片的 Mac 加 uv，或者一个自己部署的 OpenAI 兼容语音服务，见[配置语音](docs/voice-setup.md)

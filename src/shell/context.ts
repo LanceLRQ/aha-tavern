@@ -66,12 +66,21 @@ export interface CommandContext {
   record: SessionRecord | null
 }
 
+/** 新宿主按会话读取实时目录；旧宿主没有该服务时使用初始目录。 */
+export function currentWorkingDirectory(agent: HostAgent | undefined): string | undefined {
+  const session = agent?.session
+  if (!session) return undefined
+  const ctx = agent.ctx as { get?(name: string): { get(session: NonNullable<HostAgent['session']>): unknown } | undefined } | undefined
+  const workingDirectory = ctx?.get?.('workingDirectory')
+  const cwd = workingDirectory === undefined ? session.header?.cwd : workingDirectory.get(session)
+  return typeof cwd === 'string' && cwd !== '' ? cwd : undefined
+}
+
 export async function buildContext(
   agent: HostAgent, services: HostServices, log?: Pick<Log, 'warn'>,
 ): Promise<CommandContext> {
   const mode = modeFromPreset(services.agentPresets.composedPreset(agent.ctx))
-  const rawCwd = agent.session?.header?.cwd
-  const cwd = typeof rawCwd === 'string' && rawCwd !== '' ? rawCwd : undefined
+  const cwd = currentWorkingDirectory(agent)
   const base = { mode, cwd, sessionId: agent.id }
   if (mode === null) {
     return { ...base, tavern: null, state: null, outsideReason: null, record: null }

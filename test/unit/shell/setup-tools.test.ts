@@ -109,6 +109,38 @@ describe('工具注册与执行', () => {
     expect(await defs.aha_save_world!.execute({ text: 'x' }, {})).toBe(NOT_TAVERN)
   })
 
+  it('切换目录后只写当前酒馆；当前目录不是酒馆时不写初始酒馆', async () => {
+    await createTavern(dir, { name: 'initial' })
+    const current = path.join(dir, 'current')
+    const outside = path.join(dir, 'outside')
+    await fs.mkdir(current)
+    await fs.mkdir(outside)
+    await createTavern(current, { name: 'current' })
+    const { defs, onSaved } = setup()
+    let cwd = dir
+    const agent = agentAt(dir)
+    const a = { ...agent, ctx: { get: () => ({ get: () => cwd }) } }
+    expect(await defs.aha_save_profile!.execute({ text: 'initial' }, { agent: a })).toContain('profile saved')
+    cwd = current
+    expect(await defs.aha_save_profile!.execute({ text: 'current' }, { agent: a })).toContain('profile saved')
+    expect(await fs.readFile(path.join(dir, 'me.md'), 'utf8')).toBe('initial')
+    expect(await fs.readFile(path.join(current, 'me.md'), 'utf8')).toBe('current')
+    cwd = outside
+    expect(await defs.aha_save_profile!.execute({ text: 'rejected' }, { agent: a })).toBe(NOT_TAVERN)
+    expect(await fs.readFile(path.join(dir, 'me.md'), 'utf8')).toBe('initial')
+    await expect(fs.stat(path.join(outside, 'me.md'))).rejects.toThrow()
+    expect(onSaved).toHaveBeenCalledTimes(2)
+  })
+
+  it('目录服务出错时拒绝工具执行，不写初始酒馆', async () => {
+    await createTavern(dir, { name: 'initial' })
+    const { defs, onSaved } = setup()
+    const agent = { ...agentAt(dir), ctx: { get: () => ({ get: () => { throw new Error('cwd unavailable') } }) } }
+    await expect(defs.aha_save_profile!.execute({ text: 'rejected' }, { agent })).rejects.toThrow('cwd unavailable')
+    await expect(fs.stat(path.join(dir, 'me.md'))).rejects.toThrow()
+    expect(onSaved).not.toHaveBeenCalled()
+  })
+
   it('保存成功后刷新该会话的提示词段；失败不刷新', async () => {
     await createTavern(dir, { name: 't' })
     const { defs, onSaved } = setup()

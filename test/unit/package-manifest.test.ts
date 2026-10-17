@@ -1,9 +1,26 @@
 import fs from 'node:fs'
+import { satisfies } from 'semver'
 import { describe, expect, it } from 'vitest'
 import YAML from 'yaml'
 
 const read = (f: string) => fs.readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8')
 const pkg = JSON.parse(read('package.json'))
+
+describe('DSH 运行时兼容范围', () => {
+  const packages = ['dsh-compaction-basic', 'dsh-llm', 'dsh-tools', 'dsh-typert-protocol']
+  for (const name of ['dsh', ...packages]) {
+    it(`${name} 接受两个受支持的候选版本并排除范围外版本`, () => {
+      const range = name === 'dsh' ? pkg.engines?.dsh : pkg.peerDependencies[`@deepseek-ai/${name}`]
+      expect(range).toBeTypeOf('string')
+      for (const version of ['0.2.0-rc.2', '0.2.1-rc.1', '0.2.1']) {
+        expect(satisfies(version, range), version).toBe(true)
+      }
+      for (const version of ['0.2.0-rc.1', '0.2.1-rc.0', '0.3.0-rc.1', '0.3.0']) {
+        expect(satisfies(version, range), version).toBe(false)
+      }
+    })
+  }
+})
 
 describe('设置页的包清单约定', () => {
   it('导出 ./typert 与 ./client，并声明浏览器端', () => {
