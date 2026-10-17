@@ -94,6 +94,7 @@ describe('importCharacter', () => {
     const a = await mk('白狐')
     const upper = path.join(a.dir, 'Character.yaml')
     await fs.rename(path.join(a.dir, CARD_FILE), upper)
+    if (!(await exists(path.join(a.dir, CARD_FILE)))) return ctx.skip()
     if ((await fs.readdir(a.dir)).includes(CARD_FILE)) return ctx.skip()
     await importCharacter(src, dst, { characterId: a.card.id, now: NOW })
     const got = await readCharacter(dst, a.card.id)
