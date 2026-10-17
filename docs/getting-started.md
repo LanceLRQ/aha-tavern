@@ -8,19 +8,14 @@
 
 需要先装好 DSH，并准备一个能用的模型。
 
-阿哈酒馆还没发布到 npm，先自己打一个安装包：
+从 [v0.1.0-rc1 预发布](https://github.com/LanceLRQ/dsh-aha-tavern/releases/tag/v0.1.0-rc1)下载安装包，装进你用的 profile（下面以 `web` 为例）：
 
 ```bash
-pnpm install
-pnpm build
-pnpm pack
+curl -fLO https://github.com/LanceLRQ/dsh-aha-tavern/releases/download/v0.1.0-rc1/aha-tavern-0.1.0-rc1.tgz
+dsh plugin --profile web add ./aha-tavern-0.1.0-rc1.tgz
 ```
 
-会得到 `aha-tavern-0.0.1.tgz`。把它装进你用的 profile（下面以 `web` 为例）：
-
-```bash
-dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
-```
+Release 同时提供 `.sha256` 校验文件。也可以在源码仓库执行 `pnpm install` 和 `pnpm pack`，自行生成同名安装包。
 
 重启 DSH（`dsh web`）。新建会话时，模式列表里会多出四个：
 

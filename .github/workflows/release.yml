@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 package.json 的版本 $version 不一致"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      - name: 构建并打包
+        run: |
+          pnpm pack
+          artifact="aha-tavern-$VERSION.tgz"
+          sha256sum "$artifact" > "$artifact.sha256"
+          echo "ARTIFACT=$artifact" >> "$GITHUB_ENV"
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          阿哈酒馆：角色扮演聊天、群聊、写书、ComfyUI 剧情插画与台词语音。
+
+          已验证兼容 DSH \`0.2.0-rc.2\` 与 \`0.2.1-rc.1\`。
+
+          安装或升级（下面以 \`web\` profile 为例）：
+
+          \`\`\`bash
+          curl -fLO https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ARTIFACT
+          dsh plugin --profile web add ./$ARTIFACT
+          \`\`\`
+
+          安装后重启 DSH。生图与语音需要另行配置外部服务。
+          详见[使用指南](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/getting-started.md)、[配置生图](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/image-setup.md)和[配置语音](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/voice-setup.md)。
+
+          附件中的 \`.sha256\` 文件可用于校验安装包。
+          EOF
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "$ARTIFACT" "$ARTIFACT.sha256" \
+            --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes "${prerelease[@]}"

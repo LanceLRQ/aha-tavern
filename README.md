@@ -67,19 +67,14 @@
 
 ## 安装
 
-还没发布到 npm，先从源码打一个安装包：
+从 [v0.1.0-rc1 预发布](https://github.com/LanceLRQ/dsh-aha-tavern/releases/tag/v0.1.0-rc1)下载安装包，装进你用的 profile（下面以 `web` 为例）：
 
 ```bash
-pnpm install
-pnpm build
-pnpm pack
+curl -fLO https://github.com/LanceLRQ/dsh-aha-tavern/releases/download/v0.1.0-rc1/aha-tavern-0.1.0-rc1.tgz
+dsh plugin --profile web add ./aha-tavern-0.1.0-rc1.tgz
 ```
 
-把得到的 `aha-tavern-0.0.1.tgz` 装进你用的 profile（下面以 `web` 为例）：
-
-```bash
-dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
-```
+Release 同时提供 `.sha256` 校验文件。升级时下载新版本的安装包，再执行同一条 `add` 命令。
 
 重启 `dsh web`，新建会话时模式列表里会多出四个酒馆模式。用 `dsh plugin add` 安装后，插件页里还有一个"阿哈酒馆"设置页，可以改生图和语音的配置、启停本机语音服务。完整步骤见[使用指南](docs/getting-started.md)。
 
@@ -154,7 +149,10 @@ pnpm install
 pnpm build       # 打包插件、设置页
 pnpm test        # 单元测试
 pnpm typecheck   # 类型检查
+pnpm pack        # 构建并生成插件安装包
 ```
+
+发布时将 `package.json` 的版本号更新后，推送同名的 `v<版本号>` 标签。GitHub Actions 会核对版本、运行类型检查和单元测试，再打包并创建 Release；带预发布后缀的版本会标为预发布。
 
 本机调试不用安装：复制 `examples/dev.example.yml` 为 `examples/dev.yml`，把里面的路径改成本仓库的绝对路径，再用 `dsh web --patch <绝对路径>/examples/dev.yml` 启动。这种方式下看不到设置页。
 

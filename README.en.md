@@ -68,19 +68,14 @@ A session does one thing: whichever mode you pick is all it does. Each mode load
 
 ## Installation
 
-It is not on npm yet, so build a package from source first:
+Download the package from the [v0.1.0-rc1 prerelease](https://github.com/LanceLRQ/dsh-aha-tavern/releases/tag/v0.1.0-rc1) and install it into the profile you use (`web` below):
 
 ```bash
-pnpm install
-pnpm build
-pnpm pack
+curl -fLO https://github.com/LanceLRQ/dsh-aha-tavern/releases/download/v0.1.0-rc1/aha-tavern-0.1.0-rc1.tgz
+dsh plugin --profile web add ./aha-tavern-0.1.0-rc1.tgz
 ```
 
-Install the resulting `aha-tavern-0.0.1.tgz` into the profile you use (`web` below):
-
-```bash
-dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
-```
+The release also includes a `.sha256` checksum file. To upgrade, download the new package and run the same `add` command.
 
 Restart `dsh web`. When you create a new session, the mode list now has four tavern modes. If you installed with `dsh plugin add`, the plugin page also has an "Aha Tavern" (阿哈酒馆) settings page, where you can change the image and voice settings and start or stop the local voice service. For the full steps see the [Getting started guide](docs/en/getting-started.md).
 
@@ -155,7 +150,10 @@ pnpm install
 pnpm build       # bundle the plugin and the settings page
 pnpm test        # unit tests
 pnpm typecheck   # type check
+pnpm pack        # build and create the plugin package
 ```
+
+To publish, update the version in `package.json` and push a matching `v<version>` tag. GitHub Actions checks the version, runs type checking and unit tests, then packages the plugin and creates a release. Versions with a prerelease suffix are marked as prereleases.
 
 For local debugging you don't need to install: copy `examples/dev.example.yml` to `examples/dev.yml`, change the paths in it to absolute paths of this repository, then start with `dsh web --patch <absolute path>/examples/dev.yml`. The settings page is not visible this way.
 

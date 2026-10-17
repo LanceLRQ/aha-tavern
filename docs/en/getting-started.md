@@ -10,19 +10,14 @@ Subcommands accept both Chinese and English (`/aha start` = `/aha 开场`). The 
 
 Install DSH first and have a working model ready.
 
-Aha Tavern is not on npm yet, so build a package yourself:
+Download the package from the [v0.1.0-rc1 prerelease](https://github.com/LanceLRQ/dsh-aha-tavern/releases/tag/v0.1.0-rc1) and install it into the profile you use (`web` below):
 
 ```bash
-pnpm install
-pnpm build
-pnpm pack
+curl -fLO https://github.com/LanceLRQ/dsh-aha-tavern/releases/download/v0.1.0-rc1/aha-tavern-0.1.0-rc1.tgz
+dsh plugin --profile web add ./aha-tavern-0.1.0-rc1.tgz
 ```
 
-You get `aha-tavern-0.0.1.tgz`. Install it into the profile you use (`web` below):
-
-```bash
-dsh plugin --profile web add ./aha-tavern-0.0.1.tgz
-```
+The release also includes a `.sha256` checksum file. To build the same package from source, run `pnpm install` and `pnpm pack` in the repository.
 
 Restart DSH (`dsh web`). When you create a new session, the mode list now has four more entries:
 
